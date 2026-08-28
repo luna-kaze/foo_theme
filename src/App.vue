@@ -11,9 +11,9 @@ import PlayerBar from './components/PlayerBar.vue'
 import QueuePopover from './components/QueuePopover.vue'
 import TrackActionMenu from './components/TrackActionMenu.vue'
 import { useFoobar } from './composables/useFoobar'
-import type { PlaylistInfo } from 'foo-webview-sdk'
+import type { OutputDevice, PlaylistInfo } from 'foo-webview-sdk'
 import type { AlbumCard, DisplayTrack, ViewId } from './types/music'
-import { menuIcons, showContextMenu, showContextMenuAtClientPoint, type ContextMenuItem } from './utils/contextMenu'
+import { menuIcons, showContextMenu, type ContextMenuItem } from './utils/contextMenu'
 import { isSameTrack } from './utils/track'
 
 const player = useFoobar()
@@ -22,6 +22,8 @@ const miniMode = new URLSearchParams(window.location.search).get('mode') === 'mi
 const trackMenu = reactive({ open: false, track: null as DisplayTrack | null, index: -1, x: 0, y: 0 })
 const dragState = reactive({ active: false, depth: 0 })
 const queueOpen = ref(false)
+const outputDevices = ref<OutputDevice[]>([])
+const outputLoading = ref(false)
 
 function onKeydown(event: KeyboardEvent) {
   const target = event.target as HTMLElement | null
@@ -127,25 +129,18 @@ function openPrimaryAlbum(album: AlbumCard) {
   void player.selectAlbum(album)
 }
 
-async function openOutputDeviceMenu(event: MouseEvent) {
-  const anchor = (event.currentTarget as HTMLElement | null)?.getBoundingClientRect()
-  const point = { x: anchor?.right ?? event.clientX, y: anchor?.top ?? event.clientY }
-  const devices = await player.getOutputDevices()
-  if (!devices.length) return
-  let action: string | null = null
+async function loadOutputDevices() {
+  outputLoading.value = true
   try {
-    action = await showContextMenuAtClientPoint(devices.map((device, index) => ({
-      id: `output:${index}`,
-      label: device.name,
-      checked: device.isCurrent,
-      iconSvg: menuIcons.settings,
-    })), point)
-  } catch (error) {
-    player.notify(error instanceof Error ? error.message : '无法打开输出设备菜单。', 'error')
+    outputDevices.value = await player.getOutputDevices()
+  } finally {
+    outputLoading.value = false
   }
-  if (!action?.startsWith('output:')) return
-  const device = devices[Number(action.split(':')[1])]
-  if (device) await player.setOutputDevice(device.outputId, device.deviceId, device.name)
+}
+
+async function selectOutputDevice(device: OutputDevice) {
+  await player.setOutputDevice(device.outputId, device.deviceId, device.name)
+  await loadOutputDevices()
 }
 
 function playlistSubmenu(prefix: string): ContextMenuItem[] {
@@ -369,6 +364,8 @@ function onDrop(event: DragEvent) {
         :search="state.search"
         :can-go-back="state.canGoBack"
         :can-go-forward="state.canGoForward"
+        :output-devices="outputDevices"
+        :output-loading="outputLoading"
         @search="player.setSearch"
         @submit-search="submitPrimarySearch"
         @clear-search="clearPrimarySearch"
@@ -379,7 +376,8 @@ function onDrop(event: DragEvent) {
         @fullscreen="player.toggleFullscreen"
         @reload="player.reloadInterface"
         @rescan="player.rescanLibrary"
-        @output-devices="openOutputDeviceMenu"
+        @load-output-devices="loadOutputDevices"
+        @select-output-device="selectOutputDevice"
         @desktop-lyrics="player.toggleDesktopLyrics"
         @mini-player="player.openMiniPlayer"
       />

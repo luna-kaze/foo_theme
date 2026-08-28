@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import { AudioLines, ChevronLeft, ChevronRight, Maximize, MoreHorizontal, PanelTopOpen, RefreshCw, Search, Settings, ScanSearch, Subtitles, X } from '@lucide/vue'
+import { ArrowLeft, AudioLines, Check, ChevronLeft, ChevronRight, Maximize, MoreHorizontal, PanelTopOpen, RefreshCw, Search, Settings, ScanSearch, Subtitles, X } from '@lucide/vue'
+import type { OutputDevice } from 'foo-webview-sdk'
 
 defineProps<{
   connected: boolean
   search: string
   canGoBack: boolean
   canGoForward: boolean
+  outputDevices: OutputDevice[]
+  outputLoading: boolean
 }>()
 
 const emit = defineEmits<{
@@ -20,12 +23,14 @@ const emit = defineEmits<{
   fullscreen: []
   reload: []
   rescan: []
-  outputDevices: [event: MouseEvent]
+  loadOutputDevices: []
+  selectOutputDevice: [device: OutputDevice]
   desktopLyrics: []
   miniPlayer: []
 }>()
 
 const menuOpen = ref(false)
+const outputOpen = ref(false)
 const root = ref<HTMLElement | null>(null)
 
 function run(action: 'refresh' | 'preferences' | 'fullscreen' | 'reload' | 'rescan' | 'desktopLyrics' | 'miniPlayer') {
@@ -46,7 +51,21 @@ function navigate(direction: 'back' | 'forward') {
 }
 
 function onDocumentPointerDown(event: PointerEvent) {
-  if (!root.value?.contains(event.target as Node)) menuOpen.value = false
+  if (!root.value?.contains(event.target as Node)) {
+    menuOpen.value = false
+    outputOpen.value = false
+  }
+}
+
+function openOutputs() {
+  outputOpen.value = true
+  emit('loadOutputDevices')
+}
+
+function selectOutput(device: OutputDevice) {
+  emit('selectOutputDevice', device)
+  menuOpen.value = false
+  outputOpen.value = false
 }
 
 onMounted(() => document.addEventListener('pointerdown', onDocumentPointerDown))
@@ -76,15 +95,29 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
         <i />{{ connected ? 'foobar2000' : '预览模式' }}
       </span>
       <button aria-label="更多选项" :class="{ active: menuOpen }" @click="menuOpen = !menuOpen"><MoreHorizontal :size="19" /></button>
-      <div v-if="menuOpen" class="topbar-menu">
-        <button @click="run('refresh')"><RefreshCw :size="16" /><span>刷新音乐库</span></button>
-        <button @click="run('rescan')"><ScanSearch :size="16" /><span>重新扫描音乐库</span></button>
-        <button @click="run('preferences')"><Settings :size="16" /><span>首选项</span></button>
-        <button @click="emit('outputDevices', $event); menuOpen = false"><AudioLines :size="16" /><span>输出设备</span></button>
-        <button @click="run('desktopLyrics')"><Subtitles :size="16" /><span>桌面歌词</span></button>
-        <button @click="run('miniPlayer')"><PanelTopOpen :size="16" /><span>迷你播放器</span></button>
-        <button @click="run('fullscreen')"><Maximize :size="16" /><span>切换全屏</span></button>
-        <button @click="run('reload')"><RefreshCw :size="16" /><span>重新加载界面</span></button>
+      <div v-if="menuOpen" class="topbar-menu" :class="{ 'topbar-menu--outputs': outputOpen }">
+        <template v-if="outputOpen">
+          <button class="topbar-menu__back" @click="outputOpen = false"><ArrowLeft :size="16" /><span>输出设备</span></button>
+          <span class="topbar-menu__separator" />
+          <div v-if="outputLoading" class="topbar-menu__status">正在读取设备…</div>
+          <div v-else-if="!outputDevices.length" class="topbar-menu__status">没有可用的输出设备</div>
+          <template v-else>
+            <button v-for="device in outputDevices" :key="`${device.outputId}:${device.deviceId}`" class="topbar-menu__device" @click="selectOutput(device)">
+              <Check :size="14" :class="{ hidden: !device.isCurrent }" />
+              <span>{{ device.name }}</span>
+            </button>
+          </template>
+        </template>
+        <template v-else>
+          <button @click="run('refresh')"><RefreshCw :size="16" /><span>刷新音乐库</span></button>
+          <button @click="run('rescan')"><ScanSearch :size="16" /><span>重新扫描音乐库</span></button>
+          <button @click="run('preferences')"><Settings :size="16" /><span>首选项</span></button>
+          <button @click="openOutputs"><AudioLines :size="16" /><span>输出设备</span></button>
+          <button @click="run('desktopLyrics')"><Subtitles :size="16" /><span>桌面歌词</span></button>
+          <button @click="run('miniPlayer')"><PanelTopOpen :size="16" /><span>迷你播放器</span></button>
+          <button @click="run('fullscreen')"><Maximize :size="16" /><span>切换全屏</span></button>
+          <button @click="run('reload')"><RefreshCw :size="16" /><span>重新加载界面</span></button>
+        </template>
       </div>
     </div>
   </header>

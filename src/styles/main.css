@@ -1459,6 +1459,14 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   -webkit-app-region: no-drag;
 }
 
+.topbar-menu--outputs { width: 285px; max-height: min(430px, calc(100vh - 80px)); overflow-y: auto; }
+.topbar-menu__status { padding: 18px 12px; color: var(--muted); font-size: 10px; text-align: center; }
+.topbar-menu .topbar-menu__device { height: auto; min-height: 36px; align-items: flex-start; padding-block: 8px; }
+.topbar-menu__device svg { flex: 0 0 auto; margin-top: 1px; color: var(--accent-bright); }
+.topbar-menu__device svg.hidden { visibility: hidden; }
+.topbar-menu__device span { overflow: hidden; line-height: 1.35; text-overflow: ellipsis; }
+.topbar-menu__back { font-weight: 650; }
+
 .topbar-menu button {
   display: flex;
   align-items: center;

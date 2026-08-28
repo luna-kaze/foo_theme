@@ -58,7 +58,7 @@ const playbackProgress = computed(() => {
   return props.duration > 0 ? Math.min(1, Math.max(0, position / props.duration)) : 0
 })
 
-const tonearmAngle = computed(() => -24 + playbackProgress.value * 38)
+const tonearmAngle = computed(() => 3 + playbackProgress.value * 22)
 
 const coverflowItems = computed(() => [
   ...(props.track ? [{ track: props.track, artwork: props.artwork || props.track.artworkUrl || '', queueIndex: -1 }] : []),
@@ -117,12 +117,14 @@ function updateTonearm(event: PointerEvent) {
   const zone = recordZone.value
   if (!zone || !tonearmDragging.value) return
   const rect = zone.getBoundingClientRect()
-  const radius = Math.min(rect.width, rect.height) * 0.48
-  const centerX = rect.left + rect.width * 0.48
-  const centerY = rect.top + rect.height * 0.52
-  const distance = Math.hypot(event.clientX - centerX, event.clientY - centerY)
-  tonearmWillPause.value = distance > radius * 1.28 || event.clientX > rect.right + 24
-  const ratio = Math.min(1, Math.max(0, (event.clientY - rect.top - rect.height * 0.16) / (rect.height * 0.68)))
+  const pivotX = rect.right - rect.width * 0.03 - 27
+  const pivotY = rect.top + rect.height * 0.13
+  const dx = event.clientX - pivotX
+  const dy = event.clientY - pivotY
+  const rawAngle = Math.atan2(-dx, Math.max(1, dy)) * 180 / Math.PI
+  const angle = Math.min(25, Math.max(3, rawAngle))
+  tonearmWillPause.value = event.clientX > rect.right + 48 || event.clientY < rect.top - 28 || event.clientY > rect.bottom + 28
+  const ratio = (angle - 3) / 22
   scrubPosition.value = ratio * props.duration
 }
 
@@ -267,14 +269,14 @@ onBeforeUnmount(() => {
             :key="`${item.track.path}-${index}`"
             class="coverflow-card"
             :class="{ active: index === coverflowIndex, far: Math.abs(index - coverflowIndex) > 3 }"
-            :style="{ '--cover-offset': index - coverflowIndex, '--cover-distance': Math.abs(index - coverflowIndex), '--cover-image': item.artwork ? `url(&quot;${item.artwork}&quot;)` : 'none' }"
+            :style="{ '--cover-offset': index - coverflowIndex, '--cover-distance': Math.abs(index - coverflowIndex), '--cover-image': item.artwork ? `url(${item.artwork})` : 'none' }"
             @click="selectCoverflow(index)"
           >
             <span class="coverflow-card__sleeve">
               <span class="coverflow-card__face"><ArtworkImage :src="item.artwork" :alt="`${item.track.album} 封面`" /></span>
               <i class="coverflow-card__edge coverflow-card__edge--left" />
               <i class="coverflow-card__edge coverflow-card__edge--right" />
-              <i class="coverflow-card__edge coverflow-card__edge--bottom" />
+              <i class="coverflow-card__edge coverflow-card__edge--bottom"><b>{{ item.track.title }} · {{ item.track.artist }}</b></i>
             </span>
           </button>
         </div>
