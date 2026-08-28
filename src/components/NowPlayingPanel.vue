@@ -43,6 +43,7 @@ const tonearmDragAngle = ref<number | null>(null)
 const recordZone = ref<HTMLElement | null>(null)
 const coverflowIndex = ref(0)
 const lyricsVisible = ref(true)
+let lastCoverflowPointer = { index: -1, time: 0 }
 let resumeTimer: ReturnType<typeof setTimeout> | null = null
 
 const activeLyric = computed(() => {
@@ -196,6 +197,18 @@ function activateCoverflow(index: number) {
   else emit('playQueue', item.queueIndex)
 }
 
+function handleCoverflowPointer(index: number, event: PointerEvent) {
+  if (event.button !== 0) return
+  const now = performance.now()
+  if (lastCoverflowPointer.index === index && now - lastCoverflowPointer.time <= 360) {
+    lastCoverflowPointer = { index: -1, time: 0 }
+    activateCoverflow(index)
+    return
+  }
+  lastCoverflowPointer = { index, time: now }
+  selectCoverflow(index)
+}
+
 function setMode(nextMode: 'standard' | 'coverflow') {
   if (mode.value === nextMode) return
   cancelTonearm()
@@ -318,8 +331,8 @@ onBeforeUnmount(() => {
             class="coverflow-card"
             :class="{ active: index === coverflowIndex, far: Math.abs(index - coverflowIndex) > 3 }"
             :style="{ '--cover-offset': index - coverflowIndex, '--cover-distance': Math.abs(index - coverflowIndex), '--cover-image': item.artwork ? `url(${item.artwork})` : 'none' }"
-            @click="selectCoverflow(index)"
-            @dblclick.stop.prevent="activateCoverflow(index)"
+            @pointerup.stop.prevent="handleCoverflowPointer(index, $event)"
+            @keydown.enter.prevent="activateCoverflow(index)"
           >
             <span class="coverflow-card__sleeve">
               <span class="coverflow-card__face"><ArtworkImage :src="item.artwork" :alt="`${item.track.album} 封面`" /></span>

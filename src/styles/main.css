@@ -2090,23 +2090,35 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 }
 
 .inspector-scrim { position: fixed; inset: 0; z-index: 260; display: grid; place-items: center; padding: 24px; background: rgba(8,8,10,.7); backdrop-filter: blur(20px); }
-.library-filters { margin: 0 0 22px; padding: 14px; background: rgba(255,255,255,.025); border: 1px solid rgba(255,255,255,.07); border-radius: 14px; }
-.library-filters > header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-.library-filters > header div,.library-filters > header button { display: flex; align-items: center; gap: 7px; }
-.library-filters > header strong { font-size: 11px; }
-.library-filters > header span { color: var(--text-muted); font-size: 9px; }
-.library-filters > header button { color: var(--text-muted); background: transparent; font-size: 9px; }
-.library-filters__facets { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 9px; }
-.library-filters label { display: flex; min-width: 0; flex-direction: column; gap: 5px; color: var(--text-muted); font-size: 8px; }
-.library-filters select,.library-filters input { min-width: 0; height: 34px; padding: 0 9px; color: var(--text); background: rgba(255,255,255,.045); border: 1px solid rgba(255,255,255,.07); border-radius: 8px; outline: none; font-size: 9px; }
-.library-filters__advanced { display: grid; grid-template-columns: auto 120px 100px minmax(160px,1fr); align-items: center; gap: 8px; margin-top: 10px; }
-.library-filters__advanced > svg { color: var(--text-muted); }
-.library-filters__format { display: grid; grid-template-columns: 130px minmax(180px,1fr) auto; gap: 8px; margin-top: 9px; }
+.song-tools { margin: 0 0 24px; border-bottom: 1px solid var(--line); }
+.song-tools__bar { display: flex; min-height: 48px; align-items: center; gap: 8px; padding: 0 2px 12px; }
+.song-tools__mark { display: grid; width: 30px; height: 30px; flex: 0 0 auto; place-items: center; color: var(--muted); }
+.song-tools__search { display: flex; min-width: 170px; flex: 1; align-items: center; gap: 8px; height: 34px; padding: 0 11px; color: var(--faint); background: rgba(255,255,255,.04); border: 1px solid transparent; border-radius: 9px; }
+.song-tools__search:focus-within { color: var(--accent-bright); background: rgba(255,255,255,.055); border-color: rgba(231,99,97,.28); }
+.song-tools__search input { width: 100%; min-width: 0; padding: 0; color: var(--text); font-size: 10.5px; background: transparent; border: 0; outline: none; }
+.song-tools__chip { display: flex; height: 34px; align-items: center; gap: 5px; padding: 0 5px 0 10px; color: var(--faint); font-size: 9px; white-space: nowrap; background: rgba(255,255,255,.03); border-radius: 9px; }
+.song-tools__chip select,.song-tools__details select,.song-tools__details input { min-width: 0; color: var(--text); font-size: 9.5px; background: transparent; border: 0; outline: none; }
+.song-tools__chip select { max-width: 100px; height: 28px; }
+.song-tools__expand,.song-tools__reset { display: flex; height: 32px; align-items: center; justify-content: center; color: var(--muted); background: transparent; border-radius: 8px; }
+.song-tools__expand { gap: 5px; padding: 0 8px; font-size: 9.5px; }
+.song-tools__expand:hover,.song-tools__expand.active,.song-tools__reset:hover { color: var(--text); background: var(--hover); }
+.song-tools__expand > i { display: grid; min-width: 16px; height: 16px; padding: 0 4px; place-items: center; color: #18181a; font-size: 8px; font-style: normal; font-weight: 750; background: var(--accent-bright); border-radius: 999px; }
+.song-tools__expand > svg:last-child { transition: transform 180ms ease; }
+.song-tools__expand.active > svg:last-child { transform: rotate(180deg); }
+.song-tools__bar > small { color: var(--faint); font-size: 9px; white-space: nowrap; }
+.song-tools__reset { width: 32px; flex: 0 0 auto; }
+.song-tools__details { display: grid; grid-template-columns: minmax(230px,.7fr) minmax(360px,1.3fr); gap: 24px; padding: 4px 2px 15px 40px; animation: filter-details-in 180ms var(--ease); }
+.song-tools__details > div,.song-tools__details > form { display: grid; grid-template-columns: auto minmax(90px,1fr) minmax(90px,1fr); align-items: center; gap: 7px; }
+.song-tools__details > form { grid-template-columns: auto 80px minmax(150px,1fr) auto; }
+.song-tools__details span { color: var(--faint); font-size: 8.5px; white-space: nowrap; }
+.song-tools__details select,.song-tools__details input { height: 30px; padding: 0 8px; background: rgba(255,255,255,.035); border: 1px solid rgba(255,255,255,.05); border-radius: 7px; }
+.song-tools__details button { height: 30px; padding: 0 11px; color: var(--text); font-size: 9px; background: rgba(255,255,255,.07); border-radius: 7px; }
+@keyframes filter-details-in { from { opacity: 0; transform: translateY(-5px); } }
 .dialog-check { display: flex!important; flex-direction: row!important; align-items: center; gap: 9px!important; }
 .dialog-check input { width: 15px!important; height: 15px!important; }
 .file-danger-note { display: flex; align-items: center; gap: 8px; color: #ffaaa7; font-size: 10px; line-height: 1.6; }
 .create-playlist-dialog > code { overflow-wrap: anywhere; padding: 11px; color: var(--text-muted); background: rgba(0,0,0,.2); border-radius: 8px; font-size: 9px; }
-@media (max-width: 900px) { .library-filters__facets { grid-template-columns: repeat(2,minmax(0,1fr)); } .library-filters__advanced { grid-template-columns: auto 1fr 1fr; } .library-filters__advanced input { grid-column: 2/-1; } }
+@media (max-width: 900px) { .song-tools__bar { flex-wrap: wrap; } .song-tools__search { min-width: calc(100% - 40px); } .song-tools__details { grid-template-columns: 1fr; padding-left: 40px; } }
 .track-inspector { width: min(760px,calc(100vw - 36px)); max-height: min(820px,calc(100vh - 36px)); overflow: hidden auto; color: var(--text); background: rgba(24,24,28,.96); border: 1px solid rgba(255,255,255,.11); border-radius: 20px; box-shadow: 0 34px 100px rgba(0,0,0,.58); }
 .track-inspector__header { display: grid; grid-template-columns: 74px minmax(0,1fr) 34px; align-items: center; gap: 16px; padding: 20px; background: linear-gradient(120deg,rgba(255,255,255,.055),transparent); }
 .track-inspector__header .artwork-image { width: 74px; height: 74px; border-radius: 11px; }
