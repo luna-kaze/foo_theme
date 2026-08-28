@@ -12,6 +12,7 @@ import type {
   DisplayTrack,
   ParsedLyric,
   PlayerUiState,
+  TrackDetails,
   ViewId,
   ViewRoute,
 } from '../types/music'
@@ -40,6 +41,7 @@ const state = reactive<PlayerUiState>({
   lyricsSynced: false,
   isPlaying: false,
   playbackState: 'stopped',
+  canSeek: false,
   position: 0,
   duration: 0,
   volume: 64,
@@ -55,6 +57,9 @@ const state = reactive<PlayerUiState>({
   searchLoading: false,
   dndSupported: false,
   importing: false,
+  libraryFilters: { artist: '', albumArtist: '', genre: '', folder: '', field: 'all', operator: 'contains', value: '', playState: 'all' },
+  libraryStatus: { initialized: false, scanning: null, itemCount: 0 },
+  customColumn: { label: '', pattern: '' },
 })
 
 let initPromise: Promise<void> | null = null
@@ -65,11 +70,16 @@ let libraryReloadTimer: ReturnType<typeof setTimeout> | null = null
 let mediaRequest = 0
 let lifecycleGeneration = 0
 let routeGeneration = 0
+let searchGeneration = 0
 let libraryGeneration = 0
 let playlistGeneration = 0
 let queueGeneration = 0
 let radioNonce = 0
 let ownedPlaylistPromise: Promise<{ index: number; name: string }> | null = null
+let ownerIdPromise: Promise<string> | null = null
+let libraryStatusTimer: ReturnType<typeof setTimeout> | null = null
+let playcountLibraryGeneration = -1
+const priorFavouriteRatings = new Map<string, number>()
 let desktopLyricsCommand: { guid: string; subGuid?: string } | null = null
 let miniPlayerWindowId = ''
 const history: ViewRoute[] = [{ view: 'home' }]
@@ -281,18 +291,17 @@ async function loadLibrary() {
   if (generation !== libraryGeneration) return
   state.albums = albums
   state.tracks = attachArtwork(trackResult.value.map(normalizeTrack))
-  const recent = recentResult.status === 'fulfilled' && recentResult.value.success !== false
-    ? recentResult.value.tracks ?? []
-    : []
-  state.recentTracks = attachArtwork(recent.map(normalizeTrack))
+  if (recentResult.status === 'fulfilled' && recentResult.value.success !== false) state.recentTracks = attachArtwork((recentResult.value.tracks ?? []).map(normalizeTrack))
 }
 
 async function loadPlaylists() {
   const generation = ++playlistGeneration
-  const [playlists, active] = await Promise.all([fb.playlist.getAll(), fb.playlist.getActive()])
+  const [allPlaylists, active, ownerId] = await Promise.all([fb.playlist.getAll(), fb.playlist.getActive(), getOwnerId()])
   if (generation !== playlistGeneration) return
+  const internalName = `正在播放 [foo-theme:${ownerId}]`
+  const playlists = allPlaylists.filter((playlist) => playlist.name !== internalName && playlist.name !== '[WebView Queue]')
   state.playlists = playlists
-  state.activePlaylist = active
+  state.activePlaylist = active && playlists.some((playlist) => playlist.index === active.index) ? active : null
   const route = state.route
   if (route.view === 'playlist') {
     state.browsingPlaylist = playlists.find((item) => item.index === route.playlistIndex) ?? null
@@ -336,7 +345,7 @@ async function loadQueue() {
   } catch {
     // Explicit queue entries remain useful when no playing playlist is available.
   }
-  if (generation === queueGeneration) state.queue = [...explicit, ...upcoming]
+  if (generation === queueGeneration) state.queue = explicit.length ? explicit : upcoming
 }
 
 async function loadCurrentArtwork(request: number, key: string, path: string) {
@@ -371,9 +380,7 @@ async function syncCurrentTrack(track?: TrackInfo | PlaybackTrackChangedPayload 
   if (request !== mediaRequest) return
   const previous = state.currentTrack
   const normalized = nextTrack ? attachArtwork([normalizeTrack(nextTrack)])[0] : null
-  if (previous && normalized && !isSameTrack(previous, normalized)) {
-    state.playbackHistory = [previous, ...state.playbackHistory.filter((item) => !isSameTrack(item, previous))].slice(0, 12)
-  }
+  if (previous && normalized && !isSameTrack(previous, normalized)) state.playbackHistory = [previous, ...state.playbackHistory].slice(0, 12)
   state.currentTrack = normalized
   state.duration = state.currentTrack?.duration ?? 0
   state.currentArtwork = ''
@@ -421,6 +428,7 @@ function bindEvents() {
       state.position = 0
       refreshSafely(() => syncCurrentTrack(track))
       refreshSafely(loadQueue)
+      refreshSafely(syncPlaybackCapabilities)
     }),
     fb.on('playback:stateChanged', (event) => {
       state.playbackState = event.state
@@ -434,6 +442,7 @@ function bindEvents() {
     }),
     fb.on('playback:stopped', (event) => {
       if (event.reason === 'starting_another') return
+      if (state.currentTrack) state.playbackHistory = [state.currentTrack, ...state.playbackHistory].slice(0, 12)
       state.playbackState = 'stopped'
       state.isPlaying = false
       state.position = 0
@@ -475,7 +484,16 @@ function bindEvents() {
     }),
     fb.on('playlist:created', () => refreshSafely(loadPlaylists)),
     fb.on('playlist:removed', () => refreshSafely(reloadPlaylistStructure)),
-    fb.on('playlist:renamed', () => refreshSafely(loadPlaylists)),
+    fb.on('playlist:renamed', (event) => refreshSafely(async () => {
+      history.forEach((route, index) => {
+        if (route.view === 'playlist' && route.playlistIndex === event.index) history[index] = { ...route, playlistName: event.name }
+      })
+      if (state.route.view === 'playlist' && state.route.playlistIndex === event.index) {
+        state.route = { ...state.route, playlistName: event.name }
+        history[historyIndex] = state.route
+      }
+      await loadPlaylists()
+    })),
     fb.on('playlist:lockChanged', () => refreshSafely(loadPlaylists)),
     fb.on('playlist:reordered', () => refreshSafely(reloadPlaylistStructure)),
     fb.on('metadb:changed', (event) => {
@@ -488,6 +506,9 @@ function bindEvents() {
             if (trackKey(track) === changedKey) track.rating = rating
           })
         }
+        state.playbackHistory.forEach((track) => {
+          if (trackKey(track) === changedKey) Object.assign(track, changed)
+        })
         if (trackKey(state.currentTrack) === changedKey) state.currentTrack!.rating = rating
       })
       if (state.route.view === 'favourites') refreshSafely(() => navigate(state.route, 'none'))
@@ -545,6 +566,7 @@ async function initialize() {
         loadPlaylists(),
         fb.dnd.getCapabilities(),
       ])
+      await loadLibraryStatus()
       if (generation !== lifecycleGeneration) return
       state.dndSupported = capabilities.status === 'fulfilled' && capabilities.value.success && capabilities.value.paths
       const [playback, position, volume, order] = await Promise.all([
@@ -555,6 +577,7 @@ async function initialize() {
       ])
       if (generation !== lifecycleGeneration) return
       state.playbackState = playback.state
+      state.canSeek = playback.canSeek
       state.isPlaying = playback.state === 'playing'
       state.position = position.position ?? 0
       state.duration = position.duration ?? 0
@@ -608,7 +631,10 @@ async function loadSearchTracks(query: string) {
 async function materializeRoute(route: ViewRoute): Promise<DisplayTrack[]> {
   if (route.view === 'home') return state.recentTracks
   if (route.view === 'albums') return []
-  if (route.view === 'songs') return state.tracks
+  if (route.view === 'songs') {
+    await enrichLibraryPlaycounts()
+    return filterLibraryTracks(state.tracks)
+  }
   if (route.view === 'playlist') return state.connected
     ? getAllPlaylistTracks(route.playlistIndex)
     : [...state.tracks].reverse()
@@ -620,15 +646,90 @@ async function materializeRoute(route: ViewRoute): Promise<DisplayTrack[]> {
   if (route.view === 'search') return loadSearchTracks(route.query)
   if (route.view === 'favourites') {
     if (!state.connected) return state.tracks.filter((track) => Number(track.rating ?? 0) === 5)
-    const result = await fb.library.query('rating IS 5', '%artist%|%album%|%tracknumber%', 5000)
-    if (result.success === false) throw new Error(result.error || '无法加载收藏。')
-    return result.tracks.map(normalizeTrack)
+    const tracks: DisplayTrack[] = []
+    for (let offset = 0; ; offset += 1000) {
+      const result = await fb.library.search('rating IS 5', 1000, { offset })
+      if (result.success === false) throw new Error(result.error || '无法加载收藏。')
+      tracks.push(...result.tracks.map(normalizeTrack))
+      if (!result.hasMore || !result.tracks.length) break
+    }
+    return tracks
   }
   if (route.snapshot) return route.snapshot
   if (!state.connected) return [...state.tracks].sort(() => Math.random() - 0.5).slice(0, 30)
   const result = await fb.library.getRandomTracks(50)
   if (result.success === false) throw new Error(result.error || '无法加载电台。')
   return result.tracks.map(normalizeTrack)
+}
+
+async function enrichLibraryPlaycounts() {
+  if (!state.connected || playcountLibraryGeneration === libraryGeneration) return
+  const generation = libraryGeneration
+  for (let start = 0; start < state.tracks.length; start += 500) {
+    const batch = state.tracks.slice(start, start + 500)
+    const result = await fb.playcount.getBatch(batch.map(playablePath))
+    if (generation !== libraryGeneration) return
+    result.results.forEach((item, index) => {
+      if (!batch[index]) return
+      batch[index].playCount = item.playCount ?? 0
+      batch[index].lastPlayed = item.lastPlayed ?? ''
+      if (item.rating != null) batch[index].rating = item.rating
+    })
+  }
+  playcountLibraryGeneration = generation
+}
+
+function filterLibraryTracks(tracks: DisplayTrack[]) {
+  const filters = state.libraryFilters
+  const query = filters.value.trim().toLocaleLowerCase()
+  const filtered = tracks.filter((track) => {
+    if (filters.artist && track.artist !== filters.artist) return false
+    if (filters.albumArtist && (track.albumArtist || track.artist) !== filters.albumArtist) return false
+    if (filters.genre && !String(track.genre || '').split(/[;,]/).map((value) => value.trim()).includes(filters.genre)) return false
+    if (filters.folder && !track.path.replaceAll('\\', '/').toLocaleLowerCase().startsWith(filters.folder.toLocaleLowerCase())) return false
+    if (filters.playState === 'played' && !track.playCount) return false
+    if (filters.playState === 'unplayed' && track.playCount) return false
+    if (!query) return true
+    const fields = filters.field === 'all'
+      ? [track.title, track.artist, track.album, track.genre || '', track.path]
+      : [String(track[filters.field] || '')]
+    return fields.some((field) => {
+      const value = field.toLocaleLowerCase()
+      if (filters.operator === 'equals') return value === query
+      if (filters.operator === 'startsWith') return value.startsWith(query)
+      return value.includes(query)
+    })
+  })
+  return filters.playState === 'recent'
+    ? filtered.filter((track) => track.lastPlayed).sort((a, b) => String(b.lastPlayed).localeCompare(String(a.lastPlayed)))
+    : filtered
+}
+
+async function setLibraryFilter(key: keyof PlayerUiState['libraryFilters'], value: string) {
+  Object.assign(state.libraryFilters, { [key]: value })
+  if (state.route.view === 'songs') await navigate(state.route, 'none')
+}
+
+async function clearLibraryFilters() {
+  Object.assign(state.libraryFilters, { artist: '', albumArtist: '', genre: '', folder: '', field: 'all', operator: 'contains', value: '', playState: 'all' })
+  if (state.route.view === 'songs') await navigate(state.route, 'none')
+}
+
+async function applyCustomColumn(label: string, pattern: string) {
+  const trimmedPattern = pattern.trim()
+  if (!trimmedPattern) {
+    state.customColumn = { label: '', pattern: '' }
+    state.viewTracks.forEach((track) => { track.customValue = undefined })
+    state.visibleTracks = state.viewTracks.slice()
+    return
+  }
+  const tracks = state.visibleTracks
+  const result = await runAction(() => fb.titleformat.evalFieldsBatch(tracks.map(playablePath), { customValue: trimmedPattern }))
+  if (!result) return
+  result.results.forEach((item, index) => {
+    if (tracks[index] && item.success) tracks[index].customValue = typeof item.customValue === 'string' ? item.customValue : ''
+  })
+  state.customColumn = { label: label.trim() || '自定义', pattern: trimmedPattern }
 }
 
 async function navigate(route: ViewRoute, historyMode: 'push' | 'replace' | 'none' = 'push') {
@@ -638,6 +739,7 @@ async function navigate(route: ViewRoute, historyMode: 'push' | 'replace' | 'non
     if (indexed?.name !== playlistRoute.playlistName) {
       const matches = state.playlists.filter((playlist) => playlist.name === playlistRoute.playlistName)
       if (matches.length === 1) route = { ...playlistRoute, playlistIndex: matches[0].index }
+      else route = { view: 'home' }
     }
   }
   const generation = ++routeGeneration
@@ -716,16 +818,18 @@ async function goForward() {
 }
 
 function setSearch(value: string) {
+  const generation = ++searchGeneration
   state.search = value
+  if (state.view === 'search') routeGeneration += 1
   if (searchTimer) clearTimeout(searchTimer)
   if (!value.trim()) {
     searchTimer = null
     if (state.view === 'search') void clearSearch()
     return
   }
-  const generation = routeGeneration
+  const query = value.trim()
   searchTimer = setTimeout(() => {
-    if (generation === routeGeneration) void submitSearch()
+    if (generation === searchGeneration && state.search.trim() === query) void navigate({ view: 'search', query }, state.view === 'search' ? 'replace' : 'push')
   }, 240)
 }
 
@@ -744,10 +848,12 @@ function buildLibraryQuery(value: string) {
 async function submitSearch() {
   const query = state.search.trim()
   if (!query) return
-  await navigate({ view: 'search', query }, 'push')
+  searchGeneration += 1
+  await navigate({ view: 'search', query }, state.view === 'search' ? 'replace' : 'push')
 }
 
 async function clearSearch() {
+  searchGeneration += 1
   state.search = ''
   state.searchLoading = false
   if (state.view === 'search') {
@@ -802,7 +908,9 @@ async function playTrack(track: DisplayTrack, index?: number) {
 
   const route = state.route
   if (route.view === 'playlist') {
-    await runAction(() => fb.playlist.playTrack(route.playlistIndex, track.sourceIndex ?? index ?? 0))
+    const resolvedIndex = await resolvePlaylistTrackIndex(route.playlistIndex, track, track.sourceIndex ?? index)
+    if (resolvedIndex == null) return
+    await runAction(() => fb.playlist.playTrack(route.playlistIndex, resolvedIndex))
     return
   }
   const collection = state.visibleTracks.length ? state.visibleTracks : [track]
@@ -811,13 +919,22 @@ async function playTrack(track: DisplayTrack, index?: number) {
 }
 
 async function getOwnerId() {
-  const existing = await fb.config.get(ownershipConfigKey)
-  const stored = existing.value as { ownerId?: unknown } | null
-  if (stored && typeof stored.ownerId === 'string' && /^[0-9a-f-]{36}$/i.test(stored.ownerId)) return stored.ownerId
-  const ownerId = crypto.randomUUID()
-  const saved = await fb.config.set(ownershipConfigKey, { ownerId })
-  if (!saved.success) throw new Error(saved.error || '无法保存主题播放上下文标识。')
-  return ownerId
+  if (ownerIdPromise) return ownerIdPromise
+  ownerIdPromise = (async () => {
+    const existing = await fb.config.get(ownershipConfigKey)
+    const stored = existing.value as { ownerId?: unknown } | null
+    if (stored && typeof stored.ownerId === 'string' && /^[0-9a-f-]{36}$/i.test(stored.ownerId)) return stored.ownerId
+    const ownerId = crypto.randomUUID()
+    const saved = await fb.config.set(ownershipConfigKey, { ownerId })
+    if (!saved.success) throw new Error(saved.error || '无法保存主题播放上下文标识。')
+    return ownerId
+  })()
+  try {
+    return await ownerIdPromise
+  } catch (error) {
+    ownerIdPromise = null
+    throw error
+  }
 }
 
 async function ensureOwnedPlaybackPlaylist() {
@@ -846,19 +963,49 @@ async function ensureOwnedPlaybackPlaylist() {
 }
 
 async function playGeneratedCollection(tracks: DisplayTrack[], playIndex = 0, random = false, message?: string) {
-  const playablePaths = tracks.map(playablePath).filter(Boolean)
+  const requestedIndex = Number.isInteger(playIndex) ? playIndex : 0
+  const entries = tracks.map((track, originalIndex) => ({ originalIndex, path: playablePath(track) })).filter((item) => item.path)
+  const mappedPlayIndex = entries.findIndex((item) => item.originalIndex === requestedIndex)
   return runAction(async () => {
-    if (!playablePaths.length) throw new Error('没有可播放的曲目。')
+    if (!entries.length) throw new Error('没有可播放的曲目。')
+    if (mappedPlayIndex < 0) throw new Error('所选曲目没有可播放路径。')
     const context = await ensureOwnedPlaybackPlaylist()
-    if (random) {
-      const order = await fb.player.setOrder('random')
-      if (!order.success) throw new Error(order.error || '无法启用随机播放。')
-      state.playbackOrder = 3
-    }
     const latest = (await fb.playlist.getAll()).find((playlist) => playlist.name === context.name)
-    if (!latest || latest.isLocked || latest.isAutoplaylist) throw new Error('主题播放上下文已变化，已停止以保护播放列表。')
-    return fb.playlist.replaceAllAndPlay({ playlist: latest.index, paths: playablePaths, playIndex: Math.min(playIndex, playablePaths.length - 1) })
+    const matches = (await fb.playlist.getAll()).filter((playlist) => playlist.name === context.name)
+    if (!latest || matches.length !== 1 || latest.isLocked || latest.isAutoplaylist) throw new Error('主题播放上下文已变化，已停止以保护播放列表。')
+    const previousOrder = random ? await fb.player.getOrder() : null
+    let orderChanged = false
+    try {
+      if (random) {
+        const order = await fb.player.setOrder('random')
+        if (!order.success) throw new Error(order.error || '无法启用随机播放。')
+        orderChanged = true
+      }
+      const result = await fb.playlist.replaceAllAndPlay({ playlist: latest.index, paths: entries.map((item) => item.path), playIndex: mappedPlayIndex })
+      if (result.success === false) throw new Error(result.error || '无法播放所选集合。')
+      if (random) state.playbackOrder = 3
+      return result
+    } catch (error) {
+      if (orderChanged && previousOrder) {
+        await fb.player.setOrder(previousOrder.order)
+        state.playbackOrder = previousOrder.order
+      }
+      throw error
+    }
   }, message)
+}
+
+async function resolvePlaylistTrackIndex(playlistIndex: number, track: DisplayTrack, hintedIndex?: number) {
+  if (hintedIndex != null && hintedIndex >= 0) {
+    const candidate = await fb.playlist.getTracks(playlistIndex, hintedIndex, 1)
+    if (candidate[0] && trackKey(candidate[0]) === trackKey(track)) return hintedIndex
+  }
+  const tracks = await getAllPlaylistTracks(playlistIndex)
+  const matches = tracks.filter((item) => isSameTrack(item, track))
+  if (matches.length === 1) return matches[0].sourceIndex ?? null
+  notify('播放列表已变化，无法安全定位曲目。', 'error')
+  if (state.route.view === 'playlist' && state.route.playlistIndex === playlistIndex) await refreshActivePlaylist()
+  return null
 }
 
 async function getAllPlaylistTracks(playlistIndex: number) {
@@ -917,7 +1064,8 @@ async function queueAlbum(album: AlbumCard) {
     notify(`已将 ${tracks.length} 首曲目添加到队列`, 'success')
     return
   }
-  await runAction(() => fb.queue.addPaths(paths), `已将 ${paths.length} 首曲目添加到队列`)
+  const result = await runAction(() => fb.queue.addPaths(paths))
+  if (result) notify(`已将 ${result.addedCount ?? 0} 首曲目添加到队列${result.invalidCount ? `，跳过 ${result.invalidCount} 项` : ''}`, result.invalidCount ? 'info' : 'success')
   await loadQueue()
 }
 
@@ -951,7 +1099,7 @@ async function playPlaylist(playlistIndex: number, shuffled = false) {
     await runAction(() => fb.playlist.playTrack(playlistIndex, 0))
     return
   }
-  await setRandomOrder()
+  if (!await setRandomOrder()) return
   await runAction(() => fb.playlist.playTrack(playlistIndex, Math.floor(Math.random() * playlist.trackCount)), '已启用原生随机播放')
 }
 
@@ -989,7 +1137,7 @@ async function clearPlaylist(playlistIndex: number) {
 async function removePlaylist(playlistIndex: number) {
   const playlist = state.playlists.find((item) => item.index === playlistIndex)
   if (!playlist) return
-  if (playlist.isLocked) {
+  if (playlist.isLocked && !playlist.isAutoplaylist) {
     notify('此播放列表已锁定，无法删除。', 'info')
     return
   }
@@ -1013,6 +1161,10 @@ async function removePlaylist(playlistIndex: number) {
       return
     }
     targetIndex = matches[0].index
+    if (matches[0].isLocked) {
+      notify('自动播放列表已转换，但仍处于锁定状态，未继续删除。', 'error')
+      return
+    }
   }
   const result = await runAction(() => fb.playlist.remove(targetIndex), `已删除“${playlist.name}”`)
   if (!result) return
@@ -1031,6 +1183,29 @@ async function undoPlaylistChange(playlistIndex: number) {
   }
 }
 
+async function reorderPlaylistTrack(from: number, to: number) {
+  const route = state.route
+  if (route.view !== 'playlist' || from === to) return
+  const playlist = state.playlists.find((item) => item.index === route.playlistIndex)
+  if (!playlist || playlist.isLocked || playlist.isAutoplaylist) return
+  const sourceTrack = state.visibleTracks[from]
+  if (!sourceTrack) return
+  const resolved = await resolvePlaylistTrackIndex(route.playlistIndex, sourceTrack, sourceTrack.sourceIndex)
+  if (resolved == null) return
+  const targetTrack = state.visibleTracks[to]
+  const target = targetTrack ? await resolvePlaylistTrackIndex(route.playlistIndex, targetTrack, targetTrack.sourceIndex) : to
+  if (target == null) return
+  const result = await runAction(() => fb.playlist.moveTracks(route.playlistIndex, [resolved], target - resolved), '已调整播放列表顺序')
+  if (result) await refreshActivePlaylist()
+}
+
+async function sortPlaylist(playlistIndex: number, pattern: string, descending = false) {
+  const playlist = state.playlists.find((item) => item.index === playlistIndex)
+  if (!playlist || playlist.isLocked || playlist.isAutoplaylist) return
+  const result = await runAction(() => fb.playlist.sort(playlistIndex, pattern, descending), '播放列表已排序')
+  if (result && state.route.view === 'playlist' && state.route.playlistIndex === playlistIndex) await refreshActivePlaylist()
+}
+
 async function shuffleCurrent() {
   if (!state.visibleTracks.length) {
     notify('没有可随机播放的曲目。', 'info')
@@ -1042,9 +1217,11 @@ async function shuffleCurrent() {
   }
   const route = state.route
   if (route.view === 'playlist') {
-    await setRandomOrder()
+    if (!await setRandomOrder()) return
     const track = state.visibleTracks[Math.floor(Math.random() * state.visibleTracks.length)]
-    await runAction(() => fb.playlist.playTrack(route.playlistIndex, track.sourceIndex ?? 0), '已启用原生随机播放')
+    const index = await resolvePlaylistTrackIndex(route.playlistIndex, track, track.sourceIndex)
+    if (index == null) return
+    await runAction(() => fb.playlist.playTrack(route.playlistIndex, index), '已启用原生随机播放')
   } else {
     await playGeneratedCollection(state.visibleTracks, Math.floor(Math.random() * state.visibleTracks.length), true, '已启用原生随机播放')
   }
@@ -1081,7 +1258,7 @@ async function next() {
 }
 
 async function previous() {
-  if (state.position > 2) {
+  if (state.position > 2 && state.canSeek) {
     await seek(0)
     return
   }
@@ -1093,8 +1270,41 @@ async function previous() {
 }
 
 async function seek(position: number) {
-  state.position = position
-  if (state.connected) await runAction(() => fb.player.seek(position))
+  if (!state.canSeek || !Number.isFinite(position)) return false
+  const previous = state.position
+  const target = Math.min(Math.max(0, position), Math.max(0, state.duration))
+  state.position = target
+  if (!state.connected) return true
+  const result = await runAction(() => fb.player.seek(target))
+  if (!result) {
+    state.position = previous
+    return false
+  }
+  state.position = result.actualPosition ?? result.newPosition ?? target
+  return true
+}
+
+async function seekAndPlay(position: number) {
+  if (!await seek(position)) return
+  if (state.playbackState !== 'playing') {
+    const result = await runAction(() => fb.player.play())
+    if (result) {
+      state.isPlaying = true
+      state.playbackState = 'playing'
+    }
+  }
+}
+
+async function syncPlaybackCapabilities() {
+  if (!state.connected) return
+  const playback = await fb.player.getState()
+  state.canSeek = playback.canSeek
+  state.playbackState = playback.state
+  state.isPlaying = playback.state === 'playing'
+}
+
+async function playHistoryTrack(track: DisplayTrack) {
+  await playGeneratedCollection([track])
 }
 
 async function setVolume(volume: number) {
@@ -1161,6 +1371,20 @@ async function createPlaylist(name: string) {
   await selectActivePlaylist(result.index)
 }
 
+async function createAutoPlaylist(name: string, query: string, sort = '', keepSorted = true) {
+  const trimmed = name.trim()
+  if (!trimmed || !query.trim()) return
+  if (!state.connected) {
+    notify('自动播放列表仅可在 foobar2000 中创建。', 'info')
+    return
+  }
+  const result = await runAction(() => fb.playlist.createAutoplaylist(trimmed, query.trim(), sort.trim(), keepSorted), `已创建自动播放列表“${trimmed}”`)
+  if (!result) return
+  state.dialog = null
+  await loadPlaylists()
+  await selectActivePlaylist(result.index)
+}
+
 async function addToQueue(track: DisplayTrack) {
   if (!state.connected) {
     state.queue.push({ ...track, queueSource: 'explicit', sourceIndex: state.queue.length })
@@ -1168,6 +1392,19 @@ async function addToQueue(track: DisplayTrack) {
     return
   }
   await runAction(() => fb.queue.addPaths([playablePath(track)]), '已添加到播放队列')
+  await loadQueue()
+}
+
+async function addTracksToQueue(tracks: DisplayTrack[]) {
+  if (!tracks.length) return
+  if (!state.connected) {
+    const offset = state.queue.filter((item) => item.queueSource === 'explicit').length
+    state.queue.unshift(...tracks.map((track, index) => ({ ...track, queueSource: 'explicit' as const, sourceIndex: offset + index })))
+    return
+  }
+  const result = await runAction(() => fb.queue.addPaths(tracks.map(playablePath)))
+  if (!result) return
+  notify(`已将 ${result.addedCount ?? tracks.length} 首曲目添加到队列`, 'success')
   await loadQueue()
 }
 
@@ -1193,6 +1430,13 @@ async function addToPlaylist(track: DisplayTrack, playlistIndex: number) {
   await runAction(() => fb.playlist.add(playlistIndex, [playablePath(track)]), `已添加到“${playlist.name}”`)
 }
 
+async function addTracksToPlaylist(tracks: DisplayTrack[], playlistIndex: number) {
+  const playlist = state.playlists.find((item) => item.index === playlistIndex)
+  if (!playlist || playlist.isLocked || playlist.isAutoplaylist || !tracks.length) return
+  const result = await runAction(() => fb.playlist.add(playlistIndex, tracks.map(playablePath)))
+  if (result) notify(`已将 ${result.addedCount ?? tracks.length} 首曲目添加到“${playlist.name}”`, 'success')
+}
+
 async function playNext(track: DisplayTrack) {
   if (!state.connected) {
     state.queue.unshift({ ...track, queueSource: 'explicit', sourceIndex: 0 })
@@ -1202,7 +1446,8 @@ async function playNext(track: DisplayTrack) {
   const added = await runAction(() => fb.queue.addPaths([playablePath(track)]))
   if (!added || !added.addedCount) return
   const addedIndex = Math.max(0, Number(added.queueCount ?? added.addedCount) - added.addedCount)
-  await runAction(() => fb.queue.moveToTop(addedIndex), '将作为下一首播放')
+  if (addedIndex > 0) await runAction(() => fb.queue.moveToTop(addedIndex), '将作为下一首播放')
+  else notify('将作为下一首播放', 'success')
   await loadQueue()
 }
 
@@ -1214,7 +1459,7 @@ async function removePlaylistTrack(track: DisplayTrack, visibleIndex: number) {
     notify('此播放列表不允许移除曲目。', 'info')
     return
   }
-  const index = track.sourceIndex ?? visibleIndex
+  const hintedIndex = track.sourceIndex ?? visibleIndex
   if (!state.connected) {
     const demoIndex = state.viewTracks.findIndex((item) => isSameTrack(item, track))
     if (demoIndex >= 0) state.viewTracks.splice(demoIndex, 1)
@@ -1222,7 +1467,9 @@ async function removePlaylistTrack(track: DisplayTrack, visibleIndex: number) {
     notify('已从播放列表移除', 'success')
     return
   }
-  if (!Number.isInteger(index) || index < 0) return
+  if (!Number.isInteger(hintedIndex) || hintedIndex < 0) return
+  const index = await resolvePlaylistTrackIndex(route.playlistIndex, track, hintedIndex)
+  if (index == null) return
   const result = await runAction(() => fb.playlist.removeTracks(route.playlistIndex, [index]), '已从播放列表移除')
   if (!result) return
   await refreshActivePlaylist()
@@ -1357,7 +1604,34 @@ async function ensureOpenedMusicPlaylist() {
 }
 
 function windowsPathKey(path: string) {
+  if (/^[a-z][a-z\d+.-]*:\/\//i.test(path)) return path
   return path.trim().replaceAll('/', '\\').toLocaleLowerCase('en-US')
+}
+
+function resolveReferencedPath(descriptor: string, reference: string) {
+  if (/^[a-z][a-z\d+.-]*:\/\//i.test(reference) || /^[a-z]:[\\/]/i.test(reference)) return reference
+  const normalized = descriptor.replaceAll('/', '\\')
+  const directory = normalized.slice(0, normalized.lastIndexOf('\\') + 1)
+  return `${directory}${reference.replaceAll('/', '\\')}`
+}
+
+async function removeDescriptorDuplicates(paths: string[]) {
+  const referenced = new Set<string>()
+  const descriptors = paths.filter((path) => /\.(?:cue|m3u8?|pls)$/i.test(path))
+  for (const descriptor of descriptors) {
+    try {
+      const { content } = await fb.file.read(descriptor)
+      const references = descriptor.toLocaleLowerCase().endsWith('.cue')
+        ? [...content.matchAll(/^\s*FILE\s+"([^"]+)"/gim)].map((match) => match[1])
+        : descriptor.toLocaleLowerCase().endsWith('.pls')
+          ? [...content.matchAll(/^\s*File\d+\s*=\s*(.+)$/gim)].map((match) => match[1].trim())
+          : content.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith('#'))
+      references.forEach((reference) => referenced.add(windowsPathKey(resolveReferencedPath(descriptor, reference))))
+    } catch {
+      // The host will still parse the descriptor when its text cannot be inspected.
+    }
+  }
+  return paths.filter((path) => descriptors.includes(path) || !referenced.has(windowsPathKey(path)))
 }
 
 async function expandImportPaths(paths: string[]) {
@@ -1375,7 +1649,8 @@ async function expandImportPaths(paths: string[]) {
     const files = result.files ?? result.items ?? []
     expanded.push(...files)
   }
-  return [...new Map(expanded.map((path) => [windowsPathKey(path), path])).values()]
+  const unique = [...new Map(expanded.map((path) => [windowsPathKey(path), path])).values()]
+  return removeDescriptorDuplicates(unique)
 }
 
 async function importPaths(paths: string[]) {
@@ -1465,12 +1740,14 @@ async function importDroppedPaths() {
 }
 
 async function toggleFavourite(track: DisplayTrack) {
-  const nextRating = Number(track.rating ?? 0) === 5 ? 0 : 5
+  const currentRating = Number(track.rating ?? 0)
+  const key = trackKey(track)
+  if (currentRating !== 5) priorFavouriteRatings.set(key, currentRating)
+  const nextRating = currentRating === 5 ? priorFavouriteRatings.get(key) ?? 0 : 5
   if (state.connected) {
     const result = await runAction(() => fb.rating.set(playablePath(track), nextRating, { cueIndex: trackSubsong(track) }))
     if (!result) return
   }
-  const key = trackKey(track)
   for (const collection of [state.tracks, state.recentTracks, state.viewTracks, state.visibleTracks, state.queue]) {
     collection.forEach((item) => {
       if (trackKey(item) === key) item.rating = nextRating
@@ -1482,6 +1759,151 @@ async function toggleFavourite(track: DisplayTrack) {
     state.viewTracks = state.viewTracks.filter((item) => trackKey(item) !== key)
     state.visibleTracks = state.viewTracks.slice()
   }
+}
+
+async function getTrackDetails(tracks: DisplayTrack[]): Promise<TrackDetails[]> {
+  const paths = tracks.map(playablePath)
+  const [metadataResult, playcountResult, replayGainResult] = await Promise.all([
+    fb.metadata.readBatch(paths),
+    fb.playcount.getBatch(paths),
+    fb.replaygain.get(paths),
+  ])
+  const technical = tracks[0] ? await fb.metadata.read(paths[0], { cueIndex: trackSubsong(tracks[0]) }) : null
+  return tracks.map((track, index) => {
+    const metadata = metadataResult.results[index]
+    const playcount = playcountResult.results[index]
+    const replayGain = replayGainResult.results?.[index]
+    return {
+      track,
+      path: paths[index],
+      tags: metadata?.tags ?? {},
+      info: index === 0 ? technical?.info ?? {} : {},
+      playCount: playcount?.playCount ?? 0,
+      firstPlayed: playcount?.firstPlayed ?? '',
+      lastPlayed: playcount?.lastPlayed ?? '',
+      added: playcount?.added ?? '',
+      rating: playcount?.rating ?? Number(track.rating ?? 0),
+      replayGain: {
+        trackGain: replayGain?.trackGain,
+        trackPeak: replayGain?.trackPeak,
+        albumGain: replayGain?.albumGain,
+        albumPeak: replayGain?.albumPeak,
+        hasReplayGain: replayGain?.hasReplayGain,
+      },
+    }
+  })
+}
+
+async function writeTrackMetadata(tracks: DisplayTrack[], tags: Record<string, string>) {
+  const items = tracks.map((track) => ({ path: playablePath(track), tags }))
+  const result = await runAction(() => fb.metadata.writeBatch(items))
+  if (!result) return false
+  if (result.failCount) {
+    notify(`标签部分写入失败：成功 ${result.successCount ?? 0}，失败 ${result.failCount}`, 'error')
+    return false
+  }
+  notify(`已更新 ${result.successCount ?? tracks.length} 首曲目的标签`, 'success')
+  await loadLibrary()
+  await navigate(state.route, 'none')
+  return true
+}
+
+async function setTrackRating(track: DisplayTrack, rating: number) {
+  const value = Math.min(5, Math.max(0, Math.round(rating)))
+  const result = await runAction(() => fb.rating.set(playablePath(track), value, { cueIndex: trackSubsong(track) }))
+  if (!result) return false
+  track.rating = value
+  if (isSameTrack(track, state.currentTrack)) state.currentTrack!.rating = value
+  notify(value ? `已设置为 ${value} 星` : '已清除评分', 'success')
+  return true
+}
+
+async function setTracksRating(tracks: DisplayTrack[], rating: number) {
+  const value = Math.min(5, Math.max(0, Math.round(rating)))
+  let succeeded = 0
+  for (const track of tracks) {
+    const result = await runAction(() => fb.rating.set(playablePath(track), value, { cueIndex: trackSubsong(track) }))
+    if (!result) continue
+    track.rating = value
+    if (isSameTrack(track, state.currentTrack)) state.currentTrack!.rating = value
+    succeeded += 1
+  }
+  if (succeeded) notify(`已将 ${succeeded} 首曲目设置为 ${value || '未评'}星`, 'success')
+  return succeeded === tracks.length
+}
+
+async function scanReplayGain(tracks: DisplayTrack[], mode: 'track' | 'album') {
+  const result = await runAction(() => fb.replaygain.scan(tracks.map(playablePath), { mode }))
+  if (result) notify(result.note || `已提交 ${mode === 'album' ? '专辑' : '音轨'} ReplayGain 扫描`, 'success')
+  return Boolean(result)
+}
+
+async function clearReplayGain(tracks: DisplayTrack[]) {
+  const result = await runAction(() => fb.replaygain.clear(tracks.map(playablePath)))
+  if (result) notify(`已清除 ${result.clearedCount ?? tracks.length} 首曲目的 ReplayGain`, 'success')
+  return Boolean(result)
+}
+
+function localFilePath(track: DisplayTrack) {
+  const path = (track.absolutePath || track.path).replace(/\|subsong:\d+$/i, '')
+  if (!path || /^[a-z][a-z\d+.-]*:\/\//i.test(path) || track.subsong != null) return ''
+  return path
+}
+
+async function embedTrackArtwork(track: DisplayTrack, type: 'front' | 'back' | 'disc' | 'artist' = 'front') {
+  const path = localFilePath(track)
+  if (!path) return false
+  const picked = await fb.dialog.openFile({ title: '选择封面图片', multiple: false, filters: ['图片文件|*.jpg;*.jpeg;*.png;*.webp'] })
+  if (picked.canceled || !picked.filePaths?.[0]) return false
+  const bytes = await fb.file.readBinary(picked.filePaths[0])
+  const result = await runAction(() => fb.metadata.embedArtworkBytes(path, bytes, { type, target: 'embedded' }))
+  if (result) notify('封面已嵌入文件', 'success')
+  return Boolean(result)
+}
+
+async function removeTrackArtwork(track: DisplayTrack, type: 'front' | 'back' | 'disc' | 'artist' = 'front') {
+  const path = localFilePath(track)
+  if (!path) return false
+  const result = await runAction(() => fb.metadata.removeEmbeddedArt(path, { type }))
+  if (result) notify('已移除嵌入封面', 'success')
+  return Boolean(result)
+}
+
+async function renameTrackFile(track: DisplayTrack, newName: string) {
+  const path = localFilePath(track)
+  const safeName = newName.trim()
+  if (!path || !safeName || /[\\/:*?"<>|]/.test(safeName)) return false
+  const result = await runAction(() => fb.file.rename(path, safeName), '文件已重命名')
+  if (result) await rescanLibrary()
+  return Boolean(result)
+}
+
+async function moveTrackFile(track: DisplayTrack, folder: string) {
+  const path = localFilePath(track)
+  if (!path || !folder) return false
+  const fileName = path.replaceAll('/', '\\').split('\\').at(-1) ?? ''
+  const destination = `${folder.replace(/[\\/]+$/, '')}\\${fileName}`
+  const targetInfo = await fb.file.getInfo(destination)
+  if (targetInfo.exists) {
+    notify('目标文件已存在，未执行移动。', 'error')
+    return false
+  }
+  const result = await runAction(() => fb.file.move(path, destination), '文件已移动')
+  if (result) await rescanLibrary()
+  return Boolean(result)
+}
+
+async function chooseMoveFolder() {
+  const result = await runAction(() => fb.dialog.openFolder({ title: '选择目标文件夹' }))
+  return result && !result.canceled ? result.folderPath ?? '' : ''
+}
+
+async function deleteTrackFile(track: DisplayTrack) {
+  const path = localFilePath(track)
+  if (!path) return false
+  const result = await runAction(() => fb.file.delete(path, { moveToTrash: true }), '文件已移动到回收站')
+  if (result) await rescanLibrary()
+  return Boolean(result)
 }
 
 function findQueueIndex(items: TrackInfo[], expected: DisplayQueueItem) {
@@ -1496,7 +1918,10 @@ async function playQueueItem(index: number) {
   if (!item) return
   if (!state.connected) return playTrack(item)
   if (item.queueSource === 'playlist' && item.playlist != null && item.playlistItem != null) {
-    await runAction(() => fb.playlist.playTrack(item.playlist!, item.playlistItem!))
+    const playlistIndex = item.playlist
+    const resolvedIndex = await resolvePlaylistTrackIndex(playlistIndex, normalizeTrack(item), item.playlistItem)
+    if (resolvedIndex == null) return
+    await runAction(() => fb.playlist.playTrack(playlistIndex, resolvedIndex))
     return
   }
   const actual = await fb.queue.get()
@@ -1506,10 +1931,15 @@ async function playQueueItem(index: number) {
     await loadQueue()
     return
   }
-  const removed = await runAction(() => fb.queue.remove(actualIndex))
-  if (!removed) return
-  if (item.playlist != null && item.playlistItem != null) await runAction(() => fb.playlist.playTrack(item.playlist!, item.playlistItem!))
-  else await playGeneratedCollection([normalizeTrack(item)])
+  let played = false
+  if (item.playlist != null && item.playlistItem != null) {
+    const resolved = await resolvePlaylistTrackIndex(item.playlist, normalizeTrack(item), item.playlistItem)
+    if (resolved != null) played = Boolean(await runAction(() => fb.playlist.playTrack(item.playlist!, resolved)))
+  } else played = Boolean(await playGeneratedCollection([normalizeTrack(item)]))
+  if (!played) return
+  const latest = await fb.queue.get()
+  const latestIndex = findQueueIndex(latest.items ?? [], item)
+  if (latestIndex >= 0) await runAction(() => fb.queue.remove(latestIndex))
   await loadQueue()
 }
 
@@ -1572,6 +2002,10 @@ async function refreshLibrary() {
     }
     await navigate(state.route, 'none')
     notify('音乐库已刷新', 'success')
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '音乐库刷新失败。'
+    state.error = message
+    notify(message, 'error')
   } finally {
     state.loading = false
   }
@@ -1582,7 +2016,28 @@ async function rescanLibrary() {
     notify('音乐库扫描仅可在 foobar2000 中使用。', 'info')
     return
   }
-  await runAction(() => fb.library.rescan(), '已开始扫描音乐库')
+  const result = await runAction(() => fb.library.rescan(), '已开始扫描音乐库')
+  if (result) await pollLibraryStatus()
+}
+
+async function loadLibraryStatus() {
+  if (!state.connected) return
+  const status = await fb.library.getStatus()
+  state.libraryStatus = {
+    initialized: status.initialized,
+    scanning: status.scanning ?? null,
+    itemCount: status.itemCount ?? status.count ?? state.tracks.length,
+  }
+}
+
+async function pollLibraryStatus() {
+  if (libraryStatusTimer) clearTimeout(libraryStatusTimer)
+  await loadLibraryStatus()
+  if (state.libraryStatus.scanning === true) libraryStatusTimer = setTimeout(() => refreshSafely(pollLibraryStatus), 1200)
+  else if (state.libraryStatus.scanning === false) {
+    await loadLibrary()
+    await navigate(state.route, 'none')
+  }
 }
 
 async function showPreferences() {
@@ -1621,22 +2076,52 @@ function dispose() {
   if (toastTimer) clearTimeout(toastTimer)
   if (searchTimer) clearTimeout(searchTimer)
   if (libraryReloadTimer) clearTimeout(libraryReloadTimer)
+  if (libraryStatusTimer) clearTimeout(libraryStatusTimer)
   initPromise = null
 }
 
 export function useFoobar() {
   const filteredAlbums = computed(() => {
     const query = state.route.view === 'search' ? state.route.query.trim().toLocaleLowerCase() : ''
+    if (!query && state.route.view === 'home') {
+      const order = new Map<string, number>()
+      state.recentTracks.forEach((track, index) => {
+        const key = albumKey({ name: track.album, artist: track.albumArtist || track.artist })
+        if (!order.has(key)) order.set(key, index)
+      })
+      return state.albums.filter((album) => order.has(albumKey(album))).sort((a, b) => order.get(albumKey(a))! - order.get(albumKey(b))!)
+    }
     if (!query) return state.albums
     const terms = query.split(/\s+/).filter(Boolean)
     return state.albums.filter((album) =>
       terms.every((term) => `${album.name} ${album.artist}`.toLocaleLowerCase().includes(term)),
     )
   })
+  const libraryFilterOptions = computed(() => {
+    const artists = new Set<string>()
+    const albumArtists = new Set<string>()
+    const genres = new Set<string>()
+    const folders = new Set<string>()
+    state.tracks.forEach((track) => {
+      if (track.artist) artists.add(track.artist)
+      if (track.albumArtist || track.artist) albumArtists.add(track.albumArtist || track.artist)
+      String(track.genre || '').split(/[;,]/).map((value) => value.trim()).filter(Boolean).forEach((value) => genres.add(value))
+      const normalized = track.path.replaceAll('\\', '/')
+      const slash = normalized.lastIndexOf('/')
+      if (slash > 0) folders.add(normalized.slice(0, slash + 1))
+    })
+    return {
+      artists: [...artists].sort((a, b) => a.localeCompare(b)),
+      albumArtists: [...albumArtists].sort((a, b) => a.localeCompare(b)),
+      genres: [...genres].sort((a, b) => a.localeCompare(b)),
+      folders: [...folders].sort((a, b) => a.localeCompare(b)).slice(0, 1000),
+    }
+  })
 
   return {
     state,
     filteredAlbums,
+    libraryFilterOptions,
     initialize,
     dispose,
     setView,
@@ -1645,12 +2130,16 @@ export function useFoobar() {
     setSearch,
     submitSearch,
     clearSearch,
+    setLibraryFilter,
+    clearLibraryFilters,
+    applyCustomColumn,
     selectActivePlaylist,
     selectAlbum,
     loadFavourites,
     loadRadio,
     playTrack,
     playAlbum,
+    getAlbumTracks,
     shuffleAlbum,
     queueAlbum,
     addAlbumToPlaylist,
@@ -1659,6 +2148,8 @@ export function useFoobar() {
     clearPlaylist,
     removePlaylist,
     undoPlaylistChange,
+    reorderPlaylistTrack,
+    sortPlaylist,
     getOutputDevices,
     setOutputDevice,
     toggleDesktopLyrics,
@@ -1670,23 +2161,40 @@ export function useFoobar() {
     next,
     previous,
     seek,
+    seekAndPlay,
     setVolume,
     toggleMute,
     cyclePlaybackOrder,
     createPlaylist,
+    createAutoPlaylist,
     addToQueue,
+    addTracksToQueue,
     addToActivePlaylist,
     addToPlaylist,
+    addTracksToPlaylist,
     playNext,
     removePlaylistTrack,
     showInExplorer,
     openTrackAlbum,
     toggleFavourite,
+    getTrackDetails,
+    writeTrackMetadata,
+    setTrackRating,
+    setTracksRating,
+    scanReplayGain,
+    clearReplayGain,
+    embedTrackArtwork,
+    removeTrackArtwork,
+    renameTrackFile,
+    moveTrackFile,
+    chooseMoveFolder,
+    deleteTrackFile,
     openFiles,
     openFolder,
     importDroppedPaths,
     removeQueueItem,
     playQueueItem,
+    playHistoryTrack,
     moveQueueItemToTop,
     clearQueue,
     refreshLibrary,

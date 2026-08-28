@@ -5,6 +5,8 @@ import type { PlaylistInfo } from 'foo-webview-sdk'
 import AlbumGrid from './AlbumGrid.vue'
 import ArtworkImage from './ArtworkImage.vue'
 import TrackList from './TrackList.vue'
+import LibraryFilterBar from './LibraryFilterBar.vue'
+import type { PlayerUiState } from '../types/music'
 
 defineProps<{
   view: ViewId
@@ -18,6 +20,9 @@ defineProps<{
   search: string
   searchLoading: boolean
   importing: boolean
+  libraryFilters: PlayerUiState['libraryFilters']
+  filterOptions: { artists: string[]; albumArtists: string[]; genres: string[]; folders: string[] }
+  customColumn: PlayerUiState['customColumn']
 }>()
 
 const emit = defineEmits<{
@@ -32,6 +37,11 @@ const emit = defineEmits<{
   openFolder: []
   clearSearch: []
   albumMenu: [album: AlbumCard, event: MouseEvent]
+  selection: [tracks: DisplayTrack[]]
+  filterChange: [key: keyof PlayerUiState['libraryFilters'], value: string]
+  clearFilters: []
+  reorder: [from: number, to: number]
+  customColumn: [label: string, pattern: string]
 }>()
 </script>
 
@@ -65,7 +75,7 @@ const emit = defineEmits<{
 
       <section class="content-section content-section--tracks">
         <div class="section-heading">
-          <div><p class="eyebrow">最近聆听</p><h2>最近曲目</h2></div>
+           <div><p class="eyebrow">最近添加</p><h2>最近添加曲目</h2></div>
           <button @click="emit('navigate', 'songs')">查看全部 <ArrowRight :size="16" /></button>
         </div>
         <TrackList
@@ -75,6 +85,7 @@ const emit = defineEmits<{
           :is-playing="isPlaying"
           @play="(track, index) => emit('playTrack', track, index)"
           @menu="(track, index, event) => emit('trackMenu', track, index, event)"
+          @selection="emit('selection', $event)"
         />
       </section>
     </template>
@@ -105,6 +116,7 @@ const emit = defineEmits<{
         :is-playing="isPlaying"
         @play="(track, index) => emit('playTrack', track, index)"
         @menu="(track, index, event) => emit('trackMenu', track, index, event)"
+        @selection="emit('selection', $event)"
       />
     </template>
 
@@ -121,6 +133,7 @@ const emit = defineEmits<{
           <button v-if="tracks.length" class="round-play" aria-label="播放全部" @click="emit('playTrack', tracks[0], 0)"><Play :size="22" fill="currentColor" /></button>
         </div>
       </section>
+      <LibraryFilterBar v-if="view === 'songs'" :filters="libraryFilters" :options="filterOptions" :result-count="tracks.length" :custom-column="customColumn" @change="(key, value) => emit('filterChange', key, value)" @clear="emit('clearFilters')" @custom-column="(label, pattern) => emit('customColumn', label, pattern)" />
       <section v-if="view === 'search' && albums.length" class="content-section search-albums">
         <div class="section-heading"><div><p class="eyebrow">专辑</p><h2>匹配的专辑</h2></div><span>{{ albums.length }}</span></div>
         <AlbumGrid :albums="albums" :limit="6" @open="emit('openAlbum', $event)" @menu="(album, event) => emit('albumMenu', album, event)" />
@@ -130,8 +143,12 @@ const emit = defineEmits<{
         :tracks="tracks"
         :current-track="currentTrack"
         :is-playing="isPlaying"
+        :reorderable="view === 'playlist' && !activePlaylist?.isLocked && !activePlaylist?.isAutoplaylist"
+        :custom-column-label="customColumn.label"
         @play="(track, index) => emit('playTrack', track, index)"
         @menu="(track, index, event) => emit('trackMenu', track, index, event)"
+        @selection="emit('selection', $event)"
+        @reorder="(from, to) => emit('reorder', from, to)"
       />
       <div v-else-if="view !== 'search' || !albums.length" class="collection-empty">
         <SearchX v-if="view === 'search'" :size="30" /><FileMusic v-else :size="30" />

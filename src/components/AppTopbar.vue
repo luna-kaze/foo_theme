@@ -10,6 +10,9 @@ defineProps<{
   canGoForward: boolean
   outputDevices: OutputDevice[]
   outputLoading: boolean
+  connectionLabel: string
+  connectionTransitioning: boolean
+  libraryScanning: boolean
 }>()
 
 const emit = defineEmits<{
@@ -73,7 +76,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
 </script>
 
 <template>
-  <header ref="root" class="topbar">
+  <header ref="root" class="topbar" @dblclick.stop.prevent>
     <div class="history-buttons">
       <button aria-label="后退" :disabled="!canGoBack" @click="navigate('back')"><ChevronLeft :size="19" /></button>
       <button aria-label="前进" :disabled="!canGoForward" @click="navigate('forward')"><ChevronRight :size="19" /></button>
@@ -91,8 +94,8 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
       <kbd v-else>Ctrl K</kbd>
     </form>
     <div class="topbar-actions">
-      <span class="connection-pill" :class="{ online: connected }">
-        <i />{{ connected ? 'foobar2000' : '预览模式' }}
+      <span class="connection-pill" :class="{ online: connected && !connectionTransitioning, transitioning: connectionTransitioning }">
+        <i />{{ connected ? `${connectionLabel}${libraryScanning ? ' · 扫描中' : ''}` : '预览模式' }}
       </span>
       <button aria-label="更多选项" :class="{ active: menuOpen }" @click="menuOpen = !menuOpen"><MoreHorizontal :size="19" /></button>
       <div v-if="menuOpen" class="topbar-menu" :class="{ 'topbar-menu--outputs': outputOpen }">

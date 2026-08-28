@@ -13,6 +13,9 @@ export interface DisplayTrack extends TrackInfo {
   artworkUrl?: string
   isPlaying?: boolean
   sourceIndex?: number
+  customValue?: string
+  playCount?: number
+  lastPlayed?: string
 }
 
 export type ViewRoute =
@@ -35,6 +38,31 @@ export interface ParsedLyric {
   time: number
   text: string
   estimated?: boolean
+}
+
+export interface TrackDetails {
+  track: DisplayTrack
+  path: string
+  tags: Record<string, string | string[]>
+  info: {
+    duration?: number
+    bitrate?: number
+    sampleRate?: number
+    channels?: number
+    codec?: string
+  }
+  playCount: number
+  firstPlayed: string
+  lastPlayed: string
+  added: string
+  rating: number
+  replayGain: {
+    trackGain?: string
+    trackPeak?: string
+    albumGain?: string
+    albumPeak?: string
+    hasReplayGain?: boolean
+  }
 }
 
 export interface PlayerUiState {
@@ -60,6 +88,7 @@ export interface PlayerUiState {
   lyricsSynced: boolean
   isPlaying: boolean
   playbackState: 'stopped' | 'playing' | 'paused'
+  canSeek: boolean
   position: number
   duration: number
   volume: number
@@ -75,4 +104,16 @@ export interface PlayerUiState {
   searchLoading: boolean
   dndSupported: boolean
   importing: boolean
+  libraryFilters: {
+    artist: string
+    albumArtist: string
+    genre: string
+    folder: string
+    field: 'all' | 'title' | 'artist' | 'album' | 'genre' | 'path'
+    operator: 'contains' | 'equals' | 'startsWith'
+    value: string
+    playState: 'all' | 'played' | 'unplayed' | 'recent'
+  }
+  libraryStatus: { initialized: boolean; scanning: boolean | null; itemCount: number }
+  customColumn: { label: string; pattern: string }
 }

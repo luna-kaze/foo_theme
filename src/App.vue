@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { AlertCircle, CheckCircle2, FileMusic, Info } from '@lucide/vue'
 import AppSidebar from './components/AppSidebar.vue'
 import AppTopbar from './components/AppTopbar.vue'
@@ -9,20 +9,128 @@ import MiniPlayer from './components/MiniPlayer.vue'
 import NowPlayingPanel from './components/NowPlayingPanel.vue'
 import PlayerBar from './components/PlayerBar.vue'
 import QueuePopover from './components/QueuePopover.vue'
+import TrackInspector from './components/TrackInspector.vue'
+import FileOperationDialog from './components/FileOperationDialog.vue'
 import TrackActionMenu from './components/TrackActionMenu.vue'
 import { useFoobar } from './composables/useFoobar'
 import type { OutputDevice, PlaylistInfo } from 'foo-webview-sdk'
-import type { AlbumCard, DisplayTrack, ViewId } from './types/music'
+import type { AlbumCard, DisplayTrack, TrackDetails, ViewId } from './types/music'
 import { menuIcons, showContextMenu, type ContextMenuItem } from './utils/contextMenu'
+import { isSameTrack } from './utils/track'
 
 const player = useFoobar()
-const { state, filteredAlbums } = player
+const { state, filteredAlbums, libraryFilterOptions } = player
 const miniMode = new URLSearchParams(window.location.search).get('mode') === 'mini'
 const trackMenu = reactive({ open: false, track: null as DisplayTrack | null, index: -1, x: 0, y: 0 })
 const dragState = reactive({ active: false, depth: 0 })
 const queueOpen = ref(false)
 const outputDevices = ref<OutputDevice[]>([])
 const outputLoading = ref(false)
+const connectionLabel = ref('foobar2000')
+const connectionTransitioning = ref(false)
+let airplayTimer: ReturnType<typeof setTimeout> | null = null
+const selectedTracks = ref<DisplayTrack[]>([])
+const inspector = reactive({ open: false, mode: 'properties' as 'properties' | 'edit', tracks: [] as DisplayTrack[], album: null as AlbumCard | null, details: [] as TrackDetails[], loading: false, busy: false, request: 0 })
+const fileDialog = reactive({ open: false, mode: 'rename' as 'rename' | 'move' | 'delete', track: null as DisplayTrack | null, target: '', busy: false })
+
+watch(() => state.currentTrack?.path ?? '', (path, previous) => {
+  const active = path.toLocaleLowerCase().startsWith('airplay://live/')
+  const wasActive = previous.toLocaleLowerCase().startsWith('airplay://live/')
+  if (active === wasActive) return
+  if (airplayTimer) clearTimeout(airplayTimer)
+  connectionTransitioning.value = true
+  connectionLabel.value = active ? '正在连接 AirPlay…' : 'AirPlay 已断开'
+  airplayTimer = setTimeout(() => {
+    connectionTransitioning.value = false
+    connectionLabel.value = active ? 'AirPlay' : 'foobar2000'
+  }, 1000)
+})
+
+async function openInspector(mode: 'properties' | 'edit', tracks: DisplayTrack[], album: AlbumCard | null = null) {
+  const request = ++inspector.request
+  inspector.open = true
+  inspector.mode = mode
+  inspector.tracks = tracks
+  inspector.album = album
+  inspector.details = []
+  inspector.loading = true
+  try {
+    const details = await player.getTrackDetails(tracks)
+    if (request === inspector.request) inspector.details = details
+  } finally {
+    if (request === inspector.request) inspector.loading = false
+  }
+}
+
+async function saveInspectorMetadata(tags: Record<string, string>) {
+  inspector.busy = true
+  try {
+    if (await player.writeTrackMetadata(inspector.tracks, tags)) inspector.open = false
+  } finally { inspector.busy = false }
+}
+
+async function setInspectorRating(rating: number) {
+  if (await player.setTracksRating(inspector.tracks, rating)) inspector.details.forEach((detail) => { detail.rating = rating })
+}
+
+async function scanInspectorReplayGain(mode: 'track' | 'album') {
+  inspector.busy = true
+  try { if (await player.scanReplayGain(inspector.tracks, mode)) inspector.details = await player.getTrackDetails(inspector.tracks) } finally { inspector.busy = false }
+}
+
+async function clearInspectorReplayGain() {
+  inspector.busy = true
+  try { if (await player.clearReplayGain(inspector.tracks)) inspector.details = await player.getTrackDetails(inspector.tracks) } finally { inspector.busy = false }
+}
+
+async function embedInspectorArtwork(type: 'front' | 'back' | 'disc' | 'artist') {
+  const track = inspector.tracks[0]
+  if (!track) return
+  inspector.busy = true
+  try { if (await player.embedTrackArtwork(track, type)) inspector.details = await player.getTrackDetails(inspector.tracks) } finally { inspector.busy = false }
+}
+
+async function removeInspectorArtwork(type: 'front' | 'back' | 'disc' | 'artist') {
+  const track = inspector.tracks[0]
+  if (!track) return
+  inspector.busy = true
+  try { await player.removeTrackArtwork(track, type) } finally { inspector.busy = false }
+}
+
+function openFileDialog(mode: 'rename' | 'move' | 'delete', track: DisplayTrack, target = '') {
+  fileDialog.open = true
+  fileDialog.mode = mode
+  fileDialog.track = track
+  fileDialog.target = target
+}
+
+async function renameFile(name: string) {
+  if (!fileDialog.track) return
+  fileDialog.busy = true
+  try { if (await player.renameTrackFile(fileDialog.track, name)) fileDialog.open = false } finally { fileDialog.busy = false }
+}
+
+async function deleteFile() {
+  if (!fileDialog.track) return
+  fileDialog.busy = true
+  try { if (await player.deleteTrackFile(fileDialog.track)) fileDialog.open = false } finally { fileDialog.busy = false }
+}
+
+async function moveFile(track: DisplayTrack) {
+  const folder = await player.chooseMoveFolder()
+  if (folder) openFileDialog('move', track, folder)
+}
+
+async function confirmMoveFile() {
+  if (!fileDialog.track || !fileDialog.target) return
+  fileDialog.busy = true
+  try { if (await player.moveTrackFile(fileDialog.track, fileDialog.target)) fileDialog.open = false } finally { fileDialog.busy = false }
+}
+
+async function createPlaylistFromDialog(name: string, options?: { query: string; sort: string; keepSorted: boolean }) {
+  if (options) await player.createAutoPlaylist(name, options.query, options.sort, options.keepSorted)
+  else await player.createPlaylist(name)
+}
 
 function onKeydown(event: KeyboardEvent) {
   const target = event.target as HTMLElement | null
@@ -33,21 +141,27 @@ function onKeydown(event: KeyboardEvent) {
     document.querySelector<HTMLInputElement>('.topbar-search input')?.focus()
     return
   }
+  if (event.key === 'F11') {
+    event.preventDefault()
+    void player.toggleFullscreen()
+    return
+  }
   if (event.key === 'Escape') {
     state.nowPlayingOpen = false
     state.dialog = null
+    inspector.open = false
     trackMenu.open = false
     queueOpen.value = false
     return
   }
+  if (event.key === 'MediaPlayPause') { void player.togglePlayback(); return }
+  if (event.key === 'MediaTrackNext') { void player.next(); return }
+  if (event.key === 'MediaTrackPrevious') { void player.previous(); return }
   if (event.defaultPrevented || interactive) return
   if (event.code === 'Space' && !event.altKey && !event.ctrlKey && !event.metaKey) {
     event.preventDefault()
     void player.togglePlayback()
   }
-  if (event.key === 'MediaPlayPause') void player.togglePlayback()
-  if (event.key === 'MediaTrackNext') void player.next()
-  if (event.key === 'MediaTrackPrevious') void player.previous()
 }
 
 onMounted(() => {
@@ -69,6 +183,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('dragleave', onDragLeave)
   window.removeEventListener('drop', onDrop)
   player.dispose()
+  if (airplayTimer) clearTimeout(airplayTimer)
 })
 
 function openNowPlaying() {
@@ -143,7 +258,7 @@ async function selectOutputDevice(device: OutputDevice) {
 }
 
 function playlistSubmenu(prefix: string): ContextMenuItem[] {
-  return state.playlists.slice(0, 80).map((playlist) => ({
+  return state.playlists.map((playlist) => ({
     id: `${prefix}:${playlist.index}`,
     label: playlist.name,
     enabled: !playlist.isLocked && !playlist.isAutoplaylist,
@@ -160,11 +275,12 @@ async function openPopup(items: ContextMenuItem[], event: MouseEvent) {
 }
 
 async function openTrackMenu(track: DisplayTrack, index: number, event: MouseEvent) {
+  const targets = selectedTracks.value.some((item) => isSameTrack(item, track)) ? selectedTracks.value : [track]
   if (state.connected) {
     trackMenu.open = false
     try {
       const items: ContextMenuItem[] = [
-        { id: 'track:header', type: 'nowplaying', cover: track.artworkUrl, title: track.title, subtitle: `${track.artist} · ${track.album}` },
+        { id: 'track:header', type: 'nowplaying', cover: track.artworkUrl, title: targets.length > 1 ? `已选择 ${targets.length} 首曲目` : track.title, subtitle: targets.length > 1 ? '批量操作' : `${track.artist} · ${track.album}` },
         { type: 'separator' },
         { id: 'track:play', label: '立即播放', iconSvg: menuIcons.play },
         { id: 'track:next', label: '下一首播放', iconSvg: menuIcons.next },
@@ -175,6 +291,12 @@ async function openTrackMenu(track: DisplayTrack, index: number, event: MouseEve
         { type: 'separator' },
         { id: 'track:album', label: '前往专辑', iconSvg: menuIcons.album },
         { id: 'track:location', label: '显示文件位置', iconSvg: menuIcons.folder, enabled: Boolean(track.path) },
+        { type: 'separator' },
+        { id: 'track:properties', label: '属性', iconSvg: menuIcons.info },
+        { id: 'track:edit', label: '编辑标签', iconSvg: menuIcons.edit },
+        { id: 'track:rename', label: '重命名文件', iconSvg: menuIcons.edit, enabled: track.subsong == null && !track.path.includes('://') },
+        { id: 'track:move', label: '移动文件', iconSvg: menuIcons.folder, enabled: track.subsong == null && !track.path.includes('://') },
+        { id: 'track:delete-file', label: '移动文件到回收站', iconSvg: menuIcons.remove, enabled: track.subsong == null && !track.path.includes('://') },
       ]
       if (state.view === 'playlist' && index >= 0) {
         items.push({ type: 'separator' }, { id: 'track:remove', label: `从“${state.activePlaylist?.name ?? '播放列表'}”移除`, iconSvg: menuIcons.remove })
@@ -183,12 +305,17 @@ async function openTrackMenu(track: DisplayTrack, index: number, event: MouseEve
       if (!action) return
       if (action === 'track:play') await handlePlayTrack(track, index)
       if (action === 'track:next') await player.playNext(track)
-      if (action === 'track:queue') await player.addToQueue(track)
+      if (action === 'track:queue') await player.addTracksToQueue(targets)
       if (action === 'track:favourite') await player.toggleFavourite(track)
       if (action === 'track:album') await player.openTrackAlbum(track)
       if (action === 'track:location') await player.showInExplorer(track)
+      if (action === 'track:properties') await openInspector('properties', targets)
+      if (action === 'track:edit') await openInspector('edit', targets)
+      if (action === 'track:rename') openFileDialog('rename', track)
+      if (action === 'track:move') await moveFile(track)
+      if (action === 'track:delete-file') openFileDialog('delete', track)
       if (action === 'track:remove') await player.removePlaylistTrack(track, index)
-      if (action.startsWith('track:playlist:')) await player.addToPlaylist(track, Number(action.split(':').at(-1)))
+      if (action.startsWith('track:playlist:')) await player.addTracksToPlaylist(targets, Number(action.split(':').at(-1)))
     } catch (error) {
       player.notify(error instanceof Error ? error.message : '无法打开右键菜单。', 'error')
     }
@@ -219,11 +346,14 @@ async function openAlbumMenu(album: AlbumCard, event: MouseEvent) {
     { id: 'album:queue', label: '将专辑添加到队列', iconSvg: menuIcons.queue },
     { type: 'separator' },
     { id: 'album:playlist', label: '将专辑添加到播放列表', iconSvg: menuIcons.playlist, enabled: state.playlists.length > 0, submenu: playlistSubmenu('album:playlist') },
+    { type: 'separator' },
+    { id: 'album:properties', label: '专辑属性', iconSvg: menuIcons.info },
   ], event)
   if (action === 'album:open') await player.selectAlbum(album)
   if (action === 'album:play') await player.playAlbum(album)
   if (action === 'album:shuffle') await player.shuffleAlbum(album)
   if (action === 'album:queue') await player.queueAlbum(album)
+  if (action === 'album:properties') await openInspector('properties', await player.getAlbumTracks(album), album)
   if (action?.startsWith('album:playlist:')) await player.addAlbumToPlaylist(album, Number(action.split(':').at(-1)))
 }
 
@@ -238,6 +368,8 @@ async function openPlaylistMenu(playlist: PlaylistInfo, event: MouseEvent) {
     { type: 'separator' },
     { id: 'playlist:duplicate', label: '复制播放列表', iconSvg: menuIcons.copy },
     { id: 'playlist:undo', label: '撤销上次更改', iconSvg: menuIcons.refresh, enabled: writable },
+    { id: 'playlist:sort-title', label: '按标题排序', iconSvg: menuIcons.refresh, enabled: writable },
+    { id: 'playlist:sort-album', label: '按专辑 / 音轨排序', iconSvg: menuIcons.album, enabled: writable },
     { type: 'separator' },
     { id: 'playlist:clear', label: '清空播放列表', iconSvg: menuIcons.remove, enabled: writable && playlist.trackCount > 0 },
     { id: 'playlist:remove', label: '删除播放列表', iconSvg: menuIcons.remove, enabled: !playlist.isLocked },
@@ -247,6 +379,8 @@ async function openPlaylistMenu(playlist: PlaylistInfo, event: MouseEvent) {
   if (action === 'playlist:shuffle') await player.playPlaylist(playlist.index, true)
   if (action === 'playlist:duplicate') await player.duplicatePlaylist(playlist.index)
   if (action === 'playlist:undo') await player.undoPlaylistChange(playlist.index)
+  if (action === 'playlist:sort-title') await player.sortPlaylist(playlist.index, '%title%')
+  if (action === 'playlist:sort-album') await player.sortPlaylist(playlist.index, '%album artist%|%date%|%album%|%discnumber%|%tracknumber%')
   if (action === 'playlist:clear') await player.clearPlaylist(playlist.index)
   if (action === 'playlist:remove') await player.removePlaylist(playlist.index)
 }
@@ -332,6 +466,7 @@ function onDrop(event: DragEvent) {
     :duration="state.duration"
     :volume="state.volume"
     :muted="state.muted"
+    :can-seek="state.canSeek"
     @toggle="player.togglePlayback"
     @next="player.next"
     @previous="player.previous"
@@ -363,6 +498,9 @@ function onDrop(event: DragEvent) {
         :can-go-forward="state.canGoForward"
         :output-devices="outputDevices"
         :output-loading="outputLoading"
+        :connection-label="connectionLabel"
+        :connection-transitioning="connectionTransitioning"
+        :library-scanning="state.libraryStatus.scanning === true"
         @search="player.setSearch"
         @submit-search="submitPrimarySearch"
         @clear-search="clearPrimarySearch"
@@ -391,6 +529,9 @@ function onDrop(event: DragEvent) {
           :search="state.search"
           :search-loading="state.searchLoading"
           :importing="state.importing"
+          :library-filters="state.libraryFilters"
+          :filter-options="libraryFilterOptions"
+          :custom-column="state.customColumn"
           @navigate="navigatePrimary"
           @back="goBackPrimary"
           @open-album="openPrimaryAlbum"
@@ -402,6 +543,11 @@ function onDrop(event: DragEvent) {
           @open-files="player.openFiles"
           @open-folder="player.openFolder"
           @clear-search="clearPrimarySearch"
+          @selection="selectedTracks = $event"
+          @filter-change="player.setLibraryFilter"
+          @clear-filters="player.clearLibraryFilters"
+          @reorder="player.reorderPlaylistTrack"
+          @custom-column="player.applyCustomColumn"
         />
       </div>
     </div>
@@ -411,6 +557,8 @@ function onDrop(event: DragEvent) {
       :track="state.currentTrack"
       :artwork="state.currentArtwork"
       :is-playing="state.isPlaying"
+      :playback-state="state.playbackState"
+      :can-seek="state.canSeek"
       :position="state.position"
       :duration="state.duration"
       :lyrics="state.lyrics"
@@ -420,9 +568,10 @@ function onDrop(event: DragEvent) {
       @close="player.closeNowPlaying"
       @toggle="player.togglePlayback"
       @seek="player.seek"
+      @seek-resume="player.seekAndPlay"
       @favourite="player.toggleFavourite"
       @play-queue="player.playQueueItem"
-      @play-history="player.playTrack"
+      @play-history="player.playHistoryTrack"
     />
 
     <Transition name="queue-card">
@@ -447,6 +596,7 @@ function onDrop(event: DragEvent) {
       :duration="state.duration"
       :volume="state.volume"
       :muted="state.muted"
+      :can-seek="state.canSeek"
       :playback-order="state.playbackOrder"
       :now-playing-open="state.nowPlayingOpen"
       :queue-open="queueOpen"
@@ -465,7 +615,7 @@ function onDrop(event: DragEvent) {
     <CreatePlaylistDialog
       v-if="state.dialog === 'createPlaylist'"
       @close="state.dialog = null"
-      @create="player.createPlaylist"
+      @create="createPlaylistFromDialog"
     />
 
     <TrackActionMenu
@@ -487,7 +637,28 @@ function onDrop(event: DragEvent) {
       @album="runTrackAction(() => player.openTrackAlbum(trackMenu.track!))"
       @location="runTrackAction(() => player.showInExplorer(trackMenu.track!))"
       @remove="runTrackAction(() => player.removePlaylistTrack(trackMenu.track!, trackMenu.index))"
+      @properties="runTrackAction(() => openInspector('properties', [trackMenu.track!]))"
+      @edit-metadata="runTrackAction(() => openInspector('edit', [trackMenu.track!]))"
     />
+
+    <TrackInspector
+      v-if="inspector.open"
+      :mode="inspector.mode"
+      :tracks="inspector.tracks"
+      :details="inspector.details"
+      :album="inspector.album"
+      :loading="inspector.loading"
+      :busy="inspector.busy"
+      @close="inspector.open = false"
+      @save="saveInspectorMetadata"
+      @rating="setInspectorRating"
+      @scan-replay-gain="scanInspectorReplayGain"
+      @clear-replay-gain="clearInspectorReplayGain"
+      @embed-artwork="embedInspectorArtwork"
+      @remove-artwork="removeInspectorArtwork"
+    />
+
+    <FileOperationDialog v-if="fileDialog.open && fileDialog.track" :track="fileDialog.track" :mode="fileDialog.mode" :target="fileDialog.target" :busy="fileDialog.busy" @close="fileDialog.open = false" @rename="renameFile" @move="confirmMoveFile" @delete="deleteFile" />
 
     <Transition name="drop-overlay">
       <div v-if="dragState.active" class="drop-overlay">

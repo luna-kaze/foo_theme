@@ -4,18 +4,90 @@ import type { DisplayTrack } from '../types/music'
 import { formatTime } from '../utils/format'
 import ArtworkImage from './ArtworkImage.vue'
 import { isSameTrack, trackKey } from '../utils/track'
+import { ref, watch } from 'vue'
 
-defineProps<{
+const props = defineProps<{
   tracks: DisplayTrack[]
   currentTrack: DisplayTrack | null
   isPlaying: boolean
   compact?: boolean
+  reorderable?: boolean
+  customColumnLabel?: string
 }>()
 
 const emit = defineEmits<{
   play: [track: DisplayTrack, index: number]
   menu: [track: DisplayTrack, index: number, event: MouseEvent]
+  selection: [tracks: DisplayTrack[]]
+  reorder: [from: number, to: number]
 }>()
+
+const selected = ref(new Set<string>())
+let anchorIndex = -1
+let dragIndex = -1
+
+function publishSelection() {
+  emit('selection', props.tracks.filter((track) => selected.value.has(trackKey(track))))
+}
+
+function selectRow(track: DisplayTrack, index: number, event: MouseEvent) {
+  if (event.shiftKey && anchorIndex >= 0) {
+    const next = new Set(selected.value)
+    for (let cursor = Math.min(anchorIndex, index); cursor <= Math.max(anchorIndex, index); cursor += 1) next.add(trackKey(props.tracks[cursor]))
+    selected.value = next
+    publishSelection()
+    return
+  }
+  if (event.ctrlKey || event.metaKey) {
+    const next = new Set(selected.value)
+    const key = trackKey(track)
+    if (next.has(key)) next.delete(key); else next.add(key)
+    selected.value = next
+    anchorIndex = index
+    publishSelection()
+    return
+  }
+  selected.value = new Set()
+  anchorIndex = index
+  publishSelection()
+  emit('play', track, index)
+}
+
+function openMenu(track: DisplayTrack, index: number, event: MouseEvent) {
+  if (!selected.value.has(trackKey(track))) {
+    selected.value = new Set([trackKey(track)])
+    anchorIndex = index
+    publishSelection()
+  }
+  emit('menu', track, index, event)
+}
+
+function selectAll(event: KeyboardEvent) {
+  if (!(event.ctrlKey || event.metaKey) || event.key.toLocaleLowerCase() !== 'a') return
+  event.preventDefault()
+  event.stopPropagation()
+  selected.value = new Set(props.tracks.map(trackKey))
+  publishSelection()
+}
+
+function beginDrag(index: number, event: DragEvent) {
+  if (!props.reorderable) return
+  dragIndex = index
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
+}
+
+function dropRow(index: number, event: DragEvent) {
+  if (!props.reorderable || dragIndex < 0 || dragIndex === index) return
+  event.preventDefault()
+  emit('reorder', dragIndex, index)
+  dragIndex = -1
+}
+
+watch(() => props.tracks, () => {
+  selected.value = new Set()
+  anchorIndex = -1
+  publishSelection()
+})
 
 function isCurrent(track: DisplayTrack, currentTrack: DisplayTrack | null) {
   return isSameTrack(track, currentTrack)
@@ -23,21 +95,26 @@ function isCurrent(track: DisplayTrack, currentTrack: DisplayTrack | null) {
 </script>
 
 <template>
-  <div class="track-list" :class="{ compact }">
+  <div class="track-list" :class="{ compact, 'has-custom-column': customColumnLabel }" tabindex="-1" @keydown="selectAll">
     <div class="track-list__header">
-      <span>#</span><span>标题</span><span>专辑</span><span>年份</span><span>时长</span><span />
+      <span>#</span><span>标题</span><span>专辑</span><span>年份</span><span v-if="customColumnLabel">{{ customColumnLabel }}</span><span>时长</span><span />
     </div>
     <div
       v-for="(track, index) in tracks"
       :key="`${trackKey(track)}-${index}`"
       class="track-row"
-      :class="{ current: isCurrent(track, currentTrack) }"
+      :class="{ current: isCurrent(track, currentTrack), selected: selected.has(trackKey(track)) }"
       role="button"
       tabindex="0"
-      @click="emit('play', track, index)"
+      :draggable="reorderable"
+      @click="selectRow(track, index, $event)"
       @keydown.enter.self.stop="emit('play', track, index)"
       @keydown.space.self.stop.prevent="emit('play', track, index)"
-      @contextmenu.prevent="emit('menu', track, index, $event)"
+      @contextmenu.prevent="openMenu(track, index, $event)"
+      @dragstart="beginDrag(index, $event)"
+      @dragover.prevent
+      @drop="dropRow(index, $event)"
+      @dragend="dragIndex = -1"
     >
       <span class="track-row__index">
         <Volume2 v-if="isCurrent(track, currentTrack) && isPlaying" :size="15" />
@@ -53,6 +130,7 @@ function isCurrent(track: DisplayTrack, currentTrack: DisplayTrack | null) {
       </span>
       <span class="track-row__album">{{ track.album || '未知专辑' }}</span>
       <span>{{ track.date?.slice(0, 4) || '—' }}</span>
+      <span v-if="customColumnLabel" class="track-row__custom">{{ track.customValue || '—' }}</span>
       <span class="track-row__duration">{{ formatTime(track.duration) }}</span>
       <span class="track-row__more">
         <Heart v-if="Number(track.rating ?? 0) === 5" :size="13" fill="currentColor" class="track-row__favourite" />

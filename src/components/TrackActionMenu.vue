@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { ChevronRight, Disc3, FolderOpen, Heart, ListEnd, ListPlus, ListStart, Play, Trash2, X } from '@lucide/vue'
+import { ChevronRight, Disc3, Edit3, FolderOpen, Heart, Info, ListEnd, ListPlus, ListStart, Play, Trash2, X } from '@lucide/vue'
 import type { DisplayTrack, ViewId } from '../types/music'
 import type { PlaylistInfo } from 'foo-webview-sdk'
 import ArtworkImage from './ArtworkImage.vue'
@@ -33,6 +33,8 @@ const emit = defineEmits<{
   album: []
   location: []
   remove: []
+  properties: []
+  editMetadata: []
 }>()
 </script>
 
@@ -59,6 +61,8 @@ const emit = defineEmits<{
         </div>
       </div>
       <div class="track-action-menu__group">
+        <button @click="emit('properties')"><Info :size="16" /><span>属性</span></button>
+        <button :disabled="!connected" @click="emit('editMetadata')"><Edit3 :size="16" /><span>编辑标签</span></button>
         <button @click="emit('album')"><Disc3 :size="16" /><span>前往专辑</span></button>
         <button :disabled="!connected || !track.path" @click="emit('location')"><FolderOpen :size="16" /><span>显示文件位置</span></button>
       </div>

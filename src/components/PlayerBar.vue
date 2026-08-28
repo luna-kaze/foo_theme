@@ -14,6 +14,7 @@ const props = defineProps<{
   duration: number
   volume: number
   muted: boolean
+  canSeek: boolean
   playbackOrder: number
   nowPlayingOpen: boolean
   queueOpen: boolean
@@ -79,6 +80,7 @@ const emit = defineEmits<{
           :max="Math.max(duration, 1)"
           step="0.1"
           :value="shownPosition"
+          :disabled="!canSeek"
           :style="{ '--progress': `${duration ? (shownPosition / duration) * 100 : 0}%` }"
           @input="previewSeek"
           @change="commitSeek"

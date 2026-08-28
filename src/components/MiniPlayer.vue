@@ -12,6 +12,7 @@ defineProps<{
   duration: number
   volume: number
   muted: boolean
+  canSeek: boolean
 }>()
 
 const emit = defineEmits<{
@@ -34,7 +35,7 @@ const emit = defineEmits<{
       <strong>{{ track?.title || '当前没有播放' }}</strong>
       <span>{{ track?.artist || '从音乐库中选择一首曲目' }}</span>
       <div class="mini-player__progress">
-        <input type="range" min="0" :max="Math.max(duration, 1)" step="0.1" :value="position" :style="{ '--progress': `${duration ? (position / duration) * 100 : 0}%` }" @change="emit('seek', Number(($event.target as HTMLInputElement).value))" />
+        <input type="range" min="0" :max="Math.max(duration, 1)" step="0.1" :value="position" :disabled="!canSeek" :style="{ '--progress': `${duration ? (position / duration) * 100 : 0}%` }" @change="emit('seek', Number(($event.target as HTMLInputElement).value))" />
         <small>{{ formatTime(position) }} / {{ formatTime(duration) }}</small>
       </div>
     </section>

@@ -11,6 +11,8 @@ const props = defineProps<{
   track: DisplayTrack | null
   artwork: string
   isPlaying: boolean
+  playbackState: 'stopped' | 'playing' | 'paused'
+  canSeek: boolean
   position: number
   duration: number
   lyrics: ParsedLyric[]
@@ -23,6 +25,7 @@ const emit = defineEmits<{
   close: []
   toggle: []
   seek: [position: number]
+  seekResume: [position: number]
   favourite: [track: DisplayTrack]
   playQueue: [index: number]
   playHistory: [track: DisplayTrack]
@@ -41,6 +44,8 @@ const recordZone = ref<HTMLElement | null>(null)
 const coverflowIndex = ref(0)
 const lyricsVisible = ref(true)
 let resumeTimer: ReturnType<typeof setTimeout> | null = null
+let coverflowClickTimer: ReturnType<typeof setTimeout> | null = null
+let pendingCoverflowIndex: number | null = null
 
 const activeLyric = computed(() => {
   if (!props.lyrics.some((line) => line.time >= 0)) return -1
@@ -62,17 +67,17 @@ const playbackProgress = computed(() => {
   return props.duration > 0 ? Math.min(1, Math.max(0, position / props.duration)) : 0
 })
 
-const tonearmAngle = computed(() => tonearmDragAngle.value ?? 3 + playbackProgress.value * 33)
+const tonearmAngle = computed(() => tonearmDragAngle.value ?? (props.playbackState === 'playing' ? 3 + playbackProgress.value * 33 : -10))
 
 const coverflowItems = computed(() => [
-  ...[...props.history].reverse().map((track) => ({
+  ...[...props.history].reverse().map((track, index) => ({
     track,
     artwork: track.artworkUrl || '',
     kind: 'history' as const,
     queueIndex: -1,
-    key: `played:${trackKey(track)}`,
+    key: `history:${trackKey(track)}:${index}`,
   })),
-  ...(props.track ? [{ track: props.track, artwork: props.artwork || props.track.artworkUrl || '', kind: 'current' as const, queueIndex: -1, key: `played:${trackKey(props.track)}` }] : []),
+  ...(props.track ? [{ track: props.track, artwork: props.artwork || props.track.artworkUrl || '', kind: 'current' as const, queueIndex: -1, key: `current:${trackKey(props.track)}` }] : []),
   ...props.queue.slice(0, 12).map((track, queueIndex) => ({
     track,
     artwork: track.artworkUrl || '',
@@ -118,7 +123,7 @@ function resumeAutoFollow() {
 }
 
 function seekLyric(line: ParsedLyric) {
-  if (line.time < 0 || !props.lyricsSynced) return
+  if (line.time < 0 || !props.lyricsSynced || !props.canSeek) return
   emit('seek', line.time)
   resumeAutoFollow()
 }
@@ -139,12 +144,12 @@ function updateTonearm(event: PointerEvent) {
   const rawAngle = Math.atan2(-dx, Math.max(1, dy)) * 180 / Math.PI
   const angle = Math.min(36, Math.max(-10, rawAngle))
   tonearmDragAngle.value = angle
-  tonearmWillPause.value = angle < 3
-  scrubPosition.value = tonearmWillPause.value ? null : ((angle - 3) / 33) * props.duration
+  tonearmWillPause.value = angle < -5
+  scrubPosition.value = tonearmWillPause.value ? null : (Math.max(3, angle) - 3) / 33 * props.duration
 }
 
 function beginTonearm(event: PointerEvent) {
-  if (!props.duration) return
+  if (!props.duration || !props.canSeek) return
   tonearmDragging.value = true
   tonearmWillPause.value = false
   tonearmDragAngle.value = tonearmAngle.value
@@ -158,8 +163,8 @@ function finishTonearm(event: PointerEvent) {
   if (tonearmWillPause.value) {
     if (props.isPlaying) emit('toggle')
   } else if (scrubPosition.value != null) {
-    emit('seek', scrubPosition.value)
-    if (!props.isPlaying) emit('toggle')
+    if (props.isPlaying) emit('seek', scrubPosition.value)
+    else emit('seekResume', scrubPosition.value)
   }
   tonearmDragging.value = false
   tonearmWillPause.value = false
@@ -175,14 +180,27 @@ function cancelTonearm() {
 }
 
 function moveCoverflow(direction: number) {
+  if (coverflowClickTimer) clearTimeout(coverflowClickTimer)
+  coverflowClickTimer = null
+  pendingCoverflowIndex = null
   coverflowIndex.value = Math.min(coverflowItems.value.length - 1, Math.max(0, coverflowIndex.value + direction))
 }
 
 function selectCoverflow(index: number) {
-  coverflowIndex.value = index
+  if (coverflowClickTimer) return
+  pendingCoverflowIndex = index
+  coverflowClickTimer = setTimeout(() => {
+    if (pendingCoverflowIndex != null) coverflowIndex.value = pendingCoverflowIndex
+    pendingCoverflowIndex = null
+    coverflowClickTimer = null
+  }, 220)
 }
 
-function activateCoverflow(index: number) {
+function activateCoverflow() {
+  if (coverflowClickTimer) clearTimeout(coverflowClickTimer)
+  const index = pendingCoverflowIndex ?? coverflowIndex.value
+  pendingCoverflowIndex = null
+  coverflowClickTimer = null
   const item = coverflowItems.value[index]
   if (!item) return
   coverflowIndex.value = index
@@ -193,6 +211,9 @@ function activateCoverflow(index: number) {
 
 function setMode(nextMode: 'standard' | 'coverflow') {
   if (mode.value === nextMode) return
+  if (coverflowClickTimer) clearTimeout(coverflowClickTimer)
+  coverflowClickTimer = null
+  pendingCoverflowIndex = null
   cancelTonearm()
   mode.value = nextMode
   if (nextMode === 'coverflow') coverflowIndex.value = currentCoverflowIndex.value
@@ -205,6 +226,9 @@ function onCoverflowWheel(event: WheelEvent) {
 
 watch(activeLyric, () => void nextTick(() => scrollToActive()))
 watch(() => trackKey(props.track), () => {
+  if (coverflowClickTimer) clearTimeout(coverflowClickTimer)
+  coverflowClickTimer = null
+  pendingCoverflowIndex = null
   lyricRows.value = []
   coverForward.value = false
   cancelTonearm()
@@ -223,6 +247,7 @@ watch(() => coverflowItems.value.length, (length) => {
 
 onBeforeUnmount(() => {
   if (resumeTimer) clearTimeout(resumeTimer)
+  if (coverflowClickTimer) clearTimeout(coverflowClickTimer)
   cancelTonearm()
 })
 </script>
@@ -238,7 +263,7 @@ onBeforeUnmount(() => {
       <header class="immersive-toolbar">
         <button class="immersive-tool" aria-label="退出沉浸模式" @click="emit('close')"><X :size="19" /><span>退出沉浸</span></button>
         <div class="immersive-mode-switch" aria-label="沉浸显示模式">
-          <button type="button" :class="{ active: mode === 'standard' }" aria-label="标准沉浸" @pointerdown.stop @click.stop="setMode('standard')"><Rows3 :size="17" /><span>标准沉浸</span></button>
+          <button type="button" :class="{ active: mode === 'standard' }" aria-label="Standard" @pointerdown.stop @click.stop="setMode('standard')"><Rows3 :size="17" /><span>Standard</span></button>
           <button type="button" :class="{ active: mode === 'coverflow' }" aria-label="Coverflow" @pointerdown.stop @click.stop="setMode('coverflow')"><Layers3 :size="17" /><span>Coverflow</span></button>
         </div>
         <div class="immersive-toolbar__actions">
@@ -268,7 +293,7 @@ onBeforeUnmount(() => {
             <div class="tonearm-base" />
             <button
               class="tonearm"
-              :class="{ parked: !isPlaying && !tonearmDragging, dragging: tonearmDragging, 'will-pause': tonearmWillPause }"
+              :class="{ parked: playbackState !== 'playing' && !tonearmDragging, dragging: tonearmDragging, 'will-pause': tonearmWillPause }"
               :style="{ '--tonearm-angle': `${tonearmAngle}deg` }"
               aria-label="拖动唱针调整进度，拖出唱片暂停"
               @pointerdown.prevent="beginTonearm"
@@ -295,7 +320,7 @@ onBeforeUnmount(() => {
                 :key="`${line.time}-${index}`"
                 :ref="(element) => setLyricRow(element, index)"
                 :class="{ active: index === activeLyric, past: index < activeLyric }"
-                :disabled="line.time < 0 || !lyricsSynced"
+                :disabled="line.time < 0 || !lyricsSynced || !canSeek"
                 @click="seekLyric(line)"
               >{{ line.text }}</button>
               <button v-if="autoFollowPaused" class="lyrics-follow" @click.stop="resumeAutoFollow"><LocateFixed :size="15" /> 跟随当前歌词</button>
@@ -314,7 +339,7 @@ onBeforeUnmount(() => {
             :class="{ active: index === coverflowIndex, far: Math.abs(index - coverflowIndex) > 3 }"
             :style="{ '--cover-offset': index - coverflowIndex, '--cover-distance': Math.abs(index - coverflowIndex), '--cover-image': item.artwork ? `url(${item.artwork})` : 'none' }"
             @click="selectCoverflow(index)"
-            @dblclick.stop.prevent="activateCoverflow(index)"
+            @dblclick.stop.prevent="activateCoverflow"
           >
             <span class="coverflow-card__sleeve">
               <span class="coverflow-card__face"><ArtworkImage :src="item.artwork" :alt="`${item.track.album} 封面`" /></span>

@@ -21,7 +21,7 @@ export function playablePath(track: TrackIdentity) {
   const source = track.fullPath || track.path || track.absolutePath || ''
   if (!source || /\|subsong:\d+$/i.test(source)) return source
   const subsong = trackSubsong(track)
-  return subsong > 0 ? `${source}|subsong:${subsong}` : source
+  return track.subsong != null ? `${source}|subsong:${subsong}` : source
 }
 
 export function trackKey(track: TrackIdentity | null | undefined) {
