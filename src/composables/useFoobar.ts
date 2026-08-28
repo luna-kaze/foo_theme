@@ -60,6 +60,8 @@ let libraryReloadTimer: ReturnType<typeof setTimeout> | null = null
 let searchRequest = 0
 let mediaRequest = 0
 let stagingPlaylistPromise: Promise<number> | null = null
+let desktopLyricsCommand: { guid: string; subGuid?: string } | null = null
+let miniPlayerWindowId = ''
 const history: ViewId[] = ['home']
 let historyIndex = 0
 const stagingPlaylistName = 'WebView 临时播放'
@@ -817,7 +819,11 @@ async function clearPlaylist(playlistIndex: number) {
 
 async function removePlaylist(playlistIndex: number) {
   const playlist = state.playlists.find((item) => item.index === playlistIndex)
-  if (!playlist || playlist.isLocked) return
+  if (!playlist) return
+  if (playlist.isLocked) {
+    notify('此播放列表已锁定，无法删除。', 'info')
+    return
+  }
   if (!state.connected) {
     state.playlists = state.playlists.filter((item) => item.index !== playlistIndex)
     notify(`已删除“${playlist.name}”`, 'success')
@@ -828,10 +834,13 @@ async function removePlaylist(playlistIndex: number) {
     message: `确定要删除“${playlist.name}”吗？此操作不会删除音乐文件。`,
     type: 'warning',
     buttons: ['删除', '取消'],
-    defaultButton: 1,
+    defaultButton: 0,
   })
   if (!confirmation.confirmed) return
-  const result = await runAction(() => fb.playlist.remove(playlistIndex), `已删除“${playlist.name}”`)
+  const result = await runAction(
+    () => playlist.isAutoplaylist ? fb.playlist.removeAutoplaylist(playlistIndex) : fb.playlist.remove(playlistIndex),
+    `已删除“${playlist.name}”`,
+  )
   if (!result) return
   await loadPlaylists()
   if (state.view === 'playlist') {
@@ -986,6 +995,10 @@ async function playNext(track: DisplayTrack) {
 
 async function removePlaylistTrack(track: DisplayTrack, visibleIndex: number) {
   if (state.view !== 'playlist' || !state.activePlaylist) return
+  if (state.activePlaylist.isLocked || state.activePlaylist.isAutoplaylist) {
+    notify('此播放列表不允许移除曲目。', 'info')
+    return
+  }
   const index = track.sourceIndex ?? visibleIndex
   if (!state.connected) {
     const demoIndex = state.viewTracks.findIndex((item) => item.path === track.path)
@@ -994,8 +1007,78 @@ async function removePlaylistTrack(track: DisplayTrack, visibleIndex: number) {
     notify('已从播放列表移除', 'success')
     return
   }
-  await runAction(() => fb.playlist.removeTracks(state.activePlaylist!.index, [index]), '已从播放列表移除')
+  const result = await runAction(() => fb.playlist.removeTracks(state.activePlaylist!.index, [index]), '已从播放列表移除')
+  if (!result) return
   await refreshActivePlaylist()
+}
+
+async function getOutputDevices() {
+  if (!state.connected) {
+    notify('输出设备仅可在 foobar2000 中设置。', 'info')
+    return []
+  }
+  return (await runAction(() => fb.config.getOutputDevices())) ?? []
+}
+
+async function setOutputDevice(outputId: string, deviceId: string, name: string) {
+  if (!state.connected) return
+  await runAction(() => fb.config.setOutputDevice(outputId, deviceId), `已切换到 ${name}`)
+}
+
+async function findDesktopLyricsCommand() {
+  const queries = ['显示桌面歌词', '桌面歌词', 'Desktop Lyrics', '歌词']
+  for (const query of queries) {
+    const result = await fb.discovery.searchCommands(query, {
+      scope: 'mainmenu',
+      expandDynamic: true,
+      includeHidden: true,
+    })
+    const command = result.results?.find((item) => {
+      const label = `${item.path ?? ''} ${item.name}`.toLocaleLowerCase()
+      return item.type === 'mainmenu' && item.executable !== false && (label.includes('桌面歌词') || label.includes('desktop lyrics'))
+    })
+    if (command) return { guid: command.guid, subGuid: command.subGuid }
+  }
+  return null
+}
+
+async function toggleDesktopLyrics() {
+  if (!state.connected) {
+    notify('桌面歌词仅可在 foobar2000 中使用。', 'info')
+    return
+  }
+  desktopLyricsCommand ??= await findDesktopLyricsCommand()
+  if (!desktopLyricsCommand) {
+    notify('未检测到 ESLyric 桌面歌词命令，请安装并启用对应组件。', 'error')
+    return
+  }
+  const result = await runAction(() => fb.discovery.executeMainMenuCommand(desktopLyricsCommand!.guid, desktopLyricsCommand!.subGuid))
+  if (!result) desktopLyricsCommand = null
+}
+
+async function openMiniPlayer() {
+  if (!state.connected) {
+    notify('迷你播放器仅可在 foobar2000 中打开。', 'info')
+    return
+  }
+  if (miniPlayerWindowId) {
+    const focused = await runAction(() => fb.ui.focus(miniPlayerWindowId))
+    if (focused) return
+    miniPlayerWindowId = ''
+  }
+  const url = new URL(window.location.href)
+  url.search = 'mode=mini'
+  const result = await runAction(() => fb.ui.createPopup({
+    url: url.href,
+    width: 430,
+    height: 156,
+    title: 'foobar2000 迷你播放器',
+    frame: false,
+    resizable: false,
+    alwaysOnTop: true,
+    profile: 'miniPlayer',
+  }))
+  miniPlayerWindowId = result?.windowId ?? ''
 }
 
 async function showInExplorer(track: DisplayTrack) {
@@ -1278,6 +1361,10 @@ export function useFoobar() {
     clearPlaylist,
     removePlaylist,
     undoPlaylistChange,
+    getOutputDevices,
+    setOutputDevice,
+    toggleDesktopLyrics,
+    openMiniPlayer,
     shuffleCurrent,
     togglePlayback,
     next,

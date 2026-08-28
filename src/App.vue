@@ -91,11 +91,6 @@ function showFavourites() {
   void player.loadFavourites()
 }
 
-function showRadio() {
-  closeSecondaryUi()
-  void player.loadRadio()
-}
-
 function goBackPrimary() {
   closeSecondaryUi()
   void player.goBack()
@@ -119,6 +114,20 @@ function clearPrimarySearch() {
 function openPrimaryAlbum(album: AlbumCard) {
   closeSecondaryUi()
   void player.selectAlbum(album)
+}
+
+async function openOutputDeviceMenu(event: MouseEvent) {
+  const devices = await player.getOutputDevices()
+  if (!devices.length) return
+  const action = await openPopup(devices.map((device, index) => ({
+    id: `output:${index}`,
+    label: device.name,
+    checked: device.isCurrent,
+    iconSvg: menuIcons.settings,
+  })), event)
+  if (!action?.startsWith('output:')) return
+  const device = devices[Number(action.split(':')[1])]
+  if (device) await player.setOutputDevice(device.outputId, device.deviceId, device.name)
 }
 
 function playlistSubmenu(prefix: string): ContextMenuItem[] {
@@ -310,16 +319,13 @@ function onDrop(event: DragEvent) {
       :playlists="state.playlists"
       :active-playlist="state.activePlaylist"
       :search="state.search"
-      :importing="state.importing"
       @navigate="navigatePrimary"
       @playlist="selectPrimaryPlaylist"
       @search="player.setSearch"
       @submit-search="submitPrimarySearch"
-      @open-files="player.openFiles"
       @playlist-menu="openPlaylistMenu"
       @create-playlist="state.dialog = 'createPlaylist'"
       @favourites="showFavourites"
-      @radio="showRadio"
     />
 
     <div class="workspace">
@@ -338,6 +344,9 @@ function onDrop(event: DragEvent) {
         @fullscreen="player.toggleFullscreen"
         @reload="player.reloadInterface"
         @rescan="player.rescanLibrary"
+        @output-devices="openOutputDeviceMenu"
+        @desktop-lyrics="player.toggleDesktopLyrics"
+        @mini-player="player.openMiniPlayer"
       />
       <div class="workspace-scroll">
         <LibraryView

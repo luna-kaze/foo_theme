@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import { ChevronLeft, ChevronRight, Maximize, MoreHorizontal, RefreshCw, Search, Settings, ScanSearch, X } from '@lucide/vue'
+import { AudioLines, ChevronLeft, ChevronRight, Maximize, MoreHorizontal, PanelTopOpen, RefreshCw, Search, Settings, ScanSearch, Subtitles, X } from '@lucide/vue'
 
 defineProps<{
   connected: boolean
@@ -20,17 +20,22 @@ const emit = defineEmits<{
   fullscreen: []
   reload: []
   rescan: []
+  outputDevices: [event: MouseEvent]
+  desktopLyrics: []
+  miniPlayer: []
 }>()
 
 const menuOpen = ref(false)
 const root = ref<HTMLElement | null>(null)
 
-function run(action: 'refresh' | 'preferences' | 'fullscreen' | 'reload' | 'rescan') {
+function run(action: 'refresh' | 'preferences' | 'fullscreen' | 'reload' | 'rescan' | 'desktopLyrics' | 'miniPlayer') {
   if (action === 'refresh') emit('refresh')
   if (action === 'preferences') emit('preferences')
   if (action === 'fullscreen') emit('fullscreen')
   if (action === 'reload') emit('reload')
   if (action === 'rescan') emit('rescan')
+  if (action === 'desktopLyrics') emit('desktopLyrics')
+  if (action === 'miniPlayer') emit('miniPlayer')
   menuOpen.value = false
 }
 
@@ -75,6 +80,9 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPoin
         <button @click="run('refresh')"><RefreshCw :size="16" /><span>刷新音乐库</span></button>
         <button @click="run('rescan')"><ScanSearch :size="16" /><span>重新扫描音乐库</span></button>
         <button @click="run('preferences')"><Settings :size="16" /><span>首选项</span></button>
+        <button @click="emit('outputDevices', $event); menuOpen = false"><AudioLines :size="16" /><span>输出设备</span></button>
+        <button @click="run('desktopLyrics')"><Subtitles :size="16" /><span>桌面歌词</span></button>
+        <button @click="run('miniPlayer')"><PanelTopOpen :size="16" /><span>迷你播放器</span></button>
         <button @click="run('fullscreen')"><Maximize :size="16" /><span>切换全屏</span></button>
         <button @click="run('reload')"><RefreshCw :size="16" /><span>重新加载界面</span></button>
       </div>

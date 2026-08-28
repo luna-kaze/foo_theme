@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Album, FileMusic, Heart, Home, ListMusic, Music2, Plus, Radio, Search } from '@lucide/vue'
+import { Album, Heart, Home, ListMusic, Music2, Plus, Search } from '@lucide/vue'
 import type { PlaylistInfo } from 'foo-webview-sdk'
 import type { ViewId } from '../types/music'
 import foobarLogo from '../assets/foobar2000.png'
@@ -9,7 +9,6 @@ defineProps<{
   playlists: PlaylistInfo[]
   activePlaylist: PlaylistInfo | null
   search: string
-  importing: boolean
 }>()
 
 const emit = defineEmits<{
@@ -19,8 +18,6 @@ const emit = defineEmits<{
   submitSearch: []
   createPlaylist: []
   favourites: []
-  radio: []
-  openFiles: []
   playlistMenu: [playlist: PlaylistInfo, event: MouseEvent]
 }>()
 </script>
@@ -36,8 +33,6 @@ const emit = defineEmits<{
       <button type="submit" aria-label="搜索音乐库"><Search :size="15" /></button>
       <input type="search" placeholder="搜索音乐库" :value="search" @input="emit('search', ($event.target as HTMLInputElement).value)" />
     </form>
-
-    <button class="sidebar-open-music" :disabled="importing" @click="emit('openFiles')"><FileMusic :size="17" /><span>{{ importing ? '正在打开…' : '打开音乐' }}</span></button>
 
     <nav class="sidebar-nav" aria-label="主导航">
       <button :class="{ active: view === 'home' }" @click="emit('navigate', 'home')">
@@ -76,7 +71,6 @@ const emit = defineEmits<{
     <div class="sidebar-spacer" />
     <div class="sidebar-shortcuts">
       <button :class="{ active: view === 'favourites' }" @click="emit('favourites')"><Heart :size="17" /><span>收藏</span></button>
-      <button :class="{ active: view === 'radio' }" @click="emit('radio')"><Radio :size="17" /><span>音乐库电台</span></button>
     </div>
   </aside>
 </template>
