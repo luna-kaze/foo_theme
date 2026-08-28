@@ -83,6 +83,7 @@ let radioNonce = 0
 let ownedPlaylistPromise: Promise<{ index: number; name: string }> | null = null
 let ownerIdPromise: Promise<string> | null = null
 let libraryStatusTimer: ReturnType<typeof setTimeout> | null = null
+let noDragResizeTimer: ReturnType<typeof setTimeout> | null = null
 let playcountLibraryGeneration = -1
 const priorFavouriteRatings = new Map<string, number>()
 let desktopLyricsCommand: { guid: string; subGuid?: string } | null = null
@@ -546,6 +547,17 @@ function bindEvents() {
   ]
 }
 
+async function syncNoDragRegion() {
+  if (!state.connected) return
+  await fb.ui.clearDragRegions()
+  await fb.ui.setNoDragRegions([{ x: 0, y: 0, width: window.innerWidth, height: window.innerHeight }])
+}
+
+function scheduleNoDragRegion() {
+  if (noDragResizeTimer) clearTimeout(noDragResizeTimer)
+  noDragResizeTimer = setTimeout(() => void syncNoDragRegion().catch(() => undefined), 80)
+}
+
 async function initialize() {
   if (initPromise) return initPromise
   const generation = ++lifecycleGeneration
@@ -566,6 +578,8 @@ async function initialize() {
       state.connected = fb.isAvailable()
       if (!state.connected) throw new Error('foobar2000 宿主桥接不可用。')
       bindEvents()
+      await syncNoDragRegion()
+      window.addEventListener('resize', scheduleNoDragRegion)
       const [library, playlists, capabilities] = await Promise.allSettled([
         loadLibrary(),
         loadPlaylists(),
@@ -595,6 +609,7 @@ async function initialize() {
       void fb.ui.setTitle('foobar2000').catch(() => undefined)
     } catch (error) {
       if (generation !== lifecycleGeneration) return
+      window.removeEventListener('resize', scheduleNoDragRegion)
       state.error = error instanceof Error ? error.message : '无法连接到 foobar2000。'
       notify(state.error, 'error')
       subscriptions.forEach((unsubscribe) => unsubscribe())
@@ -2130,6 +2145,8 @@ async function loadLibraryStatus() {
 
 async function pollLibraryStatus() {
   if (libraryStatusTimer) clearTimeout(libraryStatusTimer)
+  if (noDragResizeTimer) clearTimeout(noDragResizeTimer)
+  window.removeEventListener('resize', scheduleNoDragRegion)
   await loadLibraryStatus()
   if (state.libraryStatus.scanning === true) libraryStatusTimer = setTimeout(() => refreshSafely(pollLibraryStatus), 1200)
   else if (state.libraryStatus.scanning === false) {

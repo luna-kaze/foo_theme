@@ -36,6 +36,7 @@ const emit = defineEmits<{
 const menuOpen = ref(false)
 const outputOpen = ref(false)
 const root = ref<HTMLElement | null>(null)
+let dragCandidate: { pointerId: number; x: number; y: number } | null = null
 
 function run(action: 'refresh' | 'preferences' | 'fullscreen' | 'reload' | 'rescan' | 'desktopLyrics' | 'miniPlayer') {
   if (action === 'refresh') emit('refresh')
@@ -72,19 +73,40 @@ function selectOutput(device: OutputDevice) {
   outputOpen.value = false
 }
 
-function startDrag(event: PointerEvent) {
-  if (event.button !== 0 || event.detail > 1) return
+function prepareDrag(event: PointerEvent) {
+  if (event.button !== 0) return
   const target = event.target as HTMLElement
   if (target.closest('button, input, form, select, a, [role="button"], [role="menu"]')) return
+  dragCandidate = { pointerId: event.pointerId, x: event.clientX, y: event.clientY }
+}
+
+function onDocumentPointerMove(event: PointerEvent) {
+  if (!dragCandidate || event.pointerId !== dragCandidate.pointerId) return
+  if (Math.hypot(event.clientX - dragCandidate.x, event.clientY - dragCandidate.y) < 5) return
+  dragCandidate = null
   emit('drag')
 }
 
-onMounted(() => document.addEventListener('pointerdown', onDocumentPointerDown))
-onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPointerDown))
+function cancelDragCandidate(event: PointerEvent) {
+  if (dragCandidate?.pointerId === event.pointerId) dragCandidate = null
+}
+
+onMounted(() => {
+  document.addEventListener('pointerdown', onDocumentPointerDown)
+  document.addEventListener('pointermove', onDocumentPointerMove)
+  document.addEventListener('pointerup', cancelDragCandidate)
+  document.addEventListener('pointercancel', cancelDragCandidate)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', onDocumentPointerDown)
+  document.removeEventListener('pointermove', onDocumentPointerMove)
+  document.removeEventListener('pointerup', cancelDragCandidate)
+  document.removeEventListener('pointercancel', cancelDragCandidate)
+})
 </script>
 
 <template>
-  <header ref="root" class="topbar" @pointerdown="startDrag" @dblclick.stop.prevent>
+  <header ref="root" class="topbar" @pointerdown="prepareDrag" @dblclick.stop.prevent>
     <div class="history-buttons">
       <button aria-label="后退" :disabled="!canGoBack" @click="navigate('back')"><ChevronLeft :size="19" /></button>
       <button aria-label="前进" :disabled="!canGoForward" @click="navigate('forward')"><ChevronRight :size="19" /></button>
