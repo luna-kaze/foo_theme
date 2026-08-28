@@ -549,7 +549,9 @@ function bindEvents() {
 
 async function syncNoDragRegion() {
   if (!state.connected) return
-  await fb.ui.clearDragRegions()
+  // A non-empty, unreachable custom region disables the host's default 32px
+  // titlebar fallback, whose native double-click handler toggles maximization.
+  await fb.ui.setDragRegions([{ x: -10000, y: -10000, width: 1, height: 1 }])
   await fb.ui.setNoDragRegions([{ x: 0, y: 0, width: window.innerWidth, height: window.innerHeight }])
 }
 
