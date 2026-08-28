@@ -14,7 +14,6 @@ import { useFoobar } from './composables/useFoobar'
 import type { OutputDevice, PlaylistInfo } from 'foo-webview-sdk'
 import type { AlbumCard, DisplayTrack, ViewId } from './types/music'
 import { menuIcons, showContextMenu, type ContextMenuItem } from './utils/contextMenu'
-import { isSameTrack } from './utils/track'
 
 const player = useFoobar()
 const { state, filteredAlbums } = player
@@ -27,7 +26,7 @@ const outputLoading = ref(false)
 
 function onKeydown(event: KeyboardEvent) {
   const target = event.target as HTMLElement | null
-  const editing = target?.matches('input, textarea, [contenteditable="true"]')
+  const interactive = target?.closest('button, a, input, textarea, select, [contenteditable="true"], [role="button"], [role="slider"]')
 
   if (event.ctrlKey && event.key.toLocaleLowerCase() === 'k') {
     event.preventDefault()
@@ -41,8 +40,8 @@ function onKeydown(event: KeyboardEvent) {
     queueOpen.value = false
     return
   }
-  if (editing) return
-  if (event.code === 'Space') {
+  if (event.defaultPrevented || interactive) return
+  if (event.code === 'Space' && !event.altKey && !event.ctrlKey && !event.metaKey) {
     event.preventDefault()
     void player.togglePlayback()
   }
@@ -165,19 +164,19 @@ async function openTrackMenu(track: DisplayTrack, index: number, event: MouseEve
     trackMenu.open = false
     try {
       const items: ContextMenuItem[] = [
-        { id: 'track:album', type: 'nowplaying', cover: track.artworkUrl, title: track.title, subtitle: `${track.artist} · ${track.album}` },
+        { id: 'track:header', type: 'nowplaying', cover: track.artworkUrl, title: track.title, subtitle: `${track.artist} · ${track.album}` },
         { type: 'separator' },
         { id: 'track:play', label: '立即播放', iconSvg: menuIcons.play },
         { id: 'track:next', label: '下一首播放', iconSvg: menuIcons.next },
         { id: 'track:queue', label: '添加到队列', iconSvg: menuIcons.queue },
         { type: 'separator' },
-        { id: 'track:favourite', label: Number(track.rating ?? 0) > 0 ? '取消收藏' : '添加到收藏', checked: Number(track.rating ?? 0) > 0, iconSvg: menuIcons.heart },
+        { id: 'track:favourite', label: Number(track.rating ?? 0) === 5 ? '取消收藏' : '添加到收藏', checked: Number(track.rating ?? 0) === 5, iconSvg: menuIcons.heart },
         { id: 'track:playlist', label: '添加到播放列表', iconSvg: menuIcons.playlist, enabled: state.playlists.length > 0, submenu: playlistSubmenu('track:playlist') },
         { type: 'separator' },
         { id: 'track:album', label: '前往专辑', iconSvg: menuIcons.album },
         { id: 'track:location', label: '显示文件位置', iconSvg: menuIcons.folder, enabled: Boolean(track.path) },
       ]
-      if (state.view === 'playlist') {
+      if (state.view === 'playlist' && index >= 0) {
         items.push({ type: 'separator' }, { id: 'track:remove', label: `从“${state.activePlaylist?.name ?? '播放列表'}”移除`, iconSvg: menuIcons.remove })
       }
       const action = await openPopup(items, event)
@@ -212,7 +211,7 @@ async function openAlbumMenu(album: AlbumCard, event: MouseEvent) {
     return
   }
   const action = await openPopup([
-    { id: 'album:open', type: 'nowplaying', cover: album.artworkUrl, title: album.name, subtitle: `${album.artist}${album.year ? ` · ${album.year}` : ''}` },
+    { id: 'album:header', type: 'nowplaying', cover: album.artworkUrl, title: album.name, subtitle: `${album.artist}${album.year ? ` · ${album.year}` : ''}` },
     { type: 'separator' },
     { id: 'album:open', label: '打开专辑', iconSvg: menuIcons.album },
     { id: 'album:play', label: '播放专辑', iconSvg: menuIcons.play },
@@ -256,7 +255,7 @@ async function openQueueMenu(index: number, event: MouseEvent) {
   const item = state.queue[index]
   if (!item) return
   const action = await openPopup([
-    { id: 'queue:play', type: 'nowplaying', title: item.title, subtitle: `${item.artist} · ${item.album} · ${item.queueSource === 'explicit' ? '播放队列' : '当前播放列表'}` },
+    { id: 'queue:header', type: 'nowplaying', title: item.title, subtitle: `${item.artist} · ${item.album} · ${item.queueSource === 'explicit' ? '播放队列' : '当前播放列表'}` },
     { type: 'separator' },
     { id: 'queue:play', label: '立即播放', iconSvg: menuIcons.play },
     { id: 'queue:top', label: item.queueSource === 'explicit' ? '移到队首' : '设为下一首', iconSvg: menuIcons.next, enabled: item.queueSource === 'playlist' || item.sourceIndex > 0 },
@@ -264,7 +263,7 @@ async function openQueueMenu(index: number, event: MouseEvent) {
     { type: 'separator' },
     { id: 'queue:clear', label: '清空队列', iconSvg: menuIcons.remove, enabled: state.queue.some((entry) => entry.queueSource === 'explicit') },
   ], event)
-  if (action === 'queue:play') await handlePlayTrack(item)
+  if (action === 'queue:play') await player.playQueueItem(index)
   if (action === 'queue:top') await player.moveQueueItemToTop(index)
   if (action === 'queue:remove') await player.removeQueueItem(index)
   if (action === 'queue:clear') await player.clearQueue()
@@ -292,33 +291,31 @@ async function runTrackAction(action: () => Promise<unknown>) {
 }
 
 async function handlePlayTrack(track: DisplayTrack, index?: number) {
-  const current = isSameTrack(state.currentTrack, track)
-  if (current && state.isPlaying) await player.togglePlayback()
-  else await player.playTrack(track, index)
+  await player.playTrack(track, index)
 }
 
 function onDragEnter(event: DragEvent) {
-  if (!state.connected) return
+  if (!state.connected || !state.dndSupported) return
   event.preventDefault()
   dragState.depth += 1
   dragState.active = true
 }
 
 function onDragOver(event: DragEvent) {
-  if (!state.connected) return
+  if (!state.connected || !state.dndSupported) return
   event.preventDefault()
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
 }
 
 function onDragLeave(event: DragEvent) {
-  if (!state.connected) return
+  if (!state.connected || !state.dndSupported) return
   event.preventDefault()
   dragState.depth = Math.max(0, dragState.depth - 1)
   if (!dragState.depth) dragState.active = false
 }
 
 function onDrop(event: DragEvent) {
-  if (!state.connected) return
+  if (!state.connected || !state.dndSupported) return
   event.preventDefault()
   dragState.depth = 0
   dragState.active = false
@@ -347,7 +344,7 @@ function onDrop(event: DragEvent) {
     <AppSidebar
       :view="state.view"
       :playlists="state.playlists"
-      :active-playlist="state.activePlaylist"
+      :active-playlist="state.browsingPlaylist ?? state.activePlaylist"
       :search="state.search"
       @navigate="navigatePrimary"
       @playlist="selectPrimaryPlaylist"
@@ -387,7 +384,7 @@ function onDrop(event: DragEvent) {
           :albums="filteredAlbums"
           :tracks="state.visibleTracks"
           :current-track="state.currentTrack"
-          :active-playlist="state.activePlaylist"
+          :active-playlist="state.browsingPlaylist ?? state.activePlaylist"
           :selected-album="state.selectedAlbum"
           :is-playing="state.isPlaying"
           :loading="state.loading"
@@ -419,20 +416,22 @@ function onDrop(event: DragEvent) {
       :lyrics="state.lyrics"
       :lyrics-synced="state.lyricsSynced"
       :queue="state.queue"
+      :history="state.playbackHistory"
       @close="player.closeNowPlaying"
       @toggle="player.togglePlayback"
       @seek="player.seek"
       @favourite="player.toggleFavourite"
-      @play-queue="state.queue[$event] && handlePlayTrack(state.queue[$event])"
+      @play-queue="player.playQueueItem"
+      @play-history="player.playTrack"
     />
 
     <Transition name="queue-card">
       <QueuePopover
         v-if="queueOpen"
         :queue="state.queue"
-        :random-mode="state.playbackOrder >= 3"
+        :playback-order="state.playbackOrder"
         @close="queueOpen = false"
-        @play="state.queue[$event] && handlePlayTrack(state.queue[$event])"
+        @play="player.playQueueItem"
         @remove="player.removeQueueItem"
         @move="player.moveQueueItemToTop"
         @clear="player.clearQueue"
@@ -474,7 +473,7 @@ function onDrop(event: DragEvent) {
       :track="trackMenu.track"
       :index="trackMenu.index"
       :view="state.view"
-      :active-playlist="state.activePlaylist"
+      :active-playlist="state.browsingPlaylist ?? state.activePlaylist"
       :playlists="state.playlists"
       :connected="state.connected"
       :x="trackMenu.x"

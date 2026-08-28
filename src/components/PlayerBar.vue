@@ -4,6 +4,7 @@ import { ListMusic, Maximize2, Mic2, Pause, Play, Repeat, Repeat1, Shuffle, Skip
 import type { DisplayTrack } from '../types/music'
 import { formatTime } from '../utils/format'
 import ArtworkImage from './ArtworkImage.vue'
+import { trackKey } from '../utils/track'
 
 const props = defineProps<{
   track: DisplayTrack | null
@@ -32,7 +33,7 @@ function commitSeek(event: Event) {
   emit('seek', value)
 }
 
-watch(() => props.track?.path, () => {
+watch(() => trackKey(props.track), () => {
   seekPreview.value = null
 })
 
@@ -81,6 +82,8 @@ const emit = defineEmits<{
           :style="{ '--progress': `${duration ? (shownPosition / duration) * 100 : 0}%` }"
           @input="previewSeek"
           @change="commitSeek"
+          @pointercancel="seekPreview = null"
+          @blur="seekPreview = null"
         />
         <span>{{ formatTime(duration) }}</span>
       </div>

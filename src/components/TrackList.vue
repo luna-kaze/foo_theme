@@ -3,7 +3,7 @@ import { Heart, MoreHorizontal, Pause, Play, Volume2 } from '@lucide/vue'
 import type { DisplayTrack } from '../types/music'
 import { formatTime } from '../utils/format'
 import ArtworkImage from './ArtworkImage.vue'
-import { isSameTrack } from '../utils/track'
+import { isSameTrack, trackKey } from '../utils/track'
 
 defineProps<{
   tracks: DisplayTrack[]
@@ -29,14 +29,14 @@ function isCurrent(track: DisplayTrack, currentTrack: DisplayTrack | null) {
     </div>
     <div
       v-for="(track, index) in tracks"
-      :key="track.id ?? `${track.path}-${index}`"
+      :key="`${trackKey(track)}-${index}`"
       class="track-row"
       :class="{ current: isCurrent(track, currentTrack) }"
       role="button"
       tabindex="0"
       @click="emit('play', track, index)"
-      @keydown.enter="emit('play', track, index)"
-      @keydown.space.prevent="emit('play', track, index)"
+      @keydown.enter.self.stop="emit('play', track, index)"
+      @keydown.space.self.stop.prevent="emit('play', track, index)"
       @contextmenu.prevent="emit('menu', track, index, $event)"
     >
       <span class="track-row__index">
@@ -55,8 +55,8 @@ function isCurrent(track: DisplayTrack, currentTrack: DisplayTrack | null) {
       <span>{{ track.date?.slice(0, 4) || '—' }}</span>
       <span class="track-row__duration">{{ formatTime(track.duration) }}</span>
       <span class="track-row__more">
-        <Heart v-if="Number(track.rating ?? 0) > 0" :size="13" fill="currentColor" class="track-row__favourite" />
-        <button aria-label="曲目操作" @click.stop="emit('menu', track, index, $event)"><MoreHorizontal :size="17" /></button>
+        <Heart v-if="Number(track.rating ?? 0) === 5" :size="13" fill="currentColor" class="track-row__favourite" />
+        <button aria-label="曲目操作" @keydown.stop @click.stop="emit('menu', track, index, $event)"><MoreHorizontal :size="17" /></button>
       </span>
     </div>
   </div>

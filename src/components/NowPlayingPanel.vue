@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight, Eye, EyeOff, Heart, Layers3, LocateFixed, Mi
 import type { DisplayQueueItem, DisplayTrack, ParsedLyric } from '../types/music'
 import { formatTime } from '../utils/format'
 import ArtworkImage from './ArtworkImage.vue'
+import { trackKey } from '../utils/track'
 
 const props = defineProps<{
   open: boolean
@@ -15,6 +16,7 @@ const props = defineProps<{
   lyrics: ParsedLyric[]
   lyricsSynced: boolean
   queue: DisplayQueueItem[]
+  history: DisplayTrack[]
 }>()
 
 const emit = defineEmits<{
@@ -23,6 +25,7 @@ const emit = defineEmits<{
   seek: [position: number]
   favourite: [track: DisplayTrack]
   playQueue: [index: number]
+  playHistory: [track: DisplayTrack]
 }>()
 
 const mode = ref<'standard' | 'coverflow'>('standard')
@@ -58,18 +61,29 @@ const playbackProgress = computed(() => {
   return props.duration > 0 ? Math.min(1, Math.max(0, position / props.duration)) : 0
 })
 
-const tonearmAngle = computed(() => 3 + playbackProgress.value * 37)
+const tonearmAngle = computed(() => 3 + playbackProgress.value * 33)
 
 const coverflowItems = computed(() => [
-  ...(props.track ? [{ track: props.track, artwork: props.artwork || props.track.artworkUrl || '', queueIndex: -1 }] : []),
+  ...[...props.history].reverse().map((track) => ({
+    track,
+    artwork: track.artworkUrl || '',
+    kind: 'history' as const,
+    queueIndex: -1,
+    key: `played:${trackKey(track)}`,
+  })),
+  ...(props.track ? [{ track: props.track, artwork: props.artwork || props.track.artworkUrl || '', kind: 'current' as const, queueIndex: -1, key: `played:${trackKey(props.track)}` }] : []),
   ...props.queue.slice(0, 12).map((track, queueIndex) => ({
     track,
     artwork: track.artworkUrl || '',
+    kind: 'queue' as const,
     queueIndex,
+    key: `queue:${trackKey(track)}:${queueIndex}`,
   })),
 ])
 
 const selectedCoverflow = computed(() => coverflowItems.value[coverflowIndex.value] ?? null)
+const currentCoverflowIndex = computed(() => props.history.length)
+const backgroundArtwork = computed(() => mode.value === 'coverflow' ? selectedCoverflow.value?.artwork || props.artwork : props.artwork)
 
 function setLyricRow(element: unknown, index: number) {
   lyricRows.value[index] = element instanceof HTMLElement ? element : null
@@ -103,7 +117,7 @@ function resumeAutoFollow() {
 }
 
 function seekLyric(line: ParsedLyric) {
-  if (line.time < 0) return
+  if (line.time < 0 || !props.lyricsSynced) return
   emit('seek', line.time)
   resumeAutoFollow()
 }
@@ -122,9 +136,9 @@ function updateTonearm(event: PointerEvent) {
   const dx = event.clientX - pivotX
   const dy = event.clientY - pivotY
   const rawAngle = Math.atan2(-dx, Math.max(1, dy)) * 180 / Math.PI
-  const angle = Math.min(40, Math.max(3, rawAngle))
+  const angle = Math.min(36, Math.max(3, rawAngle))
   tonearmWillPause.value = event.clientX > rect.right + 48 || event.clientY < rect.top - 28 || event.clientY > rect.bottom + 28
-  const ratio = (angle - 3) / 37
+  const ratio = (angle - 3) / 33
   scrubPosition.value = ratio * props.duration
 }
 
@@ -141,7 +155,16 @@ function finishTonearm(event: PointerEvent) {
   updateTonearm(event)
   if (tonearmWillPause.value) {
     if (props.isPlaying) emit('toggle')
-  } else if (scrubPosition.value != null) emit('seek', scrubPosition.value)
+  } else if (scrubPosition.value != null) {
+    emit('seek', scrubPosition.value)
+    if (!props.isPlaying) emit('toggle')
+  }
+  tonearmDragging.value = false
+  tonearmWillPause.value = false
+  scrubPosition.value = null
+}
+
+function cancelTonearm() {
   tonearmDragging.value = false
   tonearmWillPause.value = false
   scrubPosition.value = null
@@ -152,14 +175,19 @@ function moveCoverflow(direction: number) {
 }
 
 function selectCoverflow(index: number) {
-  if (coverflowIndex.value !== index) {
-    coverflowIndex.value = index
-    return
-  }
   const item = coverflowItems.value[index]
   if (!item) return
-  if (item.queueIndex < 0) emit('toggle')
+  coverflowIndex.value = index
+  if (item.kind === 'current') emit('toggle')
+  else if (item.kind === 'history') emit('playHistory', item.track)
   else emit('playQueue', item.queueIndex)
+}
+
+function setMode(nextMode: 'standard' | 'coverflow') {
+  if (mode.value === nextMode) return
+  cancelTonearm()
+  mode.value = nextMode
+  if (nextMode === 'coverflow') coverflowIndex.value = currentCoverflowIndex.value
 }
 
 function onCoverflowWheel(event: WheelEvent) {
@@ -168,10 +196,13 @@ function onCoverflowWheel(event: WheelEvent) {
 }
 
 watch(activeLyric, () => void nextTick(() => scrollToActive()))
-watch(() => props.track?.path, () => {
+watch(() => trackKey(props.track), () => {
   lyricRows.value = []
   coverForward.value = false
-  coverflowIndex.value = 0
+  cancelTonearm()
+  void nextTick(() => {
+    coverflowIndex.value = currentCoverflowIndex.value
+  })
   resumeAutoFollow()
 })
 watch(lyricsVisible, (visible) => {
@@ -184,27 +215,30 @@ watch(() => coverflowItems.value.length, (length) => {
 
 onBeforeUnmount(() => {
   if (resumeTimer) clearTimeout(resumeTimer)
+  cancelTonearm()
 })
 </script>
 
 <template>
   <Transition name="now-playing">
     <section v-if="open" class="now-playing-panel immersive-player" :class="`immersive-player--${mode}`" aria-label="沉浸式正在播放">
-      <div class="immersive-player__backdrop" :style="artwork ? { backgroundImage: `url(${artwork})` } : {}" />
+      <Transition name="immersive-backdrop">
+        <div :key="backgroundArtwork || 'empty'" class="immersive-player__backdrop" :style="backgroundArtwork ? { backgroundImage: `url(${backgroundArtwork})` } : {}" />
+      </Transition>
       <div class="immersive-player__wash" />
 
       <header class="immersive-toolbar">
         <button class="immersive-tool" aria-label="退出沉浸模式" @click="emit('close')"><X :size="19" /><span>退出沉浸</span></button>
         <div class="immersive-mode-switch" aria-label="沉浸显示模式">
-          <button :class="{ active: mode === 'standard' }" aria-label="标准沉浸" @click="mode = 'standard'"><Rows3 :size="17" /><span>标准沉浸</span></button>
-          <button :class="{ active: mode === 'coverflow' }" aria-label="Coverflow" @click="mode = 'coverflow'"><Layers3 :size="17" /><span>Coverflow</span></button>
+          <button type="button" :class="{ active: mode === 'standard' }" aria-label="标准沉浸" @pointerdown.stop @click.stop="setMode('standard')"><Rows3 :size="17" /><span>标准沉浸</span></button>
+          <button type="button" :class="{ active: mode === 'coverflow' }" aria-label="Coverflow" @pointerdown.stop @click.stop="setMode('coverflow')"><Layers3 :size="17" /><span>Coverflow</span></button>
         </div>
         <div class="immersive-toolbar__actions">
           <button v-if="mode === 'standard'" class="immersive-tool" :aria-label="lyricsVisible ? '隐藏歌词' : '显示歌词'" @click="lyricsVisible = !lyricsVisible">
             <EyeOff v-if="lyricsVisible" :size="18" /><Eye v-else :size="18" /><span>{{ lyricsVisible ? '隐藏歌词' : '显示歌词' }}</span>
           </button>
-          <button class="immersive-tool" :aria-label="Number(track?.rating ?? 0) > 0 ? '取消收藏' : '收藏当前歌曲'" @click="track && emit('favourite', track)">
-            <Heart :size="18" :fill="Number(track?.rating ?? 0) > 0 ? 'currentColor' : 'none'" /><span>{{ Number(track?.rating ?? 0) > 0 ? '取消收藏' : '收藏' }}</span>
+          <button class="immersive-tool" :aria-label="Number(track?.rating ?? 0) === 5 ? '取消收藏' : '收藏当前歌曲'" @click="track && emit('favourite', track)">
+            <Heart :size="18" :fill="Number(track?.rating ?? 0) === 5 ? 'currentColor' : 'none'" /><span>{{ Number(track?.rating ?? 0) === 5 ? '取消收藏' : '收藏' }}</span>
           </button>
         </div>
       </header>
@@ -232,7 +266,8 @@ onBeforeUnmount(() => {
               @pointerdown.prevent="beginTonearm"
               @pointermove.prevent="updateTonearm"
               @pointerup.prevent="finishTonearm"
-              @pointercancel="finishTonearm"
+              @pointercancel="cancelTonearm"
+              @lostpointercapture="tonearmDragging && cancelTonearm()"
             ><span /><i /></button>
           </div>
 
@@ -252,7 +287,7 @@ onBeforeUnmount(() => {
                 :key="`${line.time}-${index}`"
                 :ref="(element) => setLyricRow(element, index)"
                 :class="{ active: index === activeLyric, past: index < activeLyric }"
-                :disabled="line.time < 0"
+                :disabled="line.time < 0 || !lyricsSynced"
                 @click="seekLyric(line)"
               >{{ line.text }}</button>
               <button v-if="autoFollowPaused" class="lyrics-follow" @click.stop="resumeAutoFollow"><LocateFixed :size="15" /> 跟随当前歌词</button>
@@ -266,7 +301,7 @@ onBeforeUnmount(() => {
         <div class="coverflow__viewport">
           <button
             v-for="(item, index) in coverflowItems"
-            :key="`${item.track.path}-${index}`"
+            :key="item.key"
             class="coverflow-card"
             :class="{ active: index === coverflowIndex, far: Math.abs(index - coverflowIndex) > 3 }"
             :style="{ '--cover-offset': index - coverflowIndex, '--cover-distance': Math.abs(index - coverflowIndex), '--cover-image': item.artwork ? `url(${item.artwork})` : 'none' }"
@@ -283,10 +318,10 @@ onBeforeUnmount(() => {
         <button class="coverflow__arrow coverflow__arrow--left" :disabled="coverflowIndex === 0" aria-label="上一张封面" @click="moveCoverflow(-1)"><ChevronLeft :size="22" /><span>上一张</span></button>
         <button class="coverflow__arrow coverflow__arrow--right" :disabled="coverflowIndex >= coverflowItems.length - 1" aria-label="下一张封面" @click="moveCoverflow(1)"><ChevronRight :size="22" /><span>下一张</span></button>
         <div v-if="selectedCoverflow" class="coverflow__copy">
-          <p>{{ selectedCoverflow.queueIndex < 0 ? '正在播放' : `接下来第 ${selectedCoverflow.queueIndex + 1} 首` }}</p>
+          <p>{{ selectedCoverflow.kind === 'current' ? '正在播放' : selectedCoverflow.kind === 'history' ? '播放历史' : `接下来第 ${selectedCoverflow.queueIndex + 1} 首` }}</p>
           <h1>{{ selectedCoverflow.track.title }}</h1>
           <span>{{ selectedCoverflow.track.artist }} · {{ selectedCoverflow.track.album }}</span>
-          <small>再次点击当前封面即可{{ selectedCoverflow.queueIndex < 0 ? (isPlaying ? '暂停' : '播放') : '立即播放' }}</small>
+          <small>{{ selectedCoverflow.kind === 'current' ? `点击封面${isPlaying ? '暂停' : '播放'}` : '点击封面立即切换' }}</small>
         </div>
       </section>
 

@@ -15,6 +15,16 @@ export interface DisplayTrack extends TrackInfo {
   sourceIndex?: number
 }
 
+export type ViewRoute =
+  | { view: 'home' }
+  | { view: 'albums' }
+  | { view: 'songs' }
+  | { view: 'favourites' }
+  | { view: 'album'; albumName: string; albumArtist: string }
+  | { view: 'playlist'; playlistIndex: number; playlistName: string }
+  | { view: 'search'; query: string }
+  | { view: 'radio'; nonce: number; snapshot?: DisplayTrack[] }
+
 export interface DisplayQueueItem extends QueueItem {
   queueSource: 'explicit' | 'playlist'
   sourceIndex: number
@@ -31,6 +41,7 @@ export interface PlayerUiState {
   connected: boolean
   loading: boolean
   view: ViewId
+  route: ViewRoute
   search: string
   albums: AlbumCard[]
   tracks: DisplayTrack[]
@@ -39,13 +50,16 @@ export interface PlayerUiState {
   visibleTracks: DisplayTrack[]
   playlists: PlaylistInfo[]
   activePlaylist: PlaylistInfo | null
+  browsingPlaylist: PlaylistInfo | null
   selectedAlbum: AlbumCard | null
   queue: DisplayQueueItem[]
   currentTrack: DisplayTrack | null
+  playbackHistory: DisplayTrack[]
   currentArtwork: string
   lyrics: ParsedLyric[]
   lyricsSynced: boolean
   isPlaying: boolean
+  playbackState: 'stopped' | 'playing' | 'paused'
   position: number
   duration: number
   volume: number

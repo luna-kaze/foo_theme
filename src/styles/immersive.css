@@ -7,8 +7,10 @@
   z-index: 85;
 }
 
-.immersive-player__backdrop { position: absolute; inset: -10%; background-position: center; background-size: cover; filter: blur(95px) saturate(135%) brightness(.24); opacity: .7; transform: scale(1.12); }
-.immersive-player__wash { position: absolute; inset: 0; background: radial-gradient(circle at 28% 48%, rgba(255,255,255,.055), transparent 32%), linear-gradient(100deg, rgba(11,11,13,.36), rgba(14,14,17,.7) 54%, rgba(16,15,18,.52)); }
+.immersive-player__backdrop { position: absolute; inset: -10%; background-position: center; background-size: cover; filter: blur(95px) saturate(165%) brightness(.38); opacity: .86; transform: scale(1.12); }
+.immersive-backdrop-enter-active, .immersive-backdrop-leave-active { transition: opacity 520ms ease, filter 620ms ease; }
+.immersive-backdrop-enter-from, .immersive-backdrop-leave-to { opacity: 0; filter: blur(112px) saturate(150%) brightness(.26); }
+.immersive-player__wash { position: absolute; inset: 0; background: radial-gradient(circle at 28% 48%, rgba(255,255,255,.055), transparent 32%), linear-gradient(100deg, rgba(11,11,13,.24), rgba(14,14,17,.56) 54%, rgba(16,15,18,.38)); }
 .immersive-toolbar { position: absolute; top: 18px; left: 22px; right: 22px; display: flex; align-items: center; justify-content: space-between; pointer-events: none; z-index: 20; }
 .immersive-toolbar button { pointer-events: auto; }
 .immersive-toolbar__actions { display: flex; gap: 7px; pointer-events: auto; }
