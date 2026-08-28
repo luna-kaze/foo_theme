@@ -20,6 +20,7 @@ const props = defineProps<{
 
 const seekPreview = ref<number | null>(null)
 const shownPosition = computed(() => seekPreview.value ?? props.position)
+const randomOrder = computed(() => props.playbackOrder >= 3)
 
 function previewSeek(event: Event) {
   seekPreview.value = Number((event.target as HTMLInputElement).value)
@@ -86,10 +87,10 @@ const emit = defineEmits<{
     </div>
 
     <div class="player-actions">
-      <button :class="{ active: playbackOrder !== 0 }" :aria-label="playbackOrder === 4 ? '随机播放' : '切换循环模式'" @click="emit('order')">
-        <Shuffle v-if="playbackOrder === 4" :size="17" />
+      <button :class="{ active: playbackOrder !== 0 }" :aria-label="randomOrder ? '随机播放' : '切换循环模式'" @click="emit('order')">
+        <Shuffle v-if="randomOrder" :size="17" />
         <Repeat1 v-if="playbackOrder === 2" :size="17" />
-        <Repeat v-else-if="playbackOrder !== 4" :size="17" />
+        <Repeat v-else-if="!randomOrder" :size="17" />
       </button>
       <button :class="{ active: nowPlayingOpen }" aria-label="沉浸播放" @click="emit('immersive')"><Mic2 :size="17" /></button>
       <button :class="{ active: queueOpen }" aria-label="播放队列" @click="emit('queue')"><ListMusic :size="18" /></button>

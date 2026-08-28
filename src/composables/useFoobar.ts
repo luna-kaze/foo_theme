@@ -299,7 +299,7 @@ async function loadQueue() {
       fb.player.getPlayingPlaylist(),
       fb.player.getCurrentTrackIndex(),
     ])
-    if (playing.playlist >= 0 && current.index >= 0) {
+    if (state.playbackOrder < 3 && playing.playlist >= 0 && current.index >= 0) {
       const tracks = await fb.playlist.getTracks(playing.playlist, current.index + 1, 100)
       upcoming = tracks.map((track, offset) => ({
         ...track,
@@ -398,6 +398,7 @@ function bindEvents() {
     }),
     fb.on('playback:orderChanged', (event) => {
       state.playbackOrder = event.order
+      refreshSafely(loadQueue)
     }),
     fb.on('playback:queueChanged', () => refreshSafely(loadQueue)),
     fb.on('playlist:activated', () => {
@@ -738,16 +739,18 @@ async function getAlbumTracks(album: AlbumCard) {
 }
 
 async function shuffleAlbum(album: AlbumCard) {
-  const tracks = (await getAlbumTracks(album)).sort(() => Math.random() - 0.5)
+  const tracks = await getAlbumTracks(album)
   if (!tracks.length) {
     notify('此专辑没有可播放的曲目。', 'info')
     return
   }
   if (!state.connected) {
-    await playTrack(tracks[0])
+    await playTrack(tracks[Math.floor(Math.random() * tracks.length)])
     return
   }
-  await playGeneratedCollection(tracks.map((track) => track.path), '已随机播放专辑')
+  const track = tracks[Math.floor(Math.random() * tracks.length)]
+  await setRandomOrder()
+  await runAction(() => fb.player.playPath(track.path), '已启用原生随机播放')
 }
 
 async function queueAlbum(album: AlbumCard) {
@@ -793,10 +796,9 @@ async function playPlaylist(playlistIndex: number, shuffled = false) {
     await runAction(() => fb.playlist.playTrack(playlistIndex, 0))
     return
   }
-  const allTracks = await runAction(() => getAllPlaylistTracks(playlistIndex))
-  if (!allTracks) return
-  const tracks = allTracks.sort(() => Math.random() - 0.5)
-  await playGeneratedCollection(tracks.map((track) => track.path), '已随机播放列表')
+  await runAction(() => fb.playlist.setActive(playlistIndex))
+  await setRandomOrder()
+  await runAction(() => fb.playlist.playTrack(playlistIndex, Math.floor(Math.random() * playlist.trackCount)), '已启用原生随机播放')
 }
 
 async function duplicatePlaylist(playlistIndex: number) {
@@ -869,17 +871,28 @@ async function undoPlaylistChange(playlistIndex: number) {
 }
 
 async function shuffleCurrent() {
-  const tracks = [...state.visibleTracks].sort(() => Math.random() - 0.5)
-  if (!tracks.length) {
+  if (!state.visibleTracks.length) {
     notify('没有可随机播放的曲目。', 'info')
     return
   }
   if (!state.connected) {
-    await playTrack(tracks[0])
+    await playTrack(state.visibleTracks[Math.floor(Math.random() * state.visibleTracks.length)])
     return
   }
-  const paths = tracks.map((track) => track.path).filter(Boolean)
-  await playGeneratedCollection(paths, '已开始随机播放')
+  await setRandomOrder()
+  if (state.view === 'playlist' && state.activePlaylist) {
+    const track = state.visibleTracks[Math.floor(Math.random() * state.visibleTracks.length)]
+    await runAction(() => fb.playlist.playTrack(state.activePlaylist!.index, track.sourceIndex ?? 0), '已启用原生随机播放')
+  } else {
+    await runAction(() => fb.player.random(), '已启用原生随机播放')
+  }
+}
+
+async function setRandomOrder() {
+  state.playbackOrder = 3
+  const result = await runAction(() => fb.player.setOrder('random'))
+  if (result) await loadQueue()
+  return result
 }
 
 async function togglePlayback() {
@@ -932,13 +945,18 @@ async function toggleMute() {
 }
 
 async function cyclePlaybackOrder() {
-  const orders = [0, 1, 2, 4]
-  const current = orders.indexOf(state.playbackOrder)
-  const nextOrder = orders[(current + 1) % orders.length]
-  state.playbackOrder = nextOrder
-  if (state.connected) await runAction(() => fb.player.setOrder(nextOrder))
-  const labels: Record<number, string> = { 0: '默认播放顺序', 1: '循环播放列表', 2: '单曲循环', 4: '随机播放' }
-  notify(labels[nextOrder] ?? '播放顺序已更改')
+  const orders = [
+    { index: 0, mode: 'default' as const, label: '默认播放顺序' },
+    { index: 1, mode: 'repeat-playlist' as const, label: '循环播放列表' },
+    { index: 2, mode: 'repeat-track' as const, label: '单曲循环' },
+    { index: 3, mode: 'random' as const, label: '随机播放' },
+  ]
+  const current = orders.findIndex((item) => item.index === state.playbackOrder)
+  const next = orders[(current + 1) % orders.length]
+  state.playbackOrder = next.index
+  if (state.connected) await runAction(() => fb.player.setOrder(next.mode))
+  await loadQueue()
+  notify(next.label)
 }
 
 async function createPlaylist(name: string) {

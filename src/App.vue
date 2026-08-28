@@ -430,6 +430,7 @@ function onDrop(event: DragEvent) {
       <QueuePopover
         v-if="queueOpen"
         :queue="state.queue"
+        :random-mode="state.playbackOrder >= 3"
         @close="queueOpen = false"
         @play="state.queue[$event] && handlePlayTrack(state.queue[$event])"
         @remove="player.removeQueueItem"

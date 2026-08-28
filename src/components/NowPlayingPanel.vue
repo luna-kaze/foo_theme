@@ -58,7 +58,7 @@ const playbackProgress = computed(() => {
   return props.duration > 0 ? Math.min(1, Math.max(0, position / props.duration)) : 0
 })
 
-const tonearmAngle = computed(() => 3 + playbackProgress.value * 22)
+const tonearmAngle = computed(() => 3 + playbackProgress.value * 37)
 
 const coverflowItems = computed(() => [
   ...(props.track ? [{ track: props.track, artwork: props.artwork || props.track.artworkUrl || '', queueIndex: -1 }] : []),
@@ -122,9 +122,9 @@ function updateTonearm(event: PointerEvent) {
   const dx = event.clientX - pivotX
   const dy = event.clientY - pivotY
   const rawAngle = Math.atan2(-dx, Math.max(1, dy)) * 180 / Math.PI
-  const angle = Math.min(25, Math.max(3, rawAngle))
+  const angle = Math.min(40, Math.max(3, rawAngle))
   tonearmWillPause.value = event.clientX > rect.right + 48 || event.clientY < rect.top - 28 || event.clientY > rect.bottom + 28
-  const ratio = (angle - 3) / 22
+  const ratio = (angle - 3) / 37
   scrubPosition.value = ratio * props.duration
 }
 
