@@ -10,13 +10,10 @@ const customPattern = ref(props.customColumn.pattern)
 </script>
 
 <template>
-  <section class="library-filters" aria-label="音乐管理筛选">
-    <header><div><Filter :size="16" /><strong>音乐管理筛选</strong><span>{{ resultCount }} 首</span></div><button @click="emit('clear')"><RotateCcw :size="14" />重置</button></header>
+  <section class="library-filters" aria-label="歌曲筛选与字段">
+    <header><div><Filter :size="16" /><strong>歌曲筛选与字段</strong><span>{{ resultCount }} 首</span></div><button @click="emit('clear')"><RotateCcw :size="14" />重置</button></header>
     <div class="library-filters__facets">
-      <label><span>艺人</span><select :value="filters.artist" @change="emit('change', 'artist', ($event.target as HTMLSelectElement).value)"><option value="">全部艺人</option><option v-for="item in options.artists" :key="item">{{ item }}</option></select></label>
-      <label><span>Album Artist</span><select :value="filters.albumArtist" @change="emit('change', 'albumArtist', ($event.target as HTMLSelectElement).value)"><option value="">全部 Album Artist</option><option v-for="item in options.albumArtists" :key="item">{{ item }}</option></select></label>
       <label><span>流派</span><select :value="filters.genre" @change="emit('change', 'genre', ($event.target as HTMLSelectElement).value)"><option value="">全部流派</option><option v-for="item in options.genres" :key="item">{{ item }}</option></select></label>
-      <label><span>文件夹</span><select :value="filters.folder" @change="emit('change', 'folder', ($event.target as HTMLSelectElement).value)"><option value="">全部文件夹</option><option v-for="item in options.folders" :key="item" :value="item">{{ item }}</option></select></label>
       <label><span>播放统计</span><select :value="filters.playState" @change="emit('change', 'playState', ($event.target as HTMLSelectElement).value)"><option value="all">全部曲目</option><option value="played">已播放</option><option value="unplayed">未播放</option><option value="recent">最近播放</option></select></label>
     </div>
     <div class="library-filters__advanced"><Search :size="15" /><select :value="filters.field" @change="emit('change', 'field', ($event.target as HTMLSelectElement).value)"><option value="all">所有字段</option><option value="title">标题</option><option value="artist">艺人</option><option value="album">专辑</option><option value="genre">流派</option><option value="path">路径</option></select><select :value="filters.operator" @change="emit('change', 'operator', ($event.target as HTMLSelectElement).value)"><option value="contains">包含</option><option value="equals">等于</option><option value="startsWith">开头为</option></select><input :value="filters.value" placeholder="高级筛选值" @input="emit('change', 'value', ($event.target as HTMLInputElement).value)" /></div>

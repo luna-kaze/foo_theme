@@ -1,6 +1,7 @@
 import { computed, reactive } from 'vue'
 import fb, {
   type AlbumInfo,
+  type ArtistInfo,
   type PlaybackTrackChangedPayload,
   type PlaylistInfo,
   type TrackInfo,
@@ -10,6 +11,7 @@ import type {
   AlbumCard,
   DisplayQueueItem,
   DisplayTrack,
+  LibraryFolderCard,
   ParsedLyric,
   PlayerUiState,
   TrackDetails,
@@ -25,6 +27,9 @@ const state = reactive<PlayerUiState>({
   route: { view: 'home' },
   search: '',
   albums: [],
+  artists: [],
+  libraryFolders: [],
+  libraryStats: { totalTracks: 0, totalAlbums: 0, totalArtists: 0, totalDuration: 0, totalSize: 0 },
   tracks: [],
   recentTracks: [],
   viewTracks: [],
@@ -604,6 +609,8 @@ async function initialize() {
 
 function routeKey(route: ViewRoute) {
   if (route.view === 'album') return `album:${route.albumName}\u0000${route.albumArtist}`
+  if (route.view === 'artist') return `artist:${route.artist}`
+  if (route.view === 'folder') return `folder:${route.rootId}\u0000${route.pathId}`
   if (route.view === 'playlist') return `playlist:${route.playlistIndex}:${route.playlistName}`
   if (route.view === 'search') return `search:${route.query}`
   if (route.view === 'radio') return `radio:${route.nonce}`
@@ -630,6 +637,19 @@ async function loadSearchTracks(query: string) {
 
 async function materializeRoute(route: ViewRoute): Promise<DisplayTrack[]> {
   if (route.view === 'home') return state.recentTracks
+  if (route.view === 'overview') {
+    await loadLibraryOverview()
+    return state.recentTracks
+  }
+  if (route.view === 'artists') {
+    await loadLibraryArtists()
+    return []
+  }
+  if (route.view === 'artist') {
+    if (!state.connected) return state.tracks.filter((track) => track.artist === route.artist || track.albumArtist === route.artist)
+    const result = await fb.library.getArtistTracks(route.artist, 100000)
+    return result.tracks.map(normalizeTrack)
+  }
   if (route.view === 'albums') return []
   if (route.view === 'songs') {
     await enrichLibraryPlaycounts()
@@ -642,6 +662,27 @@ async function materializeRoute(route: ViewRoute): Promise<DisplayTrack[]> {
     if (!state.connected) return state.tracks.filter((track) => albumKey({ name: track.album, artist: track.albumArtist || track.artist }) === albumKey({ name: route.albumName, artist: route.albumArtist }))
     const result = await fb.library.getAlbumTracks(route.albumName, route.albumArtist)
     return result.tracks.map(normalizeTrack)
+  }
+  if (route.view === 'folders') {
+    await loadLibraryRoots()
+    return []
+  }
+  if (route.view === 'folder') {
+    if (!state.connected) {
+      state.libraryFolders = []
+      return state.tracks.filter((track) => track.path.replaceAll('\\', '/').toLocaleLowerCase().startsWith(route.rootId.toLocaleLowerCase()))
+    }
+    const result = await fb.library.browseTree({ rootId: route.rootId, pathId: route.pathId, includeFiles: true, recursiveFiles: true })
+    if (!result.success) throw new Error(result.error || '无法浏览媒体库文件夹。')
+    state.libraryFolders = result.directories.map((folder): LibraryFolderCard => ({
+      rootId: folder.rootId,
+      pathId: folder.pathId,
+      name: folder.displayName || folder.name,
+      absolutePath: folder.absolutePath,
+      trackCount: folder.trackCount,
+      hasChildren: folder.hasChildren,
+    }))
+    return result.files.map(normalizeTrack)
   }
   if (route.view === 'search') return loadSearchTracks(route.query)
   if (route.view === 'favourites') {
@@ -660,6 +701,55 @@ async function materializeRoute(route: ViewRoute): Promise<DisplayTrack[]> {
   const result = await fb.library.getRandomTracks(50)
   if (result.success === false) throw new Error(result.error || '无法加载电台。')
   return result.tracks.map(normalizeTrack)
+}
+
+async function loadLibraryOverview() {
+  if (!state.connected) {
+    state.libraryStats = {
+      totalTracks: state.tracks.length,
+      totalAlbums: state.albums.length,
+      totalArtists: new Set(state.tracks.map((track) => track.artist).filter(Boolean)).size,
+      totalDuration: state.tracks.reduce((total, track) => total + Number(track.duration || 0), 0),
+      totalSize: 0,
+    }
+    return
+  }
+  state.libraryStats = await fb.library.getStats()
+}
+
+async function loadLibraryArtists() {
+  if (!state.connected) {
+    const artists = new Map<string, { tracks: number; albums: Set<string>; duration: number }>()
+    state.tracks.forEach((track) => {
+      const name = track.artist || '未知艺术家'
+      const current = artists.get(name) ?? { tracks: 0, albums: new Set<string>(), duration: 0 }
+      current.tracks += 1
+      if (track.album) current.albums.add(track.album)
+      current.duration += Number(track.duration || 0)
+      artists.set(name, current)
+    })
+    state.artists = [...artists].map(([name, value]): ArtistInfo => ({ name, trackCount: value.tracks, albumCount: value.albums.size, duration: value.duration }))
+    return
+  }
+  const result = await fb.library.getArtists(100000)
+  if (!result.success) throw new Error(result.error || '无法加载艺术家。')
+  state.artists = result.items
+}
+
+async function loadLibraryRoots() {
+  if (!state.connected) {
+    const folders = new Map<string, number>()
+    state.tracks.forEach((track) => {
+      const path = track.path.replaceAll('\\', '/')
+      const folder = path.slice(0, Math.max(0, path.lastIndexOf('/') + 1))
+      if (folder) folders.set(folder, (folders.get(folder) ?? 0) + 1)
+    })
+    state.libraryFolders = [...folders].map(([path, trackCount]) => ({ rootId: path, pathId: '', name: path.replace(/\/$/, '').split('/').pop() || path, absolutePath: path, trackCount, hasChildren: false }))
+    return
+  }
+  const result = await fb.library.getRoots()
+  if (!result.success) throw new Error(result.error || '无法加载媒体库文件夹。')
+  state.libraryFolders = result.roots.map((root) => ({ rootId: root.id, pathId: '', name: root.displayName, absolutePath: root.absolutePath, trackCount: root.trackCount, hasChildren: true }))
 }
 
 async function enrichLibraryPlaycounts() {
@@ -795,7 +885,7 @@ async function setView(view: ViewId, pushHistory = true) {
   if (view === 'album' && state.selectedAlbum) return selectAlbum(state.selectedAlbum, pushHistory)
   if (view === 'playlist' && state.browsingPlaylist) return selectActivePlaylist(state.browsingPlaylist.index, pushHistory)
   if (view === 'search' && state.search.trim()) return navigate({ view: 'search', query: state.search.trim() }, pushHistory ? 'push' : 'none')
-  if (view === 'album' || view === 'playlist' || view === 'search') return
+  if (view === 'album' || view === 'artist' || view === 'folder' || view === 'playlist' || view === 'search') return
   return navigate({ view }, pushHistory ? 'push' : 'none')
 }
 
@@ -880,6 +970,14 @@ async function refreshActivePlaylist() {
 
 async function selectAlbum(album: AlbumCard, pushHistory = true) {
   await navigate({ view: 'album', albumName: album.name, albumArtist: album.artist }, pushHistory ? 'push' : 'none')
+}
+
+async function selectArtist(artist: string, pushHistory = true) {
+  await navigate({ view: 'artist', artist }, pushHistory ? 'push' : 'none')
+}
+
+async function selectLibraryFolder(folder: LibraryFolderCard, pushHistory = true) {
+  await navigate({ view: 'folder', rootId: folder.rootId, pathId: folder.pathId, name: folder.name }, pushHistory ? 'push' : 'none')
 }
 
 async function loadFavourites(pushHistory = true) {
@@ -2135,6 +2233,8 @@ export function useFoobar() {
     applyCustomColumn,
     selectActivePlaylist,
     selectAlbum,
+    selectArtist,
+    selectLibraryFolder,
     loadFavourites,
     loadRadio,
     playTrack,

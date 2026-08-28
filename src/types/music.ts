@@ -1,6 +1,6 @@
-import type { AlbumInfo, PlaylistInfo, QueueItem, TrackInfo } from 'foo-webview-sdk'
+import type { AlbumInfo, ArtistInfo, LibraryStats, PlaylistInfo, QueueItem, TrackInfo } from 'foo-webview-sdk'
 
-export type ViewId = 'home' | 'albums' | 'songs' | 'playlist' | 'album' | 'favourites' | 'radio' | 'search'
+export type ViewId = 'home' | 'overview' | 'artists' | 'artist' | 'albums' | 'songs' | 'folders' | 'folder' | 'playlist' | 'album' | 'favourites' | 'radio' | 'search'
 export type NowPlayingTab = 'lyrics' | 'queue'
 export type DialogId = 'createPlaylist' | null
 
@@ -18,10 +18,24 @@ export interface DisplayTrack extends TrackInfo {
   lastPlayed?: string
 }
 
+export interface LibraryFolderCard {
+  rootId: string
+  pathId: string
+  name: string
+  absolutePath: string
+  trackCount: number
+  hasChildren: boolean
+}
+
 export type ViewRoute =
   | { view: 'home' }
+  | { view: 'overview' }
+  | { view: 'artists' }
+  | { view: 'artist'; artist: string }
   | { view: 'albums' }
   | { view: 'songs' }
+  | { view: 'folders' }
+  | { view: 'folder'; rootId: string; pathId: string; name: string }
   | { view: 'favourites' }
   | { view: 'album'; albumName: string; albumArtist: string }
   | { view: 'playlist'; playlistIndex: number; playlistName: string }
@@ -72,6 +86,9 @@ export interface PlayerUiState {
   route: ViewRoute
   search: string
   albums: AlbumCard[]
+  artists: ArtistInfo[]
+  libraryFolders: LibraryFolderCard[]
+  libraryStats: LibraryStats
   tracks: DisplayTrack[]
   recentTracks: DisplayTrack[]
   viewTracks: DisplayTrack[]

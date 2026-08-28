@@ -1,0 +1,101 @@
+<script setup lang="ts">
+import { Album, Clock3, Folder, HardDrive, Library, Music2, Play, Shuffle, Users } from '@lucide/vue'
+import type { ArtistInfo, LibraryStats } from 'foo-webview-sdk'
+import type { AlbumCard, DisplayTrack, LibraryFolderCard, ViewId, ViewRoute } from '../types/music'
+import AlbumGrid from './AlbumGrid.vue'
+import TrackList from './TrackList.vue'
+
+const props = defineProps<{
+  route: ViewRoute
+  stats: LibraryStats
+  artists: ArtistInfo[]
+  folders: LibraryFolderCard[]
+  albums: AlbumCard[]
+  tracks: DisplayTrack[]
+  currentTrack: DisplayTrack | null
+  isPlaying: boolean
+  loading: boolean
+}>()
+
+const emit = defineEmits<{
+  navigate: [view: ViewId]
+  artist: [name: string]
+  folder: [folder: LibraryFolderCard]
+  openAlbum: [album: AlbumCard]
+  albumMenu: [album: AlbumCard, event: MouseEvent]
+  playTrack: [track: DisplayTrack, index: number]
+  trackMenu: [track: DisplayTrack, index: number, event: MouseEvent]
+  selection: [tracks: DisplayTrack[]]
+  shuffle: []
+  back: []
+}>()
+
+function formatDuration(seconds: number) {
+  const hours = Math.floor(seconds / 3600)
+  const days = Math.floor(hours / 24)
+  return days ? `${days} 天 ${hours % 24} 小时` : `${hours} 小时`
+}
+
+function formatSize(bytes: number) {
+  if (!bytes) return '—'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)))
+  return `${(bytes / 1024 ** index).toFixed(index > 2 ? 1 : 0)} ${units[index]}`
+}
+
+function artistArtwork(name: string) {
+  return props.albums.find((album) => album.artist === name)?.artworkUrl || ''
+}
+</script>
+
+<template>
+  <main class="library-view media-library-view">
+    <div v-if="loading" class="library-loading"><span /><span /><span /><small>正在整理媒体库…</small></div>
+
+    <template v-else-if="route.view === 'overview'">
+      <section class="page-heading"><p class="eyebrow">媒体库</p><h1>概览</h1><p>从收藏规模、播放时长和最近添加快速进入你的音乐。</p></section>
+      <section class="library-stat-grid">
+        <button @click="emit('navigate', 'songs')"><span><Music2 :size="19" /></span><strong>{{ stats.totalTracks.toLocaleString() }}</strong><small>首歌曲</small></button>
+        <button @click="emit('navigate', 'albums')"><span><Album :size="19" /></span><strong>{{ stats.totalAlbums.toLocaleString() }}</strong><small>张专辑</small></button>
+        <button @click="emit('navigate', 'artists')"><span><Users :size="19" /></span><strong>{{ stats.totalArtists.toLocaleString() }}</strong><small>位艺术家</small></button>
+        <div><span><Clock3 :size="19" /></span><strong>{{ formatDuration(stats.totalDuration) }}</strong><small>总播放时长</small></div>
+        <div><span><HardDrive :size="19" /></span><strong>{{ formatSize(stats.totalSize) }}</strong><small>媒体文件大小</small></div>
+      </section>
+      <section class="content-section">
+        <div class="section-heading"><div><p class="eyebrow">音乐收藏</p><h2>专辑速览</h2></div><button @click="emit('navigate', 'albums')">查看全部</button></div>
+        <AlbumGrid :albums="albums" :limit="6" @open="emit('openAlbum', $event)" @menu="(album, event) => emit('albumMenu', album, event)" />
+      </section>
+      <section class="content-section content-section--tracks">
+        <div class="section-heading"><div><p class="eyebrow">最近添加</p><h2>新入库曲目</h2></div><button @click="emit('navigate', 'songs')">管理歌曲</button></div>
+        <TrackList v-if="tracks.length" :tracks="tracks.slice(0, 10)" :current-track="currentTrack" :is-playing="isPlaying" @play="(track, index) => emit('playTrack', track, index)" @menu="(track, index, event) => emit('trackMenu', track, index, event)" @selection="emit('selection', $event)" />
+      </section>
+    </template>
+
+    <template v-else-if="route.view === 'artists'">
+      <section class="page-heading"><p class="eyebrow">媒体库</p><h1>艺术家</h1><p>共 {{ artists.length }} 位艺术家，点按卡片查看其全部曲目。</p></section>
+      <section class="library-card-grid">
+        <button v-for="artist in artists" :key="artist.name" class="artist-browser-card" @click="emit('artist', artist.name)">
+          <span class="artist-browser-card__art" :style="artistArtwork(artist.name) ? { backgroundImage: `url(${artistArtwork(artist.name)})` } : {}"><i v-if="!artistArtwork(artist.name)">{{ artist.name.slice(0, 1).toLocaleUpperCase() }}</i></span>
+          <strong>{{ artist.name }}</strong><small>{{ artist.trackCount }} 首曲目 · {{ artist.albumCount }} 张专辑</small>
+        </button>
+      </section>
+    </template>
+
+    <template v-else-if="route.view === 'folders'">
+      <section class="page-heading"><p class="eyebrow">媒体库</p><h1>文件夹</h1><p>按 foobar2000 已配置的媒体库根目录浏览。</p></section>
+      <section class="library-card-grid library-card-grid--folders">
+        <button v-for="folder in folders" :key="`${folder.rootId}:${folder.pathId}`" class="folder-browser-card" @click="emit('folder', folder)"><span><Folder :size="28" /></span><strong>{{ folder.name }}</strong><small>{{ folder.trackCount }} 首曲目</small><code>{{ folder.absolutePath }}</code></button>
+      </section>
+    </template>
+
+    <template v-else-if="route.view === 'artist' || route.view === 'folder'">
+      <section class="page-heading page-heading--row">
+        <div><button class="media-library-back" @click="emit('back')">返回</button><p class="eyebrow">{{ route.view === 'artist' ? '艺术家' : '文件夹' }}</p><h1>{{ route.view === 'artist' ? route.artist : route.name }}</h1><p>{{ tracks.length }} 首曲目<template v-if="route.view === 'folder'"> · {{ folders.length }} 个子文件夹</template></p></div>
+        <div class="page-heading__actions"><button class="secondary-button" @click="emit('shuffle')"><Shuffle :size="17" />随机播放</button><button v-if="tracks.length" class="round-play" aria-label="播放全部" @click="emit('playTrack', tracks[0], 0)"><Play :size="22" fill="currentColor" /></button></div>
+      </section>
+      <section v-if="route.view === 'folder' && folders.length" class="content-section media-library-subfolders"><div class="section-heading"><div><p class="eyebrow">当前目录</p><h2>子文件夹</h2></div></div><div class="library-card-grid library-card-grid--folders"><button v-for="folder in folders" :key="`${folder.rootId}:${folder.pathId}`" class="folder-browser-card" @click="emit('folder', folder)"><span><Folder :size="25" /></span><strong>{{ folder.name }}</strong><small>{{ folder.trackCount }} 首曲目</small></button></div></section>
+      <TrackList v-if="tracks.length" :tracks="tracks" :current-track="currentTrack" :is-playing="isPlaying" @play="(track, index) => emit('playTrack', track, index)" @menu="(track, index, event) => emit('trackMenu', track, index, event)" @selection="emit('selection', $event)" />
+      <div v-else class="collection-empty"><Library :size="30" /><strong>这里没有可显示的曲目</strong><span>返回上一级并选择其他艺术家或文件夹。</span></div>
+    </template>
+  </main>
+</template>

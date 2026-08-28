@@ -44,8 +44,6 @@ const recordZone = ref<HTMLElement | null>(null)
 const coverflowIndex = ref(0)
 const lyricsVisible = ref(true)
 let resumeTimer: ReturnType<typeof setTimeout> | null = null
-let coverflowClickTimer: ReturnType<typeof setTimeout> | null = null
-let pendingCoverflowIndex: number | null = null
 
 const activeLyric = computed(() => {
   if (!props.lyrics.some((line) => line.time >= 0)) return -1
@@ -180,40 +178,26 @@ function cancelTonearm() {
 }
 
 function moveCoverflow(direction: number) {
-  if (coverflowClickTimer) clearTimeout(coverflowClickTimer)
-  coverflowClickTimer = null
-  pendingCoverflowIndex = null
   coverflowIndex.value = Math.min(coverflowItems.value.length - 1, Math.max(0, coverflowIndex.value + direction))
 }
 
 function selectCoverflow(index: number) {
-  if (coverflowClickTimer) return
-  pendingCoverflowIndex = index
-  coverflowClickTimer = setTimeout(() => {
-    if (pendingCoverflowIndex != null) coverflowIndex.value = pendingCoverflowIndex
-    pendingCoverflowIndex = null
-    coverflowClickTimer = null
-  }, 220)
+  coverflowIndex.value = index
 }
 
-function activateCoverflow() {
-  if (coverflowClickTimer) clearTimeout(coverflowClickTimer)
-  const index = pendingCoverflowIndex ?? coverflowIndex.value
-  pendingCoverflowIndex = null
-  coverflowClickTimer = null
+function activateCoverflow(index: number) {
   const item = coverflowItems.value[index]
   if (!item) return
   coverflowIndex.value = index
-  if (item.kind === 'current') emit('toggle')
+  if (item.kind === 'current') {
+    if (!props.isPlaying) emit('toggle')
+  }
   else if (item.kind === 'history') emit('playHistory', item.track)
   else emit('playQueue', item.queueIndex)
 }
 
 function setMode(nextMode: 'standard' | 'coverflow') {
   if (mode.value === nextMode) return
-  if (coverflowClickTimer) clearTimeout(coverflowClickTimer)
-  coverflowClickTimer = null
-  pendingCoverflowIndex = null
   cancelTonearm()
   mode.value = nextMode
   if (nextMode === 'coverflow') coverflowIndex.value = currentCoverflowIndex.value
@@ -226,9 +210,6 @@ function onCoverflowWheel(event: WheelEvent) {
 
 watch(activeLyric, () => void nextTick(() => scrollToActive()))
 watch(() => trackKey(props.track), () => {
-  if (coverflowClickTimer) clearTimeout(coverflowClickTimer)
-  coverflowClickTimer = null
-  pendingCoverflowIndex = null
   lyricRows.value = []
   coverForward.value = false
   cancelTonearm()
@@ -247,7 +228,6 @@ watch(() => coverflowItems.value.length, (length) => {
 
 onBeforeUnmount(() => {
   if (resumeTimer) clearTimeout(resumeTimer)
-  if (coverflowClickTimer) clearTimeout(coverflowClickTimer)
   cancelTonearm()
 })
 </script>
@@ -339,7 +319,7 @@ onBeforeUnmount(() => {
             :class="{ active: index === coverflowIndex, far: Math.abs(index - coverflowIndex) > 3 }"
             :style="{ '--cover-offset': index - coverflowIndex, '--cover-distance': Math.abs(index - coverflowIndex), '--cover-image': item.artwork ? `url(${item.artwork})` : 'none' }"
             @click="selectCoverflow(index)"
-            @dblclick.stop.prevent="activateCoverflow"
+            @dblclick.stop.prevent="activateCoverflow(index)"
           >
             <span class="coverflow-card__sleeve">
               <span class="coverflow-card__face"><ArtworkImage :src="item.artwork" :alt="`${item.track.album} 封面`" /></span>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Album, Heart, Home, ListMusic, Music2, Plus, Search } from '@lucide/vue'
+import { Album, BarChart3, Folder, Heart, Home, ListMusic, Music2, Plus, Search, Users } from '@lucide/vue'
 import type { PlaylistInfo } from 'foo-webview-sdk'
 import type { ViewId } from '../types/music'
 import foobarLogo from '../assets/foobar2000.png'
@@ -39,13 +39,26 @@ const emit = defineEmits<{
         <Home :size="18" />
         <span>主页</span>
       </button>
-      <button :class="{ active: view === 'albums' }" @click="emit('navigate', 'albums')">
+      <p class="sidebar-nav__label">媒体库</p>
+      <button :class="{ active: view === 'overview' }" @click="emit('navigate', 'overview')">
+        <BarChart3 :size="18" />
+        <span>概览</span>
+      </button>
+      <button :class="{ active: view === 'artists' || view === 'artist' }" @click="emit('navigate', 'artists')">
+        <Users :size="18" />
+        <span>艺术家</span>
+      </button>
+      <button :class="{ active: view === 'albums' || view === 'album' }" @click="emit('navigate', 'albums')">
         <Album :size="18" />
         <span>专辑</span>
       </button>
       <button :class="{ active: view === 'songs' }" @click="emit('navigate', 'songs')">
         <Music2 :size="18" />
         <span>歌曲</span>
+      </button>
+      <button :class="{ active: view === 'folders' || view === 'folder' }" @click="emit('navigate', 'folders')">
+        <Folder :size="18" />
+        <span>文件夹</span>
       </button>
     </nav>
 

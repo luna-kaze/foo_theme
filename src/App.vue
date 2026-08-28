@@ -5,6 +5,7 @@ import AppSidebar from './components/AppSidebar.vue'
 import AppTopbar from './components/AppTopbar.vue'
 import CreatePlaylistDialog from './components/CreatePlaylistDialog.vue'
 import LibraryView from './components/LibraryView.vue'
+import MediaLibraryView from './components/MediaLibraryView.vue'
 import MiniPlayer from './components/MiniPlayer.vue'
 import NowPlayingPanel from './components/NowPlayingPanel.vue'
 import PlayerBar from './components/PlayerBar.vue'
@@ -517,7 +518,30 @@ function onDrop(event: DragEvent) {
         @mini-player="player.openMiniPlayer"
       />
       <div class="workspace-scroll">
+        <MediaLibraryView
+          v-if="['overview', 'artists', 'artist', 'folders', 'folder'].includes(state.view)"
+          :route="state.route"
+          :stats="state.libraryStats"
+          :artists="state.artists"
+          :folders="state.libraryFolders"
+          :albums="state.albums"
+          :tracks="state.visibleTracks"
+          :current-track="state.currentTrack"
+          :is-playing="state.isPlaying"
+          :loading="state.loading || state.searchLoading"
+          @navigate="navigatePrimary"
+          @artist="player.selectArtist"
+          @folder="player.selectLibraryFolder"
+          @back="goBackPrimary"
+          @open-album="openPrimaryAlbum"
+          @album-menu="openAlbumMenu"
+          @play-track="handlePlayTrack"
+          @track-menu="openTrackMenu"
+          @selection="selectedTracks = $event"
+          @shuffle="player.shuffleCurrent"
+        />
         <LibraryView
+          v-else
           :view="state.view"
           :albums="filteredAlbums"
           :tracks="state.visibleTracks"
