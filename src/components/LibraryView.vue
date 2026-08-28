@@ -1,0 +1,144 @@
+<script setup lang="ts">
+import { ArrowLeft, ArrowRight, FileMusic, FolderOpen, Play, Radio, SearchX, Shuffle } from '@lucide/vue'
+import type { AlbumCard, DisplayTrack, ViewId } from '../types/music'
+import type { PlaylistInfo } from 'foo-webview-sdk'
+import AlbumGrid from './AlbumGrid.vue'
+import ArtworkImage from './ArtworkImage.vue'
+import TrackList from './TrackList.vue'
+
+defineProps<{
+  view: ViewId
+  albums: AlbumCard[]
+  tracks: DisplayTrack[]
+  currentTrack: DisplayTrack | null
+  activePlaylist: PlaylistInfo | null
+  selectedAlbum: AlbumCard | null
+  isPlaying: boolean
+  loading: boolean
+  search: string
+  searchLoading: boolean
+  importing: boolean
+}>()
+
+const emit = defineEmits<{
+  navigate: [view: ViewId]
+  playAlbum: [album: AlbumCard]
+  playTrack: [track: DisplayTrack, index: number]
+  openAlbum: [album: AlbumCard]
+  shuffle: []
+  back: []
+  trackMenu: [track: DisplayTrack, index: number, event: MouseEvent]
+  openFiles: []
+  openFolder: []
+  clearSearch: []
+  albumMenu: [album: AlbumCard, event: MouseEvent]
+}>()
+</script>
+
+<template>
+  <main class="library-view">
+    <div v-if="loading || searchLoading" class="library-loading">
+      <span /><span /><span />
+      <small>{{ searchLoading ? '正在搜索音乐库…' : '正在加载音乐…' }}</small>
+    </div>
+
+    <template v-else-if="view === 'home'">
+      <section class="hero">
+        <p class="eyebrow">畅听你的音乐</p>
+        <h1>晚上好。</h1>
+        <p class="hero__copy">从上次离开的地方继续，或重新发现音乐库中的精彩内容。</p>
+        <div class="hero__actions">
+          <button v-if="tracks.length" class="primary-button" @click="emit('playTrack', tracks[0], 0)"><Play :size="17" fill="currentColor" /> 播放</button>
+          <button v-if="tracks.length" class="secondary-button" @click="emit('shuffle')"><Shuffle :size="17" /> 随机播放全部</button>
+          <button v-else class="primary-button" :disabled="importing" @click="emit('openFiles')"><FileMusic :size="17" /> 打开音乐</button>
+        </div>
+      </section>
+
+      <section class="content-section">
+        <div class="section-heading">
+          <div><p class="eyebrow">音乐收藏</p><h2>最近添加</h2></div>
+          <button @click="emit('navigate', 'albums')">查看全部 <ArrowRight :size="16" /></button>
+        </div>
+        <AlbumGrid v-if="albums.length" :albums="albums" :limit="6" @open="emit('openAlbum', $event)" @menu="(album, event) => emit('albumMenu', album, event)" />
+        <div v-else class="collection-empty"><FileMusic :size="28" /><strong>音乐库中还没有专辑</strong><span>立即打开音乐，或在 foobar2000 首选项中添加需要长期索引的文件夹。</span><div><button class="primary-button" @click="emit('openFiles')">打开文件</button><button class="secondary-button" @click="emit('openFolder')">打开文件夹</button></div></div>
+      </section>
+
+      <section class="content-section content-section--tracks">
+        <div class="section-heading">
+          <div><p class="eyebrow">最近聆听</p><h2>最近曲目</h2></div>
+          <button @click="emit('navigate', 'songs')">查看全部 <ArrowRight :size="16" /></button>
+        </div>
+        <TrackList
+          v-if="tracks.length"
+          :tracks="tracks.slice(0, 8)"
+          :current-track="currentTrack"
+          :is-playing="isPlaying"
+          @play="(track, index) => emit('playTrack', track, index)"
+          @menu="(track, index, event) => emit('trackMenu', track, index, event)"
+        />
+      </section>
+    </template>
+
+    <template v-else-if="view === 'albums'">
+      <section class="page-heading"><p class="eyebrow">音乐库</p><h1>专辑</h1><p>收藏中共有 {{ albums.length }} 张专辑</p></section>
+      <AlbumGrid v-if="albums.length" :albums="albums" @open="emit('openAlbum', $event)" @menu="(album, event) => emit('albumMenu', album, event)" />
+      <div v-else class="collection-empty"><FileMusic :size="30" /><strong>没有找到专辑</strong><span>打开本地音乐，或在 foobar2000 首选项中更新监视文件夹。</span><div><button class="primary-button" @click="emit('openFiles')">打开文件</button><button class="secondary-button" @click="emit('openFolder')">打开文件夹</button></div></div>
+    </template>
+
+    <template v-else-if="view === 'album'">
+      <section class="album-detail-heading">
+        <button class="album-detail-heading__back" @click="emit('back')"><ArrowLeft :size="17" /> 返回</button>
+        <div class="album-detail-heading__art"><ArtworkImage :src="selectedAlbum?.artworkUrl" :alt="`${selectedAlbum?.name ?? '专辑'} 封面`" /></div>
+        <div class="album-detail-heading__copy">
+          <p class="eyebrow">专辑</p>
+          <h1>{{ selectedAlbum?.name }}</h1>
+          <p>{{ selectedAlbum?.artist }}<template v-if="selectedAlbum?.year"> · {{ selectedAlbum.year }}</template> · {{ tracks.length }} 首曲目</p>
+          <div class="hero__actions">
+            <button class="primary-button" @click="selectedAlbum && emit('playAlbum', selectedAlbum)"><Play :size="17" fill="currentColor" /> 播放专辑</button>
+            <button class="secondary-button" @click="emit('shuffle')"><Shuffle :size="17" /> 随机播放</button>
+          </div>
+        </div>
+      </section>
+      <TrackList
+        :tracks="tracks"
+        :current-track="currentTrack"
+        :is-playing="isPlaying"
+        @play="(track, index) => emit('playTrack', track, index)"
+        @menu="(track, index, event) => emit('trackMenu', track, index, event)"
+      />
+    </template>
+
+    <template v-else>
+      <section class="page-heading page-heading--row">
+        <div>
+          <p class="eyebrow">{{ view === 'playlist' ? '播放列表' : view === 'radio' ? '发现' : view === 'search' ? '搜索' : '音乐库' }}</p>
+          <h1>{{ view === 'playlist' ? activePlaylist?.name ?? '播放列表' : view === 'favourites' ? '收藏' : view === 'radio' ? '音乐库电台' : view === 'search' ? `“${search}”的搜索结果` : '歌曲' }}</h1>
+          <p>{{ tracks.length }} 首曲目</p>
+        </div>
+        <div class="page-heading__actions">
+          <button v-if="view === 'radio'" class="secondary-button" @click="emit('navigate', 'radio')"><Radio :size="17" /> 换一批</button>
+          <button v-else-if="tracks.length && view !== 'search'" class="secondary-button" @click="emit('shuffle')"><Shuffle :size="17" /> 随机播放</button>
+          <button v-if="tracks.length" class="round-play" aria-label="播放全部" @click="emit('playTrack', tracks[0], 0)"><Play :size="22" fill="currentColor" /></button>
+        </div>
+      </section>
+      <section v-if="view === 'search' && albums.length" class="content-section search-albums">
+        <div class="section-heading"><div><p class="eyebrow">专辑</p><h2>匹配的专辑</h2></div><span>{{ albums.length }}</span></div>
+        <AlbumGrid :albums="albums" :limit="6" @open="emit('openAlbum', $event)" @menu="(album, event) => emit('albumMenu', album, event)" />
+      </section>
+      <TrackList
+        v-if="tracks.length"
+        :tracks="tracks"
+        :current-track="currentTrack"
+        :is-playing="isPlaying"
+        @play="(track, index) => emit('playTrack', track, index)"
+        @menu="(track, index, event) => emit('trackMenu', track, index, event)"
+      />
+      <div v-else-if="view !== 'search' || !albums.length" class="collection-empty">
+        <SearchX v-if="view === 'search'" :size="30" /><FileMusic v-else :size="30" />
+        <strong>{{ view === 'search' ? '没有匹配的音乐' : view === 'favourites' ? '还没有收藏曲目' : view === 'playlist' ? '这个播放列表是空的' : '没有可显示的音乐' }}</strong>
+        <span>{{ view === 'search' ? '请减少关键词，或按标题、艺人、专辑和流派搜索。' : view === 'favourites' ? '在任意曲目的操作菜单中点按收藏，即可保存在这里。' : '打开文件或文件夹后，曲目会显示在“已打开的音乐”播放列表中。' }}</span>
+        <div><button v-if="view === 'search'" class="secondary-button" @click="emit('clearSearch')">清除搜索</button><template v-else><button class="primary-button" @click="emit('openFiles')"><FileMusic :size="16" /> 打开文件</button><button class="secondary-button" @click="emit('openFolder')"><FolderOpen :size="16" /> 打开文件夹</button></template></div>
+      </div>
+    </template>
+  </main>
+</template>

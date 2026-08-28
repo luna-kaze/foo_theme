@@ -1,0 +1,79 @@
+import fb from 'foo-webview-sdk'
+
+export type ContextMenuItem = Parameters<typeof fb.menu.popup>[0][number]
+
+const icon = (content: string): NonNullable<ContextMenuItem['iconSvg']> => ({
+  viewBox: '0 0 24 24',
+  content,
+})
+
+export const menuIcons = {
+  play: icon('<polygon points="6 3 20 12 6 21 6 3"/>'),
+  next: icon('<path d="M5 4l11 8-11 8z"/><path d="M19 5v14"/>'),
+  queue: icon('<path d="M4 6h10M4 12h10M4 18h7"/><path d="M18 15v6M15 18h6"/>'),
+  heart: icon('<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8l1.1 1.1L12 21l7.7-7.5 1.1-1.1a5.5 5.5 0 0 0 0-7.8z"/>'),
+  playlist: icon('<path d="M4 6h12M4 12h9M4 18h7"/><path d="M18 13v8M14 17h8"/>'),
+  album: icon('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2"/>'),
+  folder: icon('<path d="M3 6h7l2 2h9v11H3z"/>'),
+  shuffle: icon('<path d="M3 6h3c5 0 7 12 12 12h3"/><path d="M18 15l3 3-3 3M3 18h3c2.5 0 4.2-3 5.8-6M15 6h6M18 3l3 3-3 3"/>'),
+  copy: icon('<rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/>'),
+  remove: icon('<path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/>'),
+  search: icon('<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>'),
+  refresh: icon('<path d="M20 6v5h-5M4 18v-5h5"/><path d="M18.5 9A7 7 0 0 0 6 6.5L4 9M5.5 15A7 7 0 0 0 18 17.5l2-2.5"/>'),
+  settings: icon('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z"/>'),
+} as const
+
+const contextMenuCss = `
+  :root { color-scheme: dark; }
+  html, body, #viewport, .fb-menu { scrollbar-width: none !important; }
+  html::-webkit-scrollbar, body::-webkit-scrollbar, #viewport::-webkit-scrollbar, .fb-menu::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none !important; }
+  .fb-menu {
+    min-width: 268px !important;
+    padding: 7px !important;
+    color: #efedef !important;
+    font: 12px/1.25 "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", sans-serif !important;
+    background: rgba(29, 29, 32, .82) !important;
+    border: 1px solid rgba(255, 255, 255, .12) !important;
+    border-radius: 13px !important;
+    box-shadow: 0 18px 52px rgba(0, 0, 0, .45) !important;
+  }
+  .fb-item {
+    min-height: 35px !important;
+    margin: 1px 0 !important;
+    padding: 0 11px !important;
+    gap: 10px !important;
+    color: rgba(244, 242, 244, .82) !important;
+    border-radius: 8px !important;
+    transition: background 90ms ease, color 90ms ease !important;
+  }
+  .fb-item.active { color: #fff !important; background: rgba(255, 255, 255, .09) !important; }
+  .fb-item.checked { color: #ffaaa7 !important; }
+  .fb-item.disabled { opacity: .34 !important; }
+  .fb-item-ico { width: 17px !important; height: 17px !important; color: currentColor !important; }
+  .fb-item-ico svg { fill: none !important; stroke: currentColor !important; stroke-width: 1.8 !important; stroke-linecap: round !important; stroke-linejoin: round !important; }
+  .fb-item-ico polygon { fill: currentColor !important; stroke: none !important; }
+  .fb-sep { height: 1px !important; margin: 6px 9px !important; background: rgba(255, 255, 255, .09) !important; }
+  .fb-arrow { opacity: .55 !important; }
+  .fb-np { min-height: 58px !important; margin-bottom: 4px !important; padding: 7px !important; background: rgba(255, 255, 255, .045) !important; }
+  .fb-np-cover { border-radius: 7px !important; }
+  .fb-np-title { color: #fff !important; font-weight: 650 !important; }
+  .fb-np-subtitle { color: rgba(255, 255, 255, .48) !important; }
+  #menu.in .fb-menu { animation: menu-in 120ms cubic-bezier(.2,.8,.2,1); }
+  #menu.out .fb-menu { opacity: 0; transform: translateY(-3px) scale(.985); transition: 90ms ease; }
+  @keyframes menu-in { from { opacity: 0; transform: translateY(-4px) scale(.98); } }
+`
+
+export async function showContextMenu(items: ContextMenuItem[], event: MouseEvent) {
+  if (!fb.isAvailable()) return null
+  return fb.menu.popup(
+    items,
+    { x: event.screenX, y: event.screenY },
+    {
+      windowModel: 'contentSized',
+      backdrop: 'acrylic',
+      backdropDarkMode: true,
+      closeAnimationMs: 90,
+      css: contextMenuCss,
+    },
+  )
+}

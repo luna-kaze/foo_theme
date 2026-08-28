@@ -1,0 +1,23 @@
+{
+  "name": "foo-theme",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -b && vite build",
+    "preview": "vite preview",
+    "type-check": "vue-tsc -b"
+  },
+  "dependencies": {
+    "@lucide/vue": "^1.34.0",
+    "foo-webview-sdk": "^1.12.0",
+    "vue": "^3.5.18"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.1",
+    "typescript": "~5.8.3",
+    "vite": "^7.0.6",
+    "vue-tsc": "^3.0.4"
+  }
+}
