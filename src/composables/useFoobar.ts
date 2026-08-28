@@ -66,6 +66,8 @@ const history: ViewId[] = ['home']
 let historyIndex = 0
 const stagingPlaylistName = 'WebView 临时播放'
 const importExtensions = new Set(['mp3', 'flac', 'm4a', 'aac', 'ogg', 'opus', 'wav', 'aiff', 'aif', 'ape', 'wv', 'wma', 'mpc', 'tta', 'dsf', 'dff', 'cue', 'm3u', 'm3u8', 'pls'])
+const runtimeParams = new URLSearchParams(window.location.search)
+const parentWindowId = runtimeParams.get('mainWindowId') ?? ''
 
 const normalizeTrack = (track: TrackInfo | PlaybackTrackChangedPayload): DisplayTrack => ({
   ...track,
@@ -284,10 +286,12 @@ async function loadPlaylists() {
 
 async function loadQueue() {
   const result = await fb.queue.get()
+  const artworkByAlbum = new Map(state.albums.map((album) => [album.name, album.artworkUrl]))
   const explicit: DisplayQueueItem[] = (result.items ?? []).map((item, sourceIndex) => ({
     ...item,
     queueSource: 'explicit',
     sourceIndex,
+    artworkUrl: artworkByAlbum.get(item.album) || '',
   }))
   let upcoming: DisplayQueueItem[] = []
   try {
@@ -303,6 +307,7 @@ async function loadQueue() {
         playlistItem: current.index + 1 + offset,
         queueSource: 'playlist',
         sourceIndex: current.index + 1 + offset,
+        artworkUrl: artworkByAlbum.get(track.album) || '',
       }))
     }
   } catch {
@@ -437,6 +442,14 @@ function bindEvents() {
     fb.on('dnd:drop', (event) => {
       if (event.paths.length) refreshSafely(() => importPaths(event.paths))
       else refreshSafely(importDroppedPaths)
+    }),
+    fb.on('window:message', (event) => {
+      if (event.message.type === 'restore-main') refreshSafely(restoreCurrentWindow)
+    }),
+    fb.on('window:popupClosed', (event) => {
+      if (event.windowId !== miniPlayerWindowId) return
+      miniPlayerWindowId = ''
+      refreshSafely(restoreCurrentWindow)
     }),
   ]
 }
@@ -829,18 +842,15 @@ async function removePlaylist(playlistIndex: number) {
     notify(`已删除“${playlist.name}”`, 'success')
     return
   }
-  const confirmation = await fb.dialog.confirm({
-    title: '删除播放列表',
-    message: `确定要删除“${playlist.name}”吗？此操作不会删除音乐文件。`,
-    type: 'warning',
-    buttons: ['删除', '取消'],
-    defaultButton: 0,
-  })
-  if (!confirmation.confirmed) return
-  const result = await runAction(
-    () => playlist.isAutoplaylist ? fb.playlist.removeAutoplaylist(playlistIndex) : fb.playlist.remove(playlistIndex),
-    `已删除“${playlist.name}”`,
-  )
+  if (state.activePlaylist?.index === playlistIndex) {
+    const fallback = state.playlists.find((item) => item.index !== playlistIndex)
+    if (fallback) await runAction(() => fb.playlist.setActive(fallback.index))
+  }
+  if (playlist.isAutoplaylist) {
+    const converted = await runAction(() => fb.playlist.removeAutoplaylist(playlistIndex))
+    if (!converted) return
+  }
+  const result = await runAction(() => fb.playlist.remove(playlistIndex), `已删除“${playlist.name}”`)
   if (!result) return
   await loadPlaylists()
   if (state.view === 'playlist') {
@@ -1063,11 +1073,18 @@ async function openMiniPlayer() {
   }
   if (miniPlayerWindowId) {
     const focused = await runAction(() => fb.ui.focus(miniPlayerWindowId))
-    if (focused) return
+    if (focused) {
+      await runAction(() => fb.ui.minimize())
+      return
+    }
     miniPlayerWindowId = ''
   }
+  const currentWindow = await runAction(() => fb.ui.getCurrentWindowId())
+  if (!currentWindow) return
   const url = new URL(window.location.href)
-  url.search = 'mode=mini'
+  url.search = ''
+  url.searchParams.set('mode', 'mini')
+  url.searchParams.set('mainWindowId', currentWindow.windowId)
   const result = await runAction(() => fb.ui.createPopup({
     url: url.href,
     width: 430,
@@ -1079,6 +1096,24 @@ async function openMiniPlayer() {
     profile: 'miniPlayer',
   }))
   miniPlayerWindowId = result?.windowId ?? ''
+  if (miniPlayerWindowId) await runAction(() => fb.ui.minimize())
+}
+
+async function startWindowDrag() {
+  if (state.connected) await runAction(() => fb.ui.startDrag())
+}
+
+async function closeWindow() {
+  if (state.connected) {
+    if (parentWindowId) await runAction(() => fb.ui.sendMessage(parentWindowId, { type: 'restore-main' }))
+    await runAction(() => fb.ui.close())
+  }
+  else window.close()
+}
+
+async function restoreCurrentWindow() {
+  await fb.ui.restore()
+  await fb.ui.focus()
 }
 
 async function showInExplorer(track: DisplayTrack) {
@@ -1365,6 +1400,8 @@ export function useFoobar() {
     setOutputDevice,
     toggleDesktopLyrics,
     openMiniPlayer,
+    startWindowDrag,
+    closeWindow,
     shuffleCurrent,
     togglePlayback,
     next,

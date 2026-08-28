@@ -1,23 +1,27 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, reactive } from 'vue'
+import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { AlertCircle, CheckCircle2, FileMusic, Info } from '@lucide/vue'
 import AppSidebar from './components/AppSidebar.vue'
 import AppTopbar from './components/AppTopbar.vue'
 import CreatePlaylistDialog from './components/CreatePlaylistDialog.vue'
 import LibraryView from './components/LibraryView.vue'
+import MiniPlayer from './components/MiniPlayer.vue'
 import NowPlayingPanel from './components/NowPlayingPanel.vue'
 import PlayerBar from './components/PlayerBar.vue'
+import QueuePopover from './components/QueuePopover.vue'
 import TrackActionMenu from './components/TrackActionMenu.vue'
 import { useFoobar } from './composables/useFoobar'
 import type { PlaylistInfo } from 'foo-webview-sdk'
 import type { AlbumCard, DisplayTrack, ViewId } from './types/music'
-import { menuIcons, showContextMenu, type ContextMenuItem } from './utils/contextMenu'
+import { menuIcons, showContextMenu, showContextMenuAtClientPoint, type ContextMenuItem } from './utils/contextMenu'
 import { isSameTrack } from './utils/track'
 
 const player = useFoobar()
 const { state, filteredAlbums } = player
+const miniMode = new URLSearchParams(window.location.search).get('mode') === 'mini'
 const trackMenu = reactive({ open: false, track: null as DisplayTrack | null, index: -1, x: 0, y: 0 })
 const dragState = reactive({ active: false, depth: 0 })
+const queueOpen = ref(false)
 
 function onKeydown(event: KeyboardEvent) {
   const target = event.target as HTMLElement | null
@@ -32,6 +36,7 @@ function onKeydown(event: KeyboardEvent) {
     state.nowPlayingOpen = false
     state.dialog = null
     trackMenu.open = false
+    queueOpen.value = false
     return
   }
   if (editing) return
@@ -46,7 +51,9 @@ function onKeydown(event: KeyboardEvent) {
 
 onMounted(() => {
   void player.initialize()
+  if (miniMode) document.body.classList.add('mini-window')
   window.addEventListener('keydown', onKeydown)
+  if (miniMode) return
   window.addEventListener('dragenter', onDragEnter)
   window.addEventListener('dragover', onDragOver)
   window.addEventListener('dragleave', onDragLeave)
@@ -54,6 +61,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  document.body.classList.remove('mini-window')
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('dragenter', onDragEnter)
   window.removeEventListener('dragover', onDragOver)
@@ -62,18 +70,21 @@ onBeforeUnmount(() => {
   player.dispose()
 })
 
-function openNowPlaying(tab: 'lyrics' | 'queue') {
-  if (state.nowPlayingOpen && state.nowPlayingTab !== tab) {
-    state.nowPlayingTab = tab
-    return
-  }
-  player.toggleNowPlaying(tab)
+function openNowPlaying() {
+  queueOpen.value = false
+  player.toggleNowPlaying('lyrics')
+}
+
+function toggleQueue() {
+  queueOpen.value = !queueOpen.value
+  trackMenu.open = false
 }
 
 function closeSecondaryUi() {
   state.nowPlayingOpen = false
   state.dialog = null
   trackMenu.open = false
+  queueOpen.value = false
 }
 
 function navigatePrimary(view: ViewId) {
@@ -117,14 +128,21 @@ function openPrimaryAlbum(album: AlbumCard) {
 }
 
 async function openOutputDeviceMenu(event: MouseEvent) {
+  const anchor = (event.currentTarget as HTMLElement | null)?.getBoundingClientRect()
+  const point = { x: anchor?.right ?? event.clientX, y: anchor?.top ?? event.clientY }
   const devices = await player.getOutputDevices()
   if (!devices.length) return
-  const action = await openPopup(devices.map((device, index) => ({
-    id: `output:${index}`,
-    label: device.name,
-    checked: device.isCurrent,
-    iconSvg: menuIcons.settings,
-  })), event)
+  let action: string | null = null
+  try {
+    action = await showContextMenuAtClientPoint(devices.map((device, index) => ({
+      id: `output:${index}`,
+      label: device.name,
+      checked: device.isCurrent,
+      iconSvg: menuIcons.settings,
+    })), point)
+  } catch (error) {
+    player.notify(error instanceof Error ? error.message : '无法打开输出设备菜单。', 'error')
+  }
   if (!action?.startsWith('output:')) return
   const device = devices[Number(action.split(':')[1])]
   if (device) await player.setOutputDevice(device.outputId, device.deviceId, device.name)
@@ -313,7 +331,24 @@ function onDrop(event: DragEvent) {
 </script>
 
 <template>
-  <div class="app-shell" @contextmenu="openAppMenu">
+  <MiniPlayer
+    v-if="miniMode"
+    :track="state.currentTrack"
+    :artwork="state.currentArtwork"
+    :is-playing="state.isPlaying"
+    :position="state.position"
+    :duration="state.duration"
+    :volume="state.volume"
+    :muted="state.muted"
+    @toggle="player.togglePlayback"
+    @next="player.next"
+    @previous="player.previous"
+    @seek="player.seek"
+    @mute="player.toggleMute"
+    @drag="player.startWindowDrag"
+    @close="player.closeWindow"
+  />
+  <div v-else class="app-shell" @contextmenu="openAppMenu">
     <AppSidebar
       :view="state.view"
       :playlists="state.playlists"
@@ -386,20 +421,25 @@ function onDrop(event: DragEvent) {
       :lyrics="state.lyrics"
       :lyrics-synced="state.lyricsSynced"
       :queue="state.queue"
-      :tab="state.nowPlayingTab"
       @close="player.closeNowPlaying"
       @toggle="player.togglePlayback"
-      @next="player.next"
-      @previous="player.previous"
       @seek="player.seek"
-      @tab="state.nowPlayingTab = $event"
       @favourite="player.toggleFavourite"
       @play-queue="state.queue[$event] && handlePlayTrack(state.queue[$event])"
-      @remove-queue="player.removeQueueItem"
-      @move-queue="player.moveQueueItemToTop"
-      @clear-queue="player.clearQueue"
-      @queue-menu="openQueueMenu"
     />
+
+    <Transition name="queue-card">
+      <QueuePopover
+        v-if="queueOpen"
+        :queue="state.queue"
+        @close="queueOpen = false"
+        @play="state.queue[$event] && handlePlayTrack(state.queue[$event])"
+        @remove="player.removeQueueItem"
+        @move="player.moveQueueItemToTop"
+        @clear="player.clearQueue"
+        @menu="openQueueMenu"
+      />
+    </Transition>
 
     <PlayerBar
       :track="state.currentTrack"
@@ -411,6 +451,7 @@ function onDrop(event: DragEvent) {
       :muted="state.muted"
       :playback-order="state.playbackOrder"
       :now-playing-open="state.nowPlayingOpen"
+      :queue-open="queueOpen"
       @toggle="player.togglePlayback"
       @next="player.next"
       @previous="player.previous"
@@ -418,7 +459,8 @@ function onDrop(event: DragEvent) {
       @volume="player.setVolume"
       @mute="player.toggleMute"
       @order="player.cyclePlaybackOrder"
-      @now-playing="openNowPlaying"
+      @immersive="openNowPlaying"
+      @queue="toggleQueue"
       @menu="(track, event) => openTrackMenu(track, -1, event)"
     />
 

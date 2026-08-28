@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { ListMusic, Maximize2, Mic2, Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Volume1, Volume2, VolumeX } from '@lucide/vue'
-import type { DisplayTrack, NowPlayingTab } from '../types/music'
+import type { DisplayTrack } from '../types/music'
 import { formatTime } from '../utils/format'
 import ArtworkImage from './ArtworkImage.vue'
 
@@ -15,6 +15,7 @@ const props = defineProps<{
   muted: boolean
   playbackOrder: number
   nowPlayingOpen: boolean
+  queueOpen: boolean
 }>()
 
 const seekPreview = ref<number | null>(null)
@@ -42,14 +43,15 @@ const emit = defineEmits<{
   volume: [volume: number]
   mute: []
   order: []
-  nowPlaying: [tab: NowPlayingTab]
+  immersive: []
+  queue: []
   menu: [track: DisplayTrack, event: MouseEvent]
 }>()
 </script>
 
 <template>
   <footer class="player-bar">
-    <button class="player-track" @click="emit('nowPlaying', 'lyrics')" @contextmenu.prevent.stop="track && emit('menu', track, $event)">
+    <button class="player-track" @click="emit('immersive')" @contextmenu.prevent.stop="track && emit('menu', track, $event)">
       <ArtworkImage :src="artwork || track?.artworkUrl" :alt="`${track?.album ?? '当前曲目'} 封面`" />
       <span class="player-track__copy">
         <strong>{{ track?.title || '当前没有播放' }}</strong>
@@ -89,8 +91,8 @@ const emit = defineEmits<{
         <Repeat1 v-if="playbackOrder === 2" :size="17" />
         <Repeat v-else-if="playbackOrder !== 4" :size="17" />
       </button>
-      <button :class="{ active: nowPlayingOpen }" aria-label="歌词" @click="emit('nowPlaying', 'lyrics')"><Mic2 :size="17" /></button>
-      <button :class="{ active: nowPlayingOpen }" aria-label="播放队列" @click="emit('nowPlaying', 'queue')"><ListMusic :size="18" /></button>
+      <button :class="{ active: nowPlayingOpen }" aria-label="沉浸播放" @click="emit('immersive')"><Mic2 :size="17" /></button>
+      <button :class="{ active: queueOpen }" aria-label="播放队列" @click="emit('queue')"><ListMusic :size="18" /></button>
       <button aria-label="静音" @click="emit('mute')">
         <VolumeX v-if="muted || volume === 0" :size="18" />
         <Volume1 v-else-if="volume < 45" :size="18" />

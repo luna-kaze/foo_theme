@@ -77,3 +77,19 @@ export async function showContextMenu(items: ContextMenuItem[], event: MouseEven
     },
   )
 }
+
+export async function showContextMenuAtClientPoint(items: ContextMenuItem[], point: { x: number; y: number }) {
+  if (!fb.isAvailable()) return null
+  const [bounds, dpi] = await Promise.all([fb.ui.getBounds(), fb.ui.getDpiScale()])
+  return fb.menu.popup(
+    items,
+    { x: bounds.x + point.x * dpi.scale, y: bounds.y + point.y * dpi.scale },
+    {
+      windowModel: 'contentSized',
+      backdrop: 'acrylic',
+      backdropDarkMode: true,
+      closeAnimationMs: 90,
+      css: contextMenuCss,
+    },
+  )
+}

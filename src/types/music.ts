@@ -18,6 +18,7 @@ export interface DisplayTrack extends TrackInfo {
 export interface DisplayQueueItem extends QueueItem {
   queueSource: 'explicit' | 'playlist'
   sourceIndex: number
+  artworkUrl?: string
 }
 
 export interface ParsedLyric {
