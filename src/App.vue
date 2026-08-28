@@ -340,7 +340,7 @@ function onDrop(event: DragEvent) {
     @drag="player.startWindowDrag"
     @close="player.closeWindow"
   />
-  <div v-else class="app-shell" @contextmenu="openAppMenu">
+  <div v-else class="app-shell" @contextmenu="openAppMenu" @dblclick.stop.prevent>
     <AppSidebar
       :view="state.view"
       :playlists="state.playlists"

@@ -36,6 +36,7 @@ const autoFollowPaused = ref(false)
 const scrubPosition = ref<number | null>(null)
 const tonearmDragging = ref(false)
 const tonearmWillPause = ref(false)
+const tonearmDragAngle = ref<number | null>(null)
 const recordZone = ref<HTMLElement | null>(null)
 const coverflowIndex = ref(0)
 const lyricsVisible = ref(true)
@@ -61,7 +62,7 @@ const playbackProgress = computed(() => {
   return props.duration > 0 ? Math.min(1, Math.max(0, position / props.duration)) : 0
 })
 
-const tonearmAngle = computed(() => 3 + playbackProgress.value * 33)
+const tonearmAngle = computed(() => tonearmDragAngle.value ?? 3 + playbackProgress.value * 33)
 
 const coverflowItems = computed(() => [
   ...[...props.history].reverse().map((track) => ({
@@ -136,16 +137,17 @@ function updateTonearm(event: PointerEvent) {
   const dx = event.clientX - pivotX
   const dy = event.clientY - pivotY
   const rawAngle = Math.atan2(-dx, Math.max(1, dy)) * 180 / Math.PI
-  const angle = Math.min(36, Math.max(3, rawAngle))
-  tonearmWillPause.value = event.clientX > rect.right + 48 || event.clientY < rect.top - 28 || event.clientY > rect.bottom + 28
-  const ratio = (angle - 3) / 33
-  scrubPosition.value = ratio * props.duration
+  const angle = Math.min(36, Math.max(-10, rawAngle))
+  tonearmDragAngle.value = angle
+  tonearmWillPause.value = angle < 3
+  scrubPosition.value = tonearmWillPause.value ? null : ((angle - 3) / 33) * props.duration
 }
 
 function beginTonearm(event: PointerEvent) {
   if (!props.duration) return
   tonearmDragging.value = true
   tonearmWillPause.value = false
+  tonearmDragAngle.value = tonearmAngle.value
   ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
   updateTonearm(event)
 }
@@ -161,12 +163,14 @@ function finishTonearm(event: PointerEvent) {
   }
   tonearmDragging.value = false
   tonearmWillPause.value = false
+  tonearmDragAngle.value = null
   scrubPosition.value = null
 }
 
 function cancelTonearm() {
   tonearmDragging.value = false
   tonearmWillPause.value = false
+  tonearmDragAngle.value = null
   scrubPosition.value = null
 }
 
@@ -175,6 +179,10 @@ function moveCoverflow(direction: number) {
 }
 
 function selectCoverflow(index: number) {
+  coverflowIndex.value = index
+}
+
+function activateCoverflow(index: number) {
   const item = coverflowItems.value[index]
   if (!item) return
   coverflowIndex.value = index
@@ -306,6 +314,7 @@ onBeforeUnmount(() => {
             :class="{ active: index === coverflowIndex, far: Math.abs(index - coverflowIndex) > 3 }"
             :style="{ '--cover-offset': index - coverflowIndex, '--cover-distance': Math.abs(index - coverflowIndex), '--cover-image': item.artwork ? `url(${item.artwork})` : 'none' }"
             @click="selectCoverflow(index)"
+            @dblclick.stop.prevent="activateCoverflow(index)"
           >
             <span class="coverflow-card__sleeve">
               <span class="coverflow-card__face"><ArtworkImage :src="item.artwork" :alt="`${item.track.album} 封面`" /></span>
@@ -321,7 +330,7 @@ onBeforeUnmount(() => {
           <p>{{ selectedCoverflow.kind === 'current' ? '正在播放' : selectedCoverflow.kind === 'history' ? '播放历史' : `接下来第 ${selectedCoverflow.queueIndex + 1} 首` }}</p>
           <h1>{{ selectedCoverflow.track.title }}</h1>
           <span>{{ selectedCoverflow.track.artist }} · {{ selectedCoverflow.track.album }}</span>
-          <small>{{ selectedCoverflow.kind === 'current' ? `点击封面${isPlaying ? '暂停' : '播放'}` : '点击封面立即切换' }}</small>
+          <small>{{ selectedCoverflow.kind === 'current' ? `双击封面${isPlaying ? '暂停' : '播放'}` : '单击浏览，双击切换并播放' }}</small>
         </div>
       </section>
 
