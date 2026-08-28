@@ -30,6 +30,7 @@ const emit = defineEmits<{
   selectOutputDevice: [device: OutputDevice]
   desktopLyrics: []
   miniPlayer: []
+  drag: []
 }>()
 
 const menuOpen = ref(false)
@@ -71,12 +72,19 @@ function selectOutput(device: OutputDevice) {
   outputOpen.value = false
 }
 
+function startDrag(event: PointerEvent) {
+  if (event.button !== 0 || event.detail > 1) return
+  const target = event.target as HTMLElement
+  if (target.closest('button, input, form, select, a, [role="button"], [role="menu"]')) return
+  emit('drag')
+}
+
 onMounted(() => document.addEventListener('pointerdown', onDocumentPointerDown))
 onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPointerDown))
 </script>
 
 <template>
-  <header ref="root" class="topbar" @dblclick.stop.prevent>
+  <header ref="root" class="topbar" @pointerdown="startDrag" @dblclick.stop.prevent>
     <div class="history-buttons">
       <button aria-label="后退" :disabled="!canGoBack" @click="navigate('back')"><ChevronLeft :size="19" /></button>
       <button aria-label="前进" :disabled="!canGoForward" @click="navigate('forward')"><ChevronRight :size="19" /></button>

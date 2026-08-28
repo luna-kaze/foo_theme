@@ -516,6 +516,7 @@ function onDrop(event: DragEvent) {
         @select-output-device="selectOutputDevice"
         @desktop-lyrics="player.toggleDesktopLyrics"
         @mini-player="player.openMiniPlayer"
+        @drag="player.startWindowDrag"
       />
       <div class="workspace-scroll">
         <MediaLibraryView
