@@ -1,67 +1,97 @@
-# foobar2000 WebView Theme
+# foobar2000 WebView 主题
 
-This is a modern WebView2 interface for foobar2000, built with Vue 3, TypeScript, Vite, and `foo-webview-sdk`. It uses the foobar2000 name and the icon extracted from the local foobar2000 executable. Its information architecture takes cues from Cider 1, while the implementation and visual system are original.
+基于 Vue 3、TypeScript、Vite 与 `foo-webview-sdk` 构建的现代 WebView2 深色中文播放器界面。信息架构参考 Cider 1，实现与视觉系统为原创。通过 `foo_ui_webview2` 插件以宿主桥接方式接管 foobar2000 的界面。
 
-## Features
+## 使用方法
 
-- Responsive application shell with synchronized, debounced full-library search and explicit result/empty states
-- Album grid, album detail, full-library song table, favourites, random library radio, and playlist views
-- Persistent playback bar with seek, volume, repeat, and transport controls
-- Expanded Now Playing view with synchronized lyric seeking, automatic centered scrolling, manual-scroll pause/resume, and queue editing
-- Native file/folder pickers and drag-and-drop. External paths are expanded into a dedicated `Opened Music` playlist and played immediately
-- Playlist creation, grouped context menus, rating-backed favourites, stable playlist actions after filtering, navigation history, keyboard shortcuts, and application menu
-- Live synchronization through `foo-webview-sdk` playback, library, playlist, queue, artwork, and lyric APIs
-- Browser preview mode with representative local data when the WebView2 bridge is unavailable
+### 环境要求
 
-## Build
+- foobar2000（推荐 2.x）
+- 已安装并启用插件 `foo_ui_webview2`（主题核心宿主）
+- 已安装 `foo_playcount`（播放统计与评分功能依赖）
+
+### 构建
 
 ```bash
 npm install
 npm run build
 ```
 
-The production theme is emitted to `dist/`. Copy the **contents** of that directory to:
+生产产物输出到 `dist/`。将 `dist/` 目录的**内容**复制到：
 
 ```text
 <foobar2000 profile>\webview-ui\default\
 ```
 
-The resulting theme directory must contain `index.html` at its root. Restart foobar2000 or reload the active `foo_ui_webview2` template after copying the files.
+复制完成后，目标目录根下必须存在 `index.html`。重启 foobar2000 或重载当前 `foo_ui_webview2` 模板即可生效。
 
-## Development
+### 开发调试
 
 ```bash
 npm run dev
 ```
 
-Point the `foo_ui_webview2` development-server setting at the Vite URL (normally `http://localhost:5173`). Opening the same URL in a regular browser activates preview mode.
+将 `foo_ui_webview2` 的开发服务器地址指向 Vite 的 URL（通常为 `http://localhost:5173`）。在普通浏览器中打开同一地址会进入预览模式，使用本地模拟数据而非宿主桥接。
 
-## Architecture
+## 包含的功能
 
-- `src/composables/useFoobar.ts`: the only application-facing SDK adapter and state synchronization layer
-- `src/components/`: presentational shell, library, player, and Now Playing modules
-- `src/data/mock.ts`: isolated browser-preview data, never used when the native bridge is available
-- `src/types/music.ts`: UI domain types layered over SDK types
-- `src/styles/main.css`: design tokens, responsive layout, and component styling
+### 媒体库浏览
 
-This separation leaves native backdrop/titlebar work in the shell, popup or Mini Player work around the SDK adapter, and full-screen lyric enhancements in `NowPlayingPanel.vue` without coupling them to the library views.
+- 概览：媒体库统计（曲目/专辑/艺术家数量、总时长、文件大小）、专辑速览、最近添加
+- 艺术家：艺术家卡片列表，支持点入查看其全部曲目
+- 专辑：专辑网格、专辑详情
+- 歌曲：全库歌曲表，支持流派、播放统计筛选，高级字段/操作符筛选，Title Formatting 自定义列
+- 文件夹：按 foobar2000 已配置的媒体库根目录逐级浏览
+- 收藏、随机电台、全库搜索
 
-## Local Music
+### 播放与沉浸界面
 
-`Open music` accepts files, folders, CUE sheets, and playlist files through foobar2000's native path parser. Opened tracks are placed in the `Opened Music` playlist, so they remain visible and playable even when they are not part of the indexed media library.
+- 完整播放控制：播放/暂停、上一首/下一首、seek、音量、静音、播放顺序
+- 独立 owned 播放列表，避免污染用户的播放列表
+- Standard 沉浸模式与 Coverflow 封面浏览（单击切换、双击播放）
+- 歌词显示（内嵌/同名歌词文件）、同步歌词点击跳转、自动居中滚动
+- 独立队列浮层、迷你播放器、F11 全屏
+- 输出设备枚举与切换、桌面歌词入口
+- AirPlay 连接状态指示
 
-The WebView SDK cannot add or remove foobar2000 monitored library folders. Use **Preferences** to manage those folders, then use **Rescan library folders** from the application menu. This distinction is intentional: opening a file must not pretend that it has been permanently indexed by the media library.
+### 媒体管理
 
-## SDK Mapping
+- 曲目属性：标签查看、技术信息、播放次数、首次/最后播放、添加时间
+- 元数据编辑：单曲及批量（标题/艺人/专辑/流派/日期/音轨号/碟片号）
+- 0–5 星评分与批量评分；收藏以 5 星为准
+- ReplayGain：查看 Track/Album Gain 与 Peak、按音轨/专辑扫描、清除
+- 封面：查看、嵌入正面、移除嵌入封面
+- 文件操作：重命名、移动（带确认）、回收站删除（输入确认）、资源管理器定位
 
-| Feature | SDK surface |
+### 播放列表与队列
+
+- 播放列表：创建、复制、清空、删除、排序、拖拽重排、撤销
+- 自动播放列表（Auto Playlist）：按查询语句 + 排序规则创建与删除
+- 队列：查看、添加、置顶、移除、清空
+- 拖拽导入（CUE/M3U/PLS 去重）与文件/文件夹选择器导入
+
+## 利用的插件
+
+| 插件 | 用途 |
 | --- | --- |
-| Playback and position | `fb.player.*`, `playback:*` events |
-| Albums and recent tracks | `fb.library.getAlbums`, `fb.library.getRecentlyAdded` |
-| Full-library search | `fb.library.search` |
-| Local files and folders | `fb.dialog.openFile`, `fb.dialog.openFolder`, `fb.dnd.*`, `fb.playlist.add` |
-| Playlists | `fb.playlist.*`, `playlist:*` events |
-| Queue | `fb.queue.get`, `playback:queueChanged` |
-| Artwork | `fb.artwork.getFb2kUrl*` |
-| Lyrics | `fb.lyrics.get`, `fb.player.seek` |
-| Volume and order | `fb.player.getVolume`, `setVolume`, `getOrder`, `setOrder` |
+| `foo_ui_webview2` | 主题核心宿主，提供界面渲染与 SDK 桥接（播放、媒体库、播放列表、队列、元数据、封面、歌词、窗口控制） |
+| `foo_playcount` | 播放次数、首次/最后播放、添加时间、评分存储，支撑播放统计筛选与收藏 |
+| `foo_uie_eslyric` | 通过命令触发 ESLyric 桌面歌词 |
+| `foo_airplay` | 通过流路径识别 AirPlay 连接状态 |
+| `foo_out_wasapi` / `foo_out_wasapis` / `foo_out_asio` 等 | 通过通用输出设备接口枚举与切换 |
+| `foo_input_*` 系列解码器 | 经媒体库间接支持其音频格式 |
+
+> 频谱/响度面板、原生 Coverflow、JSplitter、DSP 等插件未在界面中嵌入，保留 foobar2000 原生行为。
+
+## 兼容性注意事项
+
+### foo_ui_hacks 边框样式
+
+启用 `foo_ui_hacks` 插件时，请将其**边框样式**改为**默认**。
+
+若保留自定义边框样式，会导致 WebView 客户区与窗口非客户区判定冲突，出现**双击搜索框 / 模式切换区域时窗口被最大化、并影响单击**的兼容性问题。
+
+### 其他说明
+
+- WebView SDK 无法增删 foobar2000 的媒体库监视文件夹，请通过「偏好设置」管理，再使用应用菜单中的「重新扫描媒体库」。
+- 打开本地文件只会放入 `Opened Music` 播放列表，不会伪装成已加入媒体库。
