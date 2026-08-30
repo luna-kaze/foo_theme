@@ -13,6 +13,8 @@ const first = computed(() => props.details[0])
 const heading = computed(() => props.album?.name || props.tracks[0]?.title || '曲目属性')
 const subtitle = computed(() => props.album?.artist || (props.tracks.length > 1 ? `${props.tracks.length} 首曲目` : `${props.tracks[0]?.artist || '未知艺人'} · ${props.tracks[0]?.album || '未知专辑'}`))
 const artwork = computed(() => props.album?.artworkUrl || props.tracks[0]?.artworkUrl || '')
+const rating = computed(() => Number(props.details[0]?.rating ?? 0))
+const mixedRating = computed(() => props.details.some((item) => Number(item.rating ?? 0) !== rating.value))
 
 function tagValue(tags: Record<string, string | string[]>, key: string) {
   const value = tags[key] ?? tags[key.replace(' ', '_')] ?? tags[key.replace(' ', '')]
@@ -30,6 +32,10 @@ function save() {
   const tags = Object.fromEntries(tagFields.map(([key]) => [key, fields[key].trim()]).filter(([, value]) => props.tracks.length === 1 || value))
   emit('save', tags)
 }
+
+function setRating(value: number) {
+  emit('rating', !mixedRating.value && rating.value === value ? 0 : value)
+}
 </script>
 
 <template>
@@ -40,7 +46,7 @@ function save() {
       <template v-else>
         <nav v-if="mode === 'properties'" class="track-inspector__tabs"><button :class="{ active: tab === 'details' }" @click="tab = 'details'"><Info :size="15" />详细信息</button><button :class="{ active: tab === 'technical' }" @click="tab = 'technical'"><FileAudio :size="15" />技术信息</button><button :class="{ active: tab === 'replaygain' }" @click="tab = 'replaygain'"><Gauge :size="15" />ReplayGain</button><button :class="{ active: tab === 'artwork' }" @click="tab = 'artwork'"><Disc3 :size="15" />封面</button></nav>
         <div v-if="mode === 'edit'" class="metadata-editor"><p v-if="tracks.length > 1" class="inspector-note">批量编辑时，留空字段保持原值不变。</p><label v-for="([key, label]) in tagFields" :key="key"><span>{{ label }}</span><input v-model="fields[key]" :placeholder="tracks.length > 1 ? '多个值 / 保持不变' : ''" /></label><footer><button class="secondary-button" @click="emit('close')">取消</button><button class="primary-button" :disabled="busy" @click="save"><Edit3 :size="15" />{{ busy ? '正在保存…' : '保存标签' }}</button></footer></div>
-        <div v-else-if="tab === 'details'" class="inspector-content"><div class="inspector-rating"><span>{{ tracks.length > 1 ? `批量评分（${tracks.length} 首）` : '评分' }}</span><div><button v-for="rating in 5" :key="rating" :aria-label="`${rating} 星`" @click="emit('rating', first?.rating === rating ? 0 : rating)"><Star :size="20" :fill="(first?.rating ?? 0) >= rating ? 'currentColor' : 'none'" /></button></div></div><dl><template v-for="([key, label]) in tagFields" :key="key"><dt>{{ label }}</dt><dd>{{ tagValue(first?.tags ?? {}, key) || '—' }}</dd></template><dt>播放次数</dt><dd>{{ first?.playCount ?? 0 }}</dd><dt>最后播放</dt><dd>{{ first?.lastPlayed || '从未播放' }}</dd><dt>添加时间</dt><dd>{{ first?.added || '—' }}</dd><dt>位置</dt><dd class="inspector-path">{{ first?.path || '—' }}</dd></dl></div>
+        <div v-else-if="tab === 'details'" class="inspector-content"><div class="inspector-rating"><span>{{ tracks.length > 1 ? `批量评分（${tracks.length} 首${mixedRating ? '，多个值' : ''}）` : '评分' }}</span><div><button v-for="value in 5" :key="value" :aria-label="`${value} 星`" @click="setRating(value)"><Star :size="20" :fill="!mixedRating && rating >= value ? 'currentColor' : 'none'" /></button></div></div><dl><template v-for="([key, label]) in tagFields" :key="key"><dt>{{ label }}</dt><dd>{{ tagValue(first?.tags ?? {}, key) || '—' }}</dd></template><dt>播放次数</dt><dd>{{ first?.playCount ?? 0 }}</dd><dt>最后播放</dt><dd>{{ first?.lastPlayed || '从未播放' }}</dd><dt>添加时间</dt><dd>{{ first?.added || '—' }}</dd><dt>位置</dt><dd class="inspector-path">{{ first?.path || '—' }}</dd></dl></div>
         <div v-else-if="tab === 'technical'" class="inspector-content"><dl><dt>编码</dt><dd>{{ first?.info.codec || '—' }}</dd><dt>码率</dt><dd>{{ first?.info.bitrate ? `${first.info.bitrate} kbps` : '—' }}</dd><dt>采样率</dt><dd>{{ first?.info.sampleRate ? `${first.info.sampleRate} Hz` : '—' }}</dd><dt>声道</dt><dd>{{ first?.info.channels ?? '—' }}</dd><dt>时长</dt><dd>{{ first?.info.duration ?? tracks[0]?.duration ?? 0 }} 秒</dd><dt>Subsong</dt><dd>{{ tracks[0]?.subsong ?? 0 }}</dd></dl></div>
         <div v-else-if="tab === 'replaygain'" class="inspector-content inspector-replaygain"><Activity :size="28" /><dl><dt>Track Gain</dt><dd>{{ first?.replayGain.trackGain || '未扫描' }}</dd><dt>Track Peak</dt><dd>{{ first?.replayGain.trackPeak || '—' }}</dd><dt>Album Gain</dt><dd>{{ first?.replayGain.albumGain || '未扫描' }}</dd><dt>Album Peak</dt><dd>{{ first?.replayGain.albumPeak || '—' }}</dd></dl><footer><button class="secondary-button" :disabled="busy" @click="emit('scanReplayGain', 'track')"><Gauge :size="15" />扫描音轨</button><button class="secondary-button" :disabled="busy" @click="emit('scanReplayGain', 'album')"><Disc3 :size="15" />按专辑扫描</button><button class="danger-button" :disabled="busy || !first?.replayGain.hasReplayGain" @click="emit('clearReplayGain')">清除 ReplayGain</button></footer></div>
         <div v-else class="inspector-content inspector-artwork"><ArtworkImage :src="artwork" :alt="`${heading} 封面`" /><p>封面操作仅作用于普通本地音频文件的嵌入图片，不删除文件夹中的 sidecar 图片。</p><footer><button class="secondary-button" :disabled="busy || tracks.length !== 1" @click="emit('embedArtwork', 'front')">嵌入正面封面</button><button class="danger-button" :disabled="busy || tracks.length !== 1" @click="emit('removeArtwork', 'front')">移除嵌入封面</button></footer></div>

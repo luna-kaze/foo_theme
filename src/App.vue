@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { AlertCircle, CheckCircle2, FileMusic, Info } from '@lucide/vue'
 import AppSidebar from './components/AppSidebar.vue'
 import AppTopbar from './components/AppTopbar.vue'
@@ -17,7 +17,7 @@ import { useFoobar } from './composables/useFoobar'
 import type { OutputDevice, PlaylistInfo } from 'foo-webview-sdk'
 import type { AlbumCard, DisplayTrack, TrackDetails, ViewId } from './types/music'
 import { menuIcons, showContextMenu, type ContextMenuItem } from './utils/contextMenu'
-import { isSameTrack } from './utils/track'
+import { isSameTrack, localFilePath, trackKey } from './utils/track'
 
 const player = useFoobar()
 const { state, filteredAlbums, libraryFilterOptions } = player
@@ -31,8 +31,20 @@ const connectionLabel = ref('foobar2000')
 const connectionTransitioning = ref(false)
 let airplayTimer: ReturnType<typeof setTimeout> | null = null
 const selectedTracks = ref<DisplayTrack[]>([])
+const albumSelectionMode = ref(false)
+const selectedAlbumIds = ref<string[]>([])
 const inspector = reactive({ open: false, mode: 'properties' as 'properties' | 'edit', tracks: [] as DisplayTrack[], album: null as AlbumCard | null, details: [] as TrackDetails[], loading: false, busy: false, request: 0 })
 const fileDialog = reactive({ open: false, mode: 'rename' as 'rename' | 'move' | 'delete', track: null as DisplayTrack | null, target: '', busy: false })
+const primaryRouteKey = computed(() => {
+  const route = state.route
+  if (route.view === 'playlist') return `playlist:${route.playlistIndex}`
+  if (route.view === 'album') return `album:${route.albumName}:${route.albumArtist}`
+  if (route.view === 'artist') return `artist:${route.artist}`
+  if (route.view === 'folder') return `folder:${route.rootId}:${route.pathId}`
+  if (route.view === 'search') return `search:${route.query}`
+  if (route.view === 'radio') return `radio:${route.nonce}`
+  return route.view
+})
 
 watch(() => state.currentTrack?.path ?? '', (path, previous) => {
   const active = path.toLocaleLowerCase().startsWith('airplay://live/')
@@ -46,6 +58,29 @@ watch(() => state.currentTrack?.path ?? '', (path, previous) => {
     connectionLabel.value = active ? 'AirPlay' : 'foobar2000'
   }, 1000)
 })
+
+watch(() => state.view, (view) => {
+  if (view !== 'albums') cancelAlbumSelection()
+})
+
+function setAlbumSelection(album: AlbumCard, selected: boolean) {
+  const ids = new Set(selectedAlbumIds.value)
+  if (selected) ids.add(album.id)
+  else ids.delete(album.id)
+  selectedAlbumIds.value = [...ids]
+}
+
+function cancelAlbumSelection() {
+  albumSelectionMode.value = false
+  selectedAlbumIds.value = []
+}
+
+async function getAlbumSelectionTracks(albums: AlbumCard[]) {
+  const groups = await Promise.all(albums.map((album) => player.getAlbumTracks(album)))
+  const unique = new Map<string, DisplayTrack>()
+  groups.flat().forEach((track) => unique.set(trackKey(track), track))
+  return [...unique.values()]
+}
 
 async function openInspector(mode: 'properties' | 'edit', tracks: DisplayTrack[], album: AlbumCard | null = null) {
   const request = ++inspector.request
@@ -285,22 +320,22 @@ async function openTrackMenu(track: DisplayTrack, index: number, event: MouseEve
         { type: 'separator' },
         { id: 'track:play', label: '立即播放', iconSvg: menuIcons.play },
         { id: 'track:next', label: '下一首播放', iconSvg: menuIcons.next },
-        { id: 'track:queue', label: '添加到队列', iconSvg: menuIcons.queue },
+        { id: 'track:queue', label: targets.length > 1 ? `将 ${targets.length} 首曲目添加到队列` : '添加到队列', iconSvg: menuIcons.queue },
         { type: 'separator' },
         { id: 'track:favourite', label: Number(track.rating ?? 0) === 5 ? '取消收藏' : '添加到收藏', checked: Number(track.rating ?? 0) === 5, iconSvg: menuIcons.heart },
-        { id: 'track:playlist', label: '添加到播放列表', iconSvg: menuIcons.playlist, enabled: state.playlists.length > 0, submenu: playlistSubmenu('track:playlist') },
+        { id: 'track:playlist', label: targets.length > 1 ? `将 ${targets.length} 首曲目添加到播放列表` : '添加到播放列表', iconSvg: menuIcons.playlist, enabled: state.playlists.length > 0, submenu: playlistSubmenu('track:playlist') },
         { type: 'separator' },
         { id: 'track:album', label: '前往专辑', iconSvg: menuIcons.album },
         { id: 'track:location', label: '显示文件位置', iconSvg: menuIcons.folder, enabled: Boolean(track.path) },
         { type: 'separator' },
         { id: 'track:properties', label: '属性', iconSvg: menuIcons.info },
         { id: 'track:edit', label: '编辑标签', iconSvg: menuIcons.edit },
-        { id: 'track:rename', label: '重命名文件', iconSvg: menuIcons.edit, enabled: track.subsong == null && !track.path.includes('://') },
-        { id: 'track:move', label: '移动文件', iconSvg: menuIcons.folder, enabled: track.subsong == null && !track.path.includes('://') },
-        { id: 'track:delete-file', label: '移动文件到回收站', iconSvg: menuIcons.remove, enabled: track.subsong == null && !track.path.includes('://') },
+        { id: 'track:rename', label: '重命名文件', iconSvg: menuIcons.edit, enabled: Boolean(localFilePath(track)) },
+        { id: 'track:move', label: '移动文件', iconSvg: menuIcons.folder, enabled: Boolean(localFilePath(track)) },
+        { id: 'track:delete-file', label: '移动文件到回收站', iconSvg: menuIcons.remove, enabled: Boolean(localFilePath(track)) },
       ]
       if (state.view === 'playlist' && index >= 0) {
-        items.push({ type: 'separator' }, { id: 'track:remove', label: `从“${state.activePlaylist?.name ?? '播放列表'}”移除`, iconSvg: menuIcons.remove })
+        items.push({ type: 'separator' }, { id: 'track:remove', label: `从“${state.browsingPlaylist?.name ?? state.activePlaylist?.name ?? '播放列表'}”移除`, iconSvg: menuIcons.remove })
       }
       const action = await openPopup(items, event)
       if (!action) return
@@ -338,30 +373,50 @@ async function openAlbumMenu(album: AlbumCard, event: MouseEvent) {
     await player.selectAlbum(album)
     return
   }
+  if (albumSelectionMode.value && !selectedAlbumIds.value.includes(album.id)) setAlbumSelection(album, true)
+  const targets = albumSelectionMode.value
+    ? state.albums.filter((item) => selectedAlbumIds.value.includes(item.id))
+    : [album]
+  const multiple = targets.length > 1
   const action = await openPopup([
-    { id: 'album:header', type: 'nowplaying', cover: album.artworkUrl, title: album.name, subtitle: `${album.artist}${album.year ? ` · ${album.year}` : ''}` },
+    { id: 'album:header', type: 'nowplaying', cover: album.artworkUrl, title: multiple ? `已选择 ${targets.length} 张专辑` : album.name, subtitle: multiple ? '批量专辑操作' : `${album.artist}${album.year ? ` · ${album.year}` : ''}` },
     { type: 'separator' },
-    { id: 'album:open', label: '打开专辑', iconSvg: menuIcons.album },
-    { id: 'album:play', label: '播放专辑', iconSvg: menuIcons.play },
-    { id: 'album:shuffle', label: '随机播放专辑', iconSvg: menuIcons.shuffle },
-    { id: 'album:queue', label: '将专辑添加到队列', iconSvg: menuIcons.queue },
+    ...(state.view === 'albums' ? [{ id: 'album:select', label: albumSelectionMode.value ? '退出专辑选择' : '选择专辑', iconSvg: menuIcons.info }] : []),
+    { id: 'album:open', label: '打开专辑', iconSvg: menuIcons.album, enabled: !multiple },
+    { id: 'album:play', label: '播放专辑', iconSvg: menuIcons.play, enabled: !multiple },
+    { id: 'album:shuffle', label: '随机播放专辑', iconSvg: menuIcons.shuffle, enabled: !multiple },
+    { id: 'album:queue', label: multiple ? `将 ${targets.length} 张专辑添加到队列` : '将专辑添加到队列', iconSvg: menuIcons.queue },
     { type: 'separator' },
-    { id: 'album:playlist', label: '将专辑添加到播放列表', iconSvg: menuIcons.playlist, enabled: state.playlists.length > 0, submenu: playlistSubmenu('album:playlist') },
+    { id: 'album:playlist', label: multiple ? `将 ${targets.length} 张专辑添加到播放列表` : '将专辑添加到播放列表', iconSvg: menuIcons.playlist, enabled: state.playlists.length > 0, submenu: playlistSubmenu('album:playlist') },
     { type: 'separator' },
     { id: 'album:properties', label: '专辑属性', iconSvg: menuIcons.info },
   ], event)
+  if (action === 'album:select') {
+    if (albumSelectionMode.value) cancelAlbumSelection()
+    else {
+      albumSelectionMode.value = true
+      selectedAlbumIds.value = [album.id]
+    }
+  }
   if (action === 'album:open') await player.selectAlbum(album)
   if (action === 'album:play') await player.playAlbum(album)
   if (action === 'album:shuffle') await player.shuffleAlbum(album)
-  if (action === 'album:queue') await player.queueAlbum(album)
-  if (action === 'album:properties') await openInspector('properties', await player.getAlbumTracks(album), album)
-  if (action?.startsWith('album:playlist:')) await player.addAlbumToPlaylist(album, Number(action.split(':').at(-1)))
+  if (action === 'album:queue') {
+    if (multiple) await player.addTracksToQueue(await getAlbumSelectionTracks(targets))
+    else await player.queueAlbum(album)
+  }
+  if (action === 'album:properties') await openInspector('properties', multiple ? await getAlbumSelectionTracks(targets) : await player.getAlbumTracks(album), multiple ? null : album)
+  if (action?.startsWith('album:playlist:')) {
+    const playlistIndex = Number(action.split(':').at(-1))
+    if (multiple) await player.addTracksToPlaylist(await getAlbumSelectionTracks(targets), playlistIndex)
+    else await player.addAlbumToPlaylist(album, playlistIndex)
+  }
 }
 
 async function openPlaylistMenu(playlist: PlaylistInfo, event: MouseEvent) {
   const writable = !playlist.isLocked && !playlist.isAutoplaylist
   const action = await openPopup([
-    { id: 'playlist:open', label: playlist.name, enabled: false, iconSvg: menuIcons.playlist },
+    { id: 'playlist:header', label: playlist.name, enabled: false, iconSvg: menuIcons.playlist },
     { type: 'separator' },
     { id: 'playlist:open', label: '打开播放列表', iconSvg: menuIcons.album },
     { id: 'playlist:play', label: '从头播放', iconSvg: menuIcons.play, enabled: playlist.trackCount > 0 },
@@ -476,7 +531,7 @@ function onDrop(event: DragEvent) {
     @drag="player.startWindowDrag"
     @close="player.closeWindow"
   />
-  <div v-else class="app-shell" @contextmenu="openAppMenu" @dblclick.stop.prevent>
+  <div v-else class="app-shell" @contextmenu="openAppMenu">
     <AppSidebar
       :view="state.view"
       :playlists="state.playlists"
@@ -517,63 +572,74 @@ function onDrop(event: DragEvent) {
         @desktop-lyrics="player.toggleDesktopLyrics"
         @mini-player="player.openMiniPlayer"
         @drag="player.startWindowDrag"
+        @maximize="player.toggleWindowMaximize"
       />
       <div class="workspace-scroll">
-        <MediaLibraryView
-          v-if="['overview', 'artists', 'artist', 'folders', 'folder'].includes(state.view)"
-          :route="state.route"
-          :stats="state.libraryStats"
-          :artists="state.artists"
-          :folders="state.libraryFolders"
-          :albums="state.albums"
-          :tracks="state.visibleTracks"
-          :current-track="state.currentTrack"
-          :is-playing="state.isPlaying"
-          :loading="state.loading || state.searchLoading"
-          @navigate="navigatePrimary"
-          @artist="player.selectArtist"
-          @folder="player.selectLibraryFolder"
-          @back="goBackPrimary"
-          @open-album="openPrimaryAlbum"
-          @album-menu="openAlbumMenu"
-          @play-track="handlePlayTrack"
-          @track-menu="openTrackMenu"
-          @selection="selectedTracks = $event"
-          @shuffle="player.shuffleCurrent"
-        />
-        <LibraryView
-          v-else
-          :view="state.view"
-          :albums="filteredAlbums"
-          :tracks="state.visibleTracks"
-          :current-track="state.currentTrack"
-          :active-playlist="state.browsingPlaylist ?? state.activePlaylist"
-          :selected-album="state.selectedAlbum"
-          :is-playing="state.isPlaying"
-          :loading="state.loading"
-          :search="state.search"
-          :search-loading="state.searchLoading"
-          :importing="state.importing"
-          :library-filters="state.libraryFilters"
-          :filter-options="libraryFilterOptions"
-          :custom-column="state.customColumn"
-          @navigate="navigatePrimary"
-          @back="goBackPrimary"
-          @open-album="openPrimaryAlbum"
-          @play-album="player.playAlbum"
-          @play-track="handlePlayTrack"
-          @shuffle="player.shuffleCurrent"
-          @track-menu="openTrackMenu"
-          @album-menu="openAlbumMenu"
-          @open-files="player.openFiles"
-          @open-folder="player.openFolder"
-          @clear-search="clearPrimarySearch"
-          @selection="selectedTracks = $event"
-          @filter-change="player.setLibraryFilter"
-          @clear-filters="player.clearLibraryFilters"
-          @reorder="player.reorderPlaylistTrack"
-          @custom-column="player.applyCustomColumn"
-        />
+        <Transition name="route-page" mode="out-in">
+          <div :key="primaryRouteKey" class="route-page">
+            <MediaLibraryView
+              v-if="['overview', 'artists', 'artist', 'folders', 'folder'].includes(state.view)"
+              :route="state.route"
+              :stats="state.libraryStats"
+              :artists="state.artists"
+              :folders="state.libraryFolders"
+              :albums="state.albums"
+              :tracks="state.visibleTracks"
+              :current-track="state.currentTrack"
+              :is-playing="state.isPlaying"
+              :loading="state.loading || state.searchLoading"
+              @navigate="navigatePrimary"
+              @artist="player.selectArtist"
+              @folder="player.selectLibraryFolder"
+              @back="goBackPrimary"
+              @open-album="openPrimaryAlbum"
+              @album-menu="openAlbumMenu"
+              @play-track="handlePlayTrack"
+              @track-menu="openTrackMenu"
+              @selection="selectedTracks = $event"
+              @shuffle="player.shuffleCurrent"
+            />
+            <LibraryView
+              v-else
+              :view="state.view"
+              :albums="filteredAlbums"
+              :tracks="state.visibleTracks"
+              :current-track="state.currentTrack"
+              :active-playlist="state.browsingPlaylist ?? state.activePlaylist"
+              :selected-album="state.selectedAlbum"
+              :is-playing="state.isPlaying"
+              :loading="state.loading"
+              :search="state.search"
+              :search-loading="state.searchLoading"
+              :importing="state.importing"
+              :library-filters="state.libraryFilters"
+              :filter-options="libraryFilterOptions"
+              :custom-column="state.customColumn"
+              :album-selection-mode="albumSelectionMode"
+              :selected-album-ids="selectedAlbumIds"
+              @navigate="navigatePrimary"
+              @back="goBackPrimary"
+              @open-album="openPrimaryAlbum"
+              @play-album="player.playAlbum"
+              @play-track="handlePlayTrack"
+              @shuffle="player.shuffleCurrent"
+              @track-menu="openTrackMenu"
+              @album-menu="openAlbumMenu"
+              @open-files="player.openFiles"
+              @open-folder="player.openFolder"
+              @clear-search="clearPrimarySearch"
+              @selection="selectedTracks = $event"
+              @filter-facet-change="player.setLibraryFilterFacet"
+              @filter-rule-add="player.addLibraryFilterRule"
+              @filter-rule-update="player.updateLibraryFilterRule"
+              @filter-rule-remove="player.removeLibraryFilterRule"
+              @clear-filters="player.clearLibraryFilters"
+              @reorder="player.reorderPlaylistTrack"
+              @album-selection="setAlbumSelection"
+              @cancel-album-selection="cancelAlbumSelection"
+            />
+          </div>
+        </Transition>
       </div>
     </div>
 
@@ -588,15 +654,14 @@ function onDrop(event: DragEvent) {
       :duration="state.duration"
       :lyrics="state.lyrics"
       :lyrics-synced="state.lyricsSynced"
-      :queue="state.queue"
-      :history="state.playbackHistory"
+      :playback-tracks="state.playbackTracks"
+      :playback-track-index="state.playbackTrackIndex"
       @close="player.closeNowPlaying"
       @toggle="player.togglePlayback"
       @seek="player.seek"
       @seek-resume="player.seekAndPlay"
       @favourite="player.toggleFavourite"
-      @play-queue="player.playQueueItem"
-      @play-history="player.playHistoryTrack"
+      @play-track="player.playPlaybackTrack"
     />
 
     <Transition name="queue-card">

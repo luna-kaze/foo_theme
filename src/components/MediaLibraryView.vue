@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { Album, Clock3, Folder, HardDrive, Library, Music2, Play, Shuffle, Users } from '@lucide/vue'
 import type { ArtistInfo, LibraryStats } from 'foo-webview-sdk'
 import type { AlbumCard, DisplayTrack, LibraryFolderCard, ViewId, ViewRoute } from '../types/music'
@@ -43,9 +44,13 @@ function formatSize(bytes: number) {
   return `${(bytes / 1024 ** index).toFixed(index > 2 ? 1 : 0)} ${units[index]}`
 }
 
-function artistArtwork(name: string) {
-  return props.albums.find((album) => album.artist === name)?.artworkUrl || ''
-}
+const artistArtwork = computed(() => {
+  const artwork: Record<string, string> = {}
+  props.albums.forEach((album) => {
+    if (!artwork[album.artist] && album.artworkUrl) artwork[album.artist] = album.artworkUrl
+  })
+  return artwork
+})
 </script>
 
 <template>
@@ -75,7 +80,7 @@ function artistArtwork(name: string) {
       <section class="page-heading"><p class="eyebrow">媒体库</p><h1>艺术家</h1><p>共 {{ artists.length }} 位艺术家，点按卡片查看其全部曲目。</p></section>
       <section class="library-card-grid">
         <button v-for="artist in artists" :key="artist.name" class="artist-browser-card" @click="emit('artist', artist.name)">
-          <span class="artist-browser-card__art" :style="artistArtwork(artist.name) ? { backgroundImage: `url(${artistArtwork(artist.name)})` } : {}"><i v-if="!artistArtwork(artist.name)">{{ artist.name.slice(0, 1).toLocaleUpperCase() }}</i></span>
+          <span class="artist-browser-card__art" :style="artistArtwork[artist.name] ? { backgroundImage: `url(${artistArtwork[artist.name]})` } : {}"><i v-if="!artistArtwork[artist.name]">{{ artist.name.slice(0, 1).toLocaleUpperCase() }}</i></span>
           <strong>{{ artist.name }}</strong><small>{{ artist.trackCount }} 首曲目 · {{ artist.albumCount }} 张专辑</small>
         </button>
       </section>

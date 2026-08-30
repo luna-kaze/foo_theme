@@ -25,7 +25,7 @@ const emit = defineEmits<{
 <template>
   <aside class="sidebar">
     <div class="brand">
-      <span class="brand__mark"><img :src="foobarLogo" alt="" /></span>
+      <span class="brand__mark"><img :src="foobarLogo" alt="" draggable="false" /></span>
       <span class="brand__name">foobar2000</span>
     </div>
 

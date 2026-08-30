@@ -24,6 +24,23 @@ export function playablePath(track: TrackIdentity) {
   return track.subsong != null ? `${source}|subsong:${subsong}` : source
 }
 
+export function localFilePath(track: TrackIdentity) {
+  if (trackSubsong(track) > 0) return ''
+  let source = (track.absolutePath || track.fullPath || track.path || '').replace(/\|subsong:\d+$/i, '')
+  if (!source) return ''
+  if (/^file:\/\//i.test(source)) {
+    const fileUrlPath = source.replace(/^file:/i, '')
+    try { source = decodeURIComponent(fileUrlPath) } catch { source = fileUrlPath }
+    source = /^\/+[a-z]:/i.test(source)
+      ? source.replace(/^\/+([a-z]:)/i, '$1')
+      : source.startsWith('//')
+        ? source
+        : source
+  } else if (/^[a-z][a-z\d+.-]*:\/\//i.test(source)) return ''
+  source = source.replaceAll('/', '\\')
+  return /^(?:[a-z]:\\|\\\\)/i.test(source) ? source : ''
+}
+
 export function trackKey(track: TrackIdentity | null | undefined) {
   if (!track) return ''
   return `${normalizedPath(basePath(track))}\u0000${trackSubsong(track)}`

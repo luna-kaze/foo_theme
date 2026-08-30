@@ -48,6 +48,7 @@ const contextMenuCss = `
     border-radius: 8px !important;
     transition: background 90ms ease, color 90ms ease !important;
   }
+  .fb-item [part="item-label"] { min-width: 0 !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
   .fb-item.active { color: #fff !important; background: rgba(255, 255, 255, .09) !important; }
   .fb-item.checked { color: #ffaaa7 !important; }
   .fb-item.disabled { opacity: .34 !important; }

@@ -1,5 +1,6 @@
 /* Standard immersive player */
 .now-playing-panel.immersive-player {
+  --mode-cover-size: clamp(230px,26vw,390px);
   inset: 0 0 var(--player-height) 0;
   isolation: isolate;
   color: #f5f2f0;
@@ -11,7 +12,7 @@
 .immersive-player__backdrop { position: absolute; inset: -10%; background-position: center; background-size: cover; filter: blur(95px) saturate(165%) brightness(.38); opacity: .86; transform: scale(1.12); }
 .immersive-backdrop-enter-active, .immersive-backdrop-leave-active { transition: opacity 520ms ease, filter 620ms ease; }
 .immersive-backdrop-enter-from, .immersive-backdrop-leave-to { opacity: 0; filter: blur(112px) saturate(150%) brightness(.26); }
-.immersive-player__wash { position: absolute; inset: 0; background: radial-gradient(circle at 28% 48%, rgba(255,255,255,.055), transparent 32%), linear-gradient(100deg, rgba(11,11,13,.24), rgba(14,14,17,.56) 54%, rgba(16,15,18,.38)); }
+.immersive-player__wash { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(circle at 28% 48%, rgba(255,255,255,.055), transparent 32%), linear-gradient(100deg, rgba(11,11,13,.24), rgba(14,14,17,.56) 54%, rgba(16,15,18,.38)); }
 .immersive-toolbar { position: absolute; top: 18px; left: 22px; right: 22px; display: flex; align-items: center; justify-content: space-between; pointer-events: none; -webkit-app-region: no-drag; z-index: 20; }
 .immersive-toolbar button { pointer-events: auto; }
 .immersive-toolbar__actions { display: flex; gap: 7px; pointer-events: auto; }
@@ -19,22 +20,69 @@
 .immersive-tool:hover, .immersive-mode-switch button:hover, .immersive-mode-switch button.active, .coverflow__arrow:hover:not(:disabled) { color: white; background: rgba(255,255,255,.12); }
 .immersive-mode-switch { display: flex; gap: 4px; padding: 4px; pointer-events: auto; background: rgba(19,19,22,.38); border: 1px solid rgba(255,255,255,.07); border-radius: 14px; backdrop-filter: blur(18px); }
 .immersive-mode-switch button { background: transparent; border-color: transparent; box-shadow: none; }
+.immersive-handoff-cover { position: fixed; overflow: hidden; pointer-events: none; border-radius: 3.5%; box-shadow: 0 28px 72px rgba(0,0,0,.55), inset 0 1px rgba(255,255,255,.1); z-index: 19; }
+.immersive-handoff-cover .artwork-image { width: 100%; height: 100%; }
+.handoff-cover-active .coverflow-card.current,
+.handoff-cover-active .album-sleeve { visibility: hidden; }
+
+/* Sequential mechanical transition: pack the record, move the sleeve, then fan the cases. */
+.mode-packing-standard .album-sleeve { animation: sleeve-pack 620ms cubic-bezier(.45,0,.16,1) both; }
+.mode-packing-standard .record-zone { overflow: hidden; animation: record-pack 620ms cubic-bezier(.45,0,.16,1) both; }
+.mode-unpacking-standard .album-sleeve { animation: sleeve-pack 620ms cubic-bezier(.2,.78,.16,1) reverse both; }
+.mode-unpacking-standard .record-zone { overflow: hidden; animation: record-pack 620ms cubic-bezier(.2,.78,.16,1) reverse both; }
+.mode-packing-standard .immersive-lyrics,
+.mode-packing-standard .immersive-track-copy { animation: immersive-content-out 180ms ease both; }
+.mode-unpacking-standard .immersive-lyrics,
+.mode-unpacking-standard .immersive-track-copy { animation: immersive-content-in 220ms 360ms ease both; }
+.mode-packing-coverflow .coverflow,
+.mode-unpacking-coverflow .coverflow { pointer-events: none; }
+.mode-handoff-standard .album-sleeve { top: 50vh; left: 50vw; width: var(--mode-cover-size); transform: translate(-50%,-50%); }
+.mode-handoff-standard .record-zone { top: 50vh; left: 50vw; width: var(--mode-cover-size); overflow: hidden; transform: translate(-50%,-50%); }
+.mode-handoff-standard .immersive-lyrics,
+.mode-handoff-standard .immersive-track-copy { opacity: 0; }
+.mode-handoff-coverflow .coverflow-card { opacity: calc(.64 - var(--cover-distance) * .04); transform: translate(-50%,-50%) translateX(calc(var(--cover-offset) * 3px)) translateY(calc(var(--cover-offset) * -2px)) translateZ(calc(var(--cover-distance) * -4px)) rotateX(0) rotateY(0) rotateZ(calc(var(--cover-offset) * .35deg)) scale(.97); }
+.mode-handoff-coverflow .coverflow-card.active { opacity: 1; transform: translate(-50%,-50%) translateZ(10px) rotateX(0) rotateY(0) scale(1); }
+.mode-handoff-coverflow .coverflow__copy,
+.mode-handoff-coverflow .coverflow__arrow { opacity: 0; }
+.mode-unpacking-coverflow .coverflow-card { animation: coverflow-spread 480ms cubic-bezier(.18,.82,.16,1) both; }
+.mode-unpacking-coverflow .coverflow-card.active { animation-name: coverflow-spread-active; }
+.mode-packing-coverflow .coverflow-card { animation: coverflow-spread 640ms cubic-bezier(.45,0,.16,1) reverse both; }
+.mode-packing-coverflow .coverflow-card.active { animation: coverflow-stack-active 640ms cubic-bezier(.45,0,.16,1) both; }
+.mode-unpacking-coverflow .coverflow__copy,
+.mode-unpacking-coverflow .coverflow__arrow { animation: coverflow-copy-in 260ms 180ms ease both; }
+.mode-packing-coverflow .coverflow__copy,
+.mode-packing-coverflow .coverflow__arrow { animation: coverflow-copy-in 220ms ease reverse both; }
+
+@keyframes sleeve-pack {
+  0%, 40% { top: var(--sleeve-top); left: var(--sleeve-left); width: var(--sleeve-width); transform: var(--sleeve-rest-transform); }
+  100% { top: 50vh; left: 50vw; width: var(--mode-cover-size); transform: translate(-50%,-50%); box-shadow: 0 28px 72px rgba(0,0,0,.55); }
+}
+@keyframes record-pack {
+  0% { top: var(--record-top); left: var(--record-left); width: var(--record-width); transform: translateY(-50%); }
+  40% { top: var(--sleeve-top); left: var(--sleeve-left); width: var(--sleeve-width); transform: translateY(-50%); }
+  100% { top: 50vh; left: 50vw; width: var(--mode-cover-size); transform: translate(-50%,-50%); }
+}
+@keyframes immersive-content-out { to { opacity: 0; transform: translateY(8px); } }
+@keyframes immersive-content-in { from { opacity: 0; transform: translateY(8px); } }
+@keyframes coverflow-spread { from { opacity: calc(.64 - var(--cover-distance) * .04); transform: translate(-50%,-50%) translateX(calc(var(--cover-offset) * 3px)) translateY(calc(var(--cover-offset) * -2px)) translateZ(calc(var(--cover-distance) * -4px)) rotateX(0) rotateY(0) rotateZ(calc(var(--cover-offset) * .35deg)) scale(.97); } }
+@keyframes coverflow-spread-active { from { opacity: 1; transform: translate(-50%,-50%) translateZ(10px) rotateX(0) rotateY(0) scale(1); } }
+@keyframes coverflow-stack-active { to { opacity: 1; transform: translate(-50%,-50%) translateZ(10px) rotateX(0) rotateY(0) scale(1); } }
+@keyframes coverflow-copy-in { from { opacity: 0; } }
 
 .immersive-tool > span, .immersive-mode-switch button > span, .coverflow__arrow > span, .album-sleeve__hint, .vinyl-record__hint { position: absolute; bottom: -31px; left: 50%; width: max-content; padding: 5px 8px; color: rgba(255,255,255,.9); font-size: 10px; font-weight: 600; pointer-events: none; background: rgba(13,13,16,.88); border: 1px solid rgba(255,255,255,.08); border-radius: 6px; opacity: 0; transform: translate(-50%,-3px); transition: 140ms ease; white-space: nowrap; }
 .immersive-tool:hover > span, .immersive-mode-switch button:hover > span, .coverflow__arrow:hover > span, .album-sleeve.interactive:hover .album-sleeve__hint, .vinyl-record:hover .vinyl-record__hint { opacity: 1; transform: translate(-50%,0); }
 
-.immersive-standard { position: relative; display: grid; grid-template-columns: minmax(560px,1.16fr) minmax(340px,.84fr); width: 100%; height: 100%; z-index: 2; transition: grid-template-columns 560ms cubic-bezier(.2,.78,.16,1); }
-.immersive-standard.lyrics-hidden { grid-template-columns: 1fr; }
+.immersive-standard { --sleeve-top: 50%; --sleeve-left: clamp(38px,5vw,78px); --sleeve-width: clamp(300px,33vw,520px); --sleeve-rest-transform: translateY(-50%); --record-top: 50%; --record-left: clamp(120px,12vw,195px); --record-width: clamp(370px,36vw,560px); position: relative; display: grid; grid-template-columns: minmax(560px,1.16fr) minmax(340px,.84fr); width: 100%; height: 100%; z-index: 2; transition: grid-template-columns 560ms cubic-bezier(.2,.78,.16,1); }
+.immersive-standard.lyrics-hidden { --sleeve-left: clamp(55px,8vw,125px); --sleeve-width: clamp(340px,38vw,610px); --sleeve-rest-transform: translateY(-52%) rotateY(3deg) rotateZ(-1.5deg); --record-left: clamp(360px,38vw,610px); --record-width: clamp(440px,44vw,700px); grid-template-columns: 1fr; }
 .vinyl-stage { position: relative; min-width: 0; overflow: visible; perspective: 1400px; }
-.album-sleeve { position: absolute; top: 50%; left: clamp(38px,5vw,78px); width: clamp(300px,33vw,520px); aspect-ratio: 1; cursor: default; border-radius: 3.5%; box-shadow: 0 30px 80px rgba(0,0,0,.5), 0 2px 0 rgba(255,255,255,.09) inset; transform: translateY(-50%); transform-origin: 58% 50%; transition: left 650ms cubic-bezier(.2,.78,.16,1), width 650ms cubic-bezier(.2,.78,.16,1), transform 650ms cubic-bezier(.2,.78,.16,1), box-shadow 650ms ease; z-index: 3; }
+.album-sleeve { position: absolute; top: var(--sleeve-top); left: var(--sleeve-left); width: var(--sleeve-width); aspect-ratio: 1; cursor: default; border-radius: 3.5%; box-shadow: 0 30px 80px rgba(0,0,0,.5), 0 2px 0 rgba(255,255,255,.09) inset; transform: translateY(-50%); transform-origin: 58% 50%; transition: left 650ms cubic-bezier(.2,.78,.16,1), width 650ms cubic-bezier(.2,.78,.16,1), transform 650ms cubic-bezier(.2,.78,.16,1), box-shadow 650ms ease; z-index: 3; }
 .album-sleeve.interactive { cursor: pointer; }
 .album-sleeve .artwork-image { width: 100%; height: 100%; border-radius: inherit; }
 .album-sleeve::after { position: absolute; inset: 0; content: ""; pointer-events: none; background: linear-gradient(112deg,rgba(255,255,255,.13),transparent 25%,transparent 73%,rgba(0,0,0,.18)); border-radius: inherit; }
 .vinyl-stage.cover-forward .album-sleeve { transform: translateY(-52%) rotateY(4deg) rotateZ(-1.5deg); }
 
-.record-zone { position: absolute; top: 50%; left: clamp(120px,12vw,195px); width: clamp(370px,36vw,560px); aspect-ratio: 1; transform: translateY(-50%); z-index: 2; transition: left 650ms cubic-bezier(.2,.78,.16,1), width 650ms cubic-bezier(.2,.78,.16,1); }
-.immersive-standard.lyrics-hidden .album-sleeve { left: clamp(55px,8vw,125px); width: clamp(340px,38vw,610px); transform: translateY(-52%) rotateY(3deg) rotateZ(-1.5deg); }
-.immersive-standard.lyrics-hidden .record-zone { left: clamp(360px,38vw,610px); width: clamp(440px,44vw,700px); }
+.record-zone { position: absolute; top: var(--record-top); left: var(--record-left); width: var(--record-width); aspect-ratio: 1; transform: translateY(-50%); z-index: 2; transition: left 650ms cubic-bezier(.2,.78,.16,1), width 650ms cubic-bezier(.2,.78,.16,1); }
+.immersive-standard.lyrics-hidden .album-sleeve { transform: translateY(-52%) rotateY(3deg) rotateZ(-1.5deg); }
 .immersive-standard.lyrics-hidden .immersive-track-copy { left: clamp(55px,8vw,125px); }
 .immersive-standard.lyrics-hidden .vinyl-stage.cover-forward .album-sleeve { transform: translate(24%,-52%) rotateY(0) rotateZ(0) scale(1.01); box-shadow: 0 38px 96px rgba(0,0,0,.58); }
 .vinyl-record { position: absolute; inset: 4%; display: grid; place-items: center; overflow: visible; color: white; background: radial-gradient(circle,transparent 0 8%,rgba(255,255,255,.06) 8.2%,transparent 8.5%), repeating-radial-gradient(circle,#101012 0 2px,#18181b 3px 4px,#0b0b0d 5px 7px); border: 1px solid rgba(255,255,255,.07); border-radius: 50%; box-shadow: 0 34px 85px rgba(0,0,0,.58), 0 0 0 2px rgba(0,0,0,.8) inset, 0 0 0 14px rgba(255,255,255,.015) inset; transition: filter 220ms ease; }
@@ -76,10 +124,10 @@
 
 /* 3D vinyl coverflow */
 .coverflow { position: relative; width: 100%; height: 100%; overflow: hidden; perspective: 1500px; z-index: 2; }
-.coverflow__viewport { position: absolute; top: 10%; left: 50%; width: min(94vw,1480px); height: 66%; transform: translateX(-50%); transform-style: preserve-3d; }
-.coverflow-card { --cover-offset: 0; --cover-distance: 0; position: absolute; top: 50%; left: 50%; width: clamp(230px,26vw,390px); aspect-ratio: 1; padding: 0; overflow: visible; pointer-events: auto; background: transparent; opacity: calc(1 - var(--cover-distance) * .17); transform: translate(-50%,-50%) translateX(calc(var(--cover-offset) * clamp(190px,22vw,340px))) translateZ(calc(var(--cover-distance) * -150px)) rotateX(-5deg) rotateY(calc(-4deg + var(--cover-offset) * -25deg)) scale(calc(1 - var(--cover-distance) * .1)); transform-style: preserve-3d; transition: transform 620ms cubic-bezier(.18,.82,.16,1), opacity 420ms ease, filter 420ms ease; z-index: calc(20 - var(--cover-distance)); }
+.coverflow__viewport { position: absolute; top: 17%; left: 50%; width: min(94vw,1480px); height: 66%; cursor: pointer; touch-action: manipulation; transform: translateX(-50%); transform-style: preserve-3d; }
+.coverflow-card { --cover-offset: 0; --cover-distance: 0; position: absolute; top: 50%; left: 50%; width: var(--mode-cover-size); aspect-ratio: 1; padding: 0; overflow: visible; pointer-events: auto; background: transparent; opacity: calc(1 - var(--cover-distance) * .17); transform: translate(-50%,-50%) translateX(calc(var(--cover-offset) * clamp(190px,22vw,340px))) translateZ(calc(var(--cover-distance) * -150px)) rotateX(-5deg) rotateY(calc(-4deg + var(--cover-offset) * -25deg)) scale(calc(1 - var(--cover-distance) * .1)); transform-style: preserve-3d; transition: transform 620ms cubic-bezier(.18,.82,.16,1), opacity 420ms ease, filter 420ms ease; z-index: calc(20 - var(--cover-distance)); }
 .coverflow-card.far { pointer-events: none; opacity: 0; }
-.coverflow-card.active { filter: drop-shadow(0 32px 40px rgba(0,0,0,.42)); }
+.coverflow-card.active { filter: drop-shadow(0 32px 40px rgba(0,0,0,.42)); transform: translate(-50%,-50%) translateZ(0) rotateX(0) rotateY(0) scale(1); }
 .coverflow-card__sleeve { --cover-depth: 26px; position: absolute; inset: 0; cursor: pointer; pointer-events: none; transform: translateZ(13px); transform-style: preserve-3d; }
 .coverflow-card__sleeve::before { position: absolute; inset: 7px -13px -15px 7px; content: ""; background-color: #202025; background-image: linear-gradient(135deg,rgba(255,255,255,.06),rgba(0,0,0,.56)), var(--cover-image); background-position: center; background-size: cover; border-radius: 4%; filter: brightness(.46) saturate(.72); transform: translateZ(-12px); box-shadow: 0 24px 50px rgba(0,0,0,.45); }
 .coverflow-card__face { position: absolute; inset: 0; overflow: hidden; background: #28282d; border: 1px solid rgba(255,255,255,.11); border-radius: 3.5%; box-shadow: 0 22px 54px rgba(0,0,0,.48), inset 0 1px rgba(255,255,255,.1); transform: translateZ(calc(var(--cover-depth) / 2)); z-index: 2; }
@@ -145,18 +193,15 @@ body.mini-window #app { min-width: 0; min-height: 0; }
 .mini-player [data-tip]:hover::after { opacity: 1; transform: translate(-50%,0); }
 
 @media (max-width: 980px) {
-  .immersive-standard { grid-template-columns: minmax(420px,1fr) minmax(300px,.8fr); }
-  .album-sleeve { left: 26px; width: min(40vw,390px); }
-  .record-zone { left: 31vw; width: min(52vw,530px); }
+  .immersive-standard { --sleeve-left: 26px; --sleeve-width: min(40vw,390px); --record-left: 31vw; --record-width: min(52vw,530px); grid-template-columns: minmax(420px,1fr) minmax(300px,.8fr); }
   .immersive-track-copy { left: 28px; }
 }
 
 @media (max-width: 700px) {
-  .immersive-standard { display: block; overflow-y: auto; }
+  .now-playing-panel.immersive-player { --mode-cover-size: min(56vw,320px); }
+  .immersive-standard { --sleeve-top: 45%; --sleeve-width: min(58vw,330px); --record-top: 45%; --record-left: 37vw; --record-width: min(70vw,410px); display: block; overflow-y: auto; }
   .vinyl-stage { height: 67%; min-height: 470px; }
   .immersive-lyrics { height: 65%; min-height: 480px; }
-  .album-sleeve { top: 45%; width: min(58vw,330px); }
-  .record-zone { top: 45%; left: 37vw; width: min(70vw,410px); }
   .immersive-track-copy { bottom: 15px; }
-  .coverflow-card { width: min(56vw,320px); transform: translate(-50%,-50%) translateX(calc(var(--cover-offset) * 46vw)) translateZ(calc(var(--cover-distance) * -130px)) rotateY(calc(var(--cover-offset) * -28deg)) scale(calc(1 - var(--cover-distance) * .12)); }
+  .coverflow-card { transform: translate(-50%,-50%) translateX(calc(var(--cover-offset) * 46vw)) translateZ(calc(var(--cover-distance) * -130px)) rotateY(calc(var(--cover-offset) * -28deg)) scale(calc(1 - var(--cover-distance) * .12)); }
 }

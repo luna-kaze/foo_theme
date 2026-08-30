@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { ChevronLeft, ChevronRight, Eye, EyeOff, Heart, Layers3, LocateFixed, Mic2, Rows3, X } from '@lucide/vue'
-import type { DisplayQueueItem, DisplayTrack, ParsedLyric } from '../types/music'
+import type { DisplayTrack, ParsedLyric } from '../types/music'
 import { formatTime } from '../utils/format'
 import ArtworkImage from './ArtworkImage.vue'
 import { trackKey } from '../utils/track'
@@ -17,8 +17,8 @@ const props = defineProps<{
   duration: number
   lyrics: ParsedLyric[]
   lyricsSynced: boolean
-  queue: DisplayQueueItem[]
-  history: DisplayTrack[]
+  playbackTracks: DisplayTrack[]
+  playbackTrackIndex: number
 }>()
 
 const emit = defineEmits<{
@@ -27,11 +27,11 @@ const emit = defineEmits<{
   seek: [position: number]
   seekResume: [position: number]
   favourite: [track: DisplayTrack]
-  playQueue: [index: number]
-  playHistory: [track: DisplayTrack]
+  playTrack: [track: DisplayTrack]
 }>()
 
 const mode = ref<'standard' | 'coverflow'>('standard')
+const modeTransition = ref<'packing-standard' | 'unpacking-standard' | 'packing-coverflow' | 'unpacking-coverflow' | 'handoff-standard' | 'handoff-coverflow' | null>(null)
 const coverForward = ref(false)
 const lyricsView = ref<HTMLElement | null>(null)
 const lyricRows = ref<Array<HTMLElement | null>>([])
@@ -41,10 +41,13 @@ const tonearmDragging = ref(false)
 const tonearmWillPause = ref(false)
 const tonearmDragAngle = ref<number | null>(null)
 const recordZone = ref<HTMLElement | null>(null)
+const coverflowView = ref<HTMLElement | null>(null)
 const coverflowIndex = ref(0)
 const lyricsVisible = ref(true)
-let lastCoverflowPointer = { index: -1, time: 0 }
+const handoffCover = reactive({ visible: false, top: 0, left: 0, width: 0, height: 0 })
+let lastCoverflowPointer = { index: -1, time: 0, x: 0, y: 0 }
 let resumeTimer: ReturnType<typeof setTimeout> | null = null
+let modeTimer: ReturnType<typeof setTimeout> | null = null
 
 const activeLyric = computed(() => {
   if (!props.lyrics.some((line) => line.time >= 0)) return -1
@@ -68,27 +71,74 @@ const playbackProgress = computed(() => {
 
 const tonearmAngle = computed(() => tonearmDragAngle.value ?? (props.playbackState === 'playing' ? 3 + playbackProgress.value * 33 : -10))
 
-const coverflowItems = computed(() => [
-  ...[...props.history].reverse().map((track, index) => ({
+type CoverflowItem = {
+  track: DisplayTrack
+  artwork: string
+  current: boolean
+  key: string
+}
+
+const coverflowItems = computed<CoverflowItem[]>(() => props.playbackTracks.map((track, index) => ({
     track,
-    artwork: track.artworkUrl || '',
-    kind: 'history' as const,
-    queueIndex: -1,
-    key: `history:${trackKey(track)}:${index}`,
-  })),
-  ...(props.track ? [{ track: props.track, artwork: props.artwork || props.track.artworkUrl || '', kind: 'current' as const, queueIndex: -1, key: `current:${trackKey(props.track)}` }] : []),
-  ...props.queue.slice(0, 12).map((track, queueIndex) => ({
-    track,
-    artwork: track.artworkUrl || '',
-    kind: 'queue' as const,
-    queueIndex,
-    key: `queue:${trackKey(track)}:${queueIndex}`,
-  })),
-])
+    artwork: index === props.playbackTrackIndex ? props.artwork || track.artworkUrl || '' : track.artworkUrl || '',
+    current: index === props.playbackTrackIndex,
+    key: `playlist:${track.sourceIndex ?? index}:${trackKey(track)}`,
+  })))
 
 const selectedCoverflow = computed(() => coverflowItems.value[coverflowIndex.value] ?? null)
-const currentCoverflowIndex = computed(() => props.history.length)
-const backgroundArtwork = computed(() => mode.value === 'coverflow' ? selectedCoverflow.value?.artwork || props.artwork : props.artwork)
+const currentCoverflowIndex = computed(() => Math.max(0, props.playbackTrackIndex))
+const backgroundArtwork = computed(() => modeTransition.value ? props.artwork : mode.value === 'coverflow' ? selectedCoverflow.value?.artwork || props.artwork : props.artwork)
+const handoffCoverStyle = computed(() => ({
+  top: `${handoffCover.top}px`,
+  left: `${handoffCover.left}px`,
+  width: `${handoffCover.width}px`,
+  height: `${handoffCover.height}px`,
+}))
+
+type CoverRect = { top: number; left: number; width: number; height: number }
+
+function readRect(element: Element | null): CoverRect | null {
+  if (!element) return null
+  const rect = element.getBoundingClientRect()
+  return { top: rect.top, left: rect.left, width: rect.width, height: rect.height }
+}
+
+function fallbackCenterRect(): CoverRect {
+  const size = Math.min(390, Math.max(230, window.innerWidth * .26))
+  return { top: (window.innerHeight - size) / 2, left: (window.innerWidth - size) / 2, width: size, height: size }
+}
+
+function setHandoffRect(rect: CoverRect) {
+  Object.assign(handoffCover, rect)
+}
+
+function waitForMode(milliseconds: number) {
+  return new Promise<void>((resolve) => {
+    modeTimer = setTimeout(resolve, milliseconds)
+  })
+}
+
+async function waitForPaint() {
+  await nextTick()
+  await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+}
+
+async function extractHandoffCover(target: CoverRect) {
+  await waitForPaint()
+  const element = document.querySelector<HTMLElement>('.immersive-handoff-cover')
+  if (!element) {
+    setHandoffRect(target)
+    return
+  }
+  const animation = element.animate([
+    { top: `${handoffCover.top}px`, left: `${handoffCover.left}px`, width: `${handoffCover.width}px`, height: `${handoffCover.height}px`, transform: 'scale(.96)' },
+    { top: `${target.top - 24}px`, left: `${target.left + 68}px`, width: `${target.width}px`, height: `${target.height}px`, transform: 'scale(1.035)', offset: .56 },
+    { top: `${target.top}px`, left: `${target.left}px`, width: `${target.width}px`, height: `${target.height}px`, transform: 'scale(1)' },
+  ], { duration: 640, easing: 'cubic-bezier(.18,.82,.16,1)', fill: 'forwards' })
+  await animation.finished.catch(() => undefined)
+  setHandoffRect(target)
+  animation.cancel()
+}
 
 function setLyricRow(element: unknown, index: number) {
   lyricRows.value[index] = element instanceof HTMLElement ? element : null
@@ -179,6 +229,7 @@ function cancelTonearm() {
 }
 
 function moveCoverflow(direction: number) {
+  lastCoverflowPointer = { index: -1, time: 0, x: 0, y: 0 }
   coverflowIndex.value = Math.min(coverflowItems.value.length - 1, Math.max(0, coverflowIndex.value + direction))
 }
 
@@ -190,30 +241,89 @@ function activateCoverflow(index: number) {
   const item = coverflowItems.value[index]
   if (!item) return
   coverflowIndex.value = index
-  if (item.kind === 'current') {
-    if (!props.isPlaying) emit('toggle')
-  }
-  else if (item.kind === 'history') emit('playHistory', item.track)
-  else emit('playQueue', item.queueIndex)
+  if (item.current) emit('toggle')
+  else emit('playTrack', item.track)
 }
 
-function handleCoverflowPointer(index: number, event: PointerEvent) {
+function coverflowIndexAtPointer(event: PointerEvent) {
+  const target = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-cover-index]') : null
+  if (target) return Number(target.dataset.coverIndex)
+  const cards = [...(coverflowView.value?.querySelectorAll<HTMLElement>('[data-cover-index]:not(.far)') ?? [])]
+  let closest = -1
+  let closestDistance = Number.POSITIVE_INFINITY
+  cards.forEach((card) => {
+    const rect = card.getBoundingClientRect()
+    const distance = Math.hypot(event.clientX - (rect.left + rect.right) / 2, event.clientY - (rect.top + rect.bottom) / 2)
+    if (distance < closestDistance) {
+      closest = Number(card.dataset.coverIndex)
+      closestDistance = distance
+    }
+  })
+  return closest
+}
+
+function handleCoverflowPointer(event: PointerEvent) {
   if (event.button !== 0) return
   const now = performance.now()
-  if (lastCoverflowPointer.index === index && now - lastCoverflowPointer.time <= 360) {
-    lastCoverflowPointer = { index: -1, time: 0 }
-    activateCoverflow(index)
+  const elapsed = now - lastCoverflowPointer.time
+  const distance = Math.hypot(event.clientX - lastCoverflowPointer.x, event.clientY - lastCoverflowPointer.y)
+  if (lastCoverflowPointer.index >= 0 && elapsed <= 420 && distance <= 48) {
+    const targetIndex = lastCoverflowPointer.index
+    lastCoverflowPointer = { index: -1, time: 0, x: 0, y: 0 }
+    activateCoverflow(targetIndex)
     return
   }
-  lastCoverflowPointer = { index, time: now }
+  const index = coverflowIndexAtPointer(event)
+  if (index < 0) return
+  lastCoverflowPointer = { index, time: now, x: event.clientX, y: event.clientY }
   selectCoverflow(index)
 }
 
-function setMode(nextMode: 'standard' | 'coverflow') {
-  if (mode.value === nextMode) return
+async function setMode(nextMode: 'standard' | 'coverflow') {
+  if (mode.value === nextMode || modeTransition.value) return
+  lastCoverflowPointer = { index: -1, time: 0, x: 0, y: 0 }
   cancelTonearm()
-  mode.value = nextMode
-  if (nextMode === 'coverflow') coverflowIndex.value = currentCoverflowIndex.value
+  coverForward.value = false
+  if (nextMode === 'coverflow') {
+    modeTransition.value = 'packing-standard'
+    await waitForMode(640)
+    const packedSleeve = readRect(document.querySelector('.immersive-standard .album-sleeve')) ?? fallbackCenterRect()
+    setHandoffRect(packedSleeve)
+    handoffCover.visible = true
+    await waitForPaint()
+    coverflowIndex.value = currentCoverflowIndex.value
+    mode.value = 'coverflow'
+    modeTransition.value = 'handoff-coverflow'
+    await waitForPaint()
+    handoffCover.visible = false
+    modeTransition.value = 'unpacking-coverflow'
+    await waitForMode(500)
+    modeTransition.value = null
+    return
+  }
+  modeTransition.value = 'packing-coverflow'
+  await waitForMode(640)
+  const currentRect = readRect(document.querySelector('.coverflow-card.current')) ?? fallbackCenterRect()
+  const centerRect = readRect(document.querySelector('.coverflow-card.active')) ?? fallbackCenterRect()
+  if (coverflowIndex.value !== currentCoverflowIndex.value) {
+    await waitForMode(300)
+  }
+  setHandoffRect(currentRect)
+  handoffCover.visible = true
+  await waitForPaint()
+  if (coverflowIndex.value !== currentCoverflowIndex.value) {
+    await extractHandoffCover(centerRect)
+  }
+  else setHandoffRect(centerRect)
+  coverflowIndex.value = currentCoverflowIndex.value
+  mode.value = 'standard'
+  modeTransition.value = 'handoff-standard'
+  await waitForPaint()
+  handoffCover.visible = false
+  modeTransition.value = 'unpacking-standard'
+  await waitForMode(640)
+  modeTransition.value = null
+  void nextTick(() => scrollToActive('auto'))
 }
 
 function onCoverflowWheel(event: WheelEvent) {
@@ -224,34 +334,45 @@ function onCoverflowWheel(event: WheelEvent) {
 watch(activeLyric, () => void nextTick(() => scrollToActive()))
 watch(() => trackKey(props.track), () => {
   lyricRows.value = []
+  lastCoverflowPointer = { index: -1, time: 0, x: 0, y: 0 }
   coverForward.value = false
   cancelTonearm()
-  void nextTick(() => {
-    coverflowIndex.value = currentCoverflowIndex.value
-  })
   resumeAutoFollow()
+})
+watch(() => props.playbackTrackIndex, (index) => {
+  if (index >= 0) coverflowIndex.value = index
 })
 watch(lyricsVisible, (visible) => {
   if (visible) coverForward.value = false
 })
 watch(() => [props.open, mode.value] as const, () => void nextTick(() => scrollToActive('auto')))
+watch(() => props.open, (open) => {
+  if (open) return
+  if (modeTimer) clearTimeout(modeTimer)
+  modeTimer = null
+  modeTransition.value = null
+  handoffCover.visible = false
+})
 watch(() => coverflowItems.value.length, (length) => {
   coverflowIndex.value = Math.min(coverflowIndex.value, Math.max(0, length - 1))
 })
 
 onBeforeUnmount(() => {
   if (resumeTimer) clearTimeout(resumeTimer)
+  if (modeTimer) clearTimeout(modeTimer)
+  handoffCover.visible = false
   cancelTonearm()
 })
 </script>
 
 <template>
   <Transition name="now-playing">
-    <section v-if="open" class="now-playing-panel immersive-player" :class="`immersive-player--${mode}`" aria-label="沉浸式正在播放">
+    <section v-if="open" class="now-playing-panel immersive-player" :class="[`immersive-player--${mode}`, modeTransition && `mode-${modeTransition}`, handoffCover.visible && 'handoff-cover-active']" aria-label="沉浸式正在播放">
       <Transition name="immersive-backdrop">
         <div :key="backgroundArtwork || 'empty'" class="immersive-player__backdrop" :style="backgroundArtwork ? { backgroundImage: `url(${backgroundArtwork})` } : {}" />
       </Transition>
       <div class="immersive-player__wash" />
+      <div v-if="handoffCover.visible" class="immersive-handoff-cover" :style="handoffCoverStyle"><ArtworkImage :src="artwork || track?.artworkUrl" :alt="`${track?.album ?? '当前专辑'} 交接封面`" /></div>
 
       <header class="immersive-toolbar">
         <button class="immersive-tool" aria-label="退出沉浸模式" @click="emit('close')"><X :size="19" /><span>退出沉浸</span></button>
@@ -269,7 +390,7 @@ onBeforeUnmount(() => {
         </div>
       </header>
 
-      <div v-if="mode === 'standard'" class="immersive-standard" :class="{ 'lyrics-hidden': !lyricsVisible }">
+      <div v-if="mode === 'standard'" key="standard" class="immersive-standard" :class="{ 'lyrics-hidden': !lyricsVisible }">
         <section class="vinyl-stage" :class="{ 'cover-forward': coverForward }">
           <div class="album-sleeve" :class="{ interactive: !lyricsVisible }" :role="lyricsVisible ? undefined : 'button'" :tabindex="lyricsVisible ? -1 : 0" :aria-label="lyricsVisible ? undefined : '切换封套位置'" @click="toggleCoverPosition" @keydown.enter="toggleCoverPosition">
             <ArtworkImage :src="artwork || track?.artworkUrl" :alt="`${track?.album ?? '当前专辑'} 封面`" />
@@ -323,15 +444,15 @@ onBeforeUnmount(() => {
         </section>
       </div>
 
-      <section v-else class="coverflow" @wheel.prevent="onCoverflowWheel">
-        <div class="coverflow__viewport">
+      <section v-else key="coverflow" class="coverflow" @wheel.prevent="onCoverflowWheel">
+        <div ref="coverflowView" class="coverflow__viewport" @pointerup.stop.prevent="handleCoverflowPointer">
           <button
             v-for="(item, index) in coverflowItems"
             :key="item.key"
+            :data-cover-index="index"
             class="coverflow-card"
             :class="{ active: index === coverflowIndex, far: Math.abs(index - coverflowIndex) > 3 }"
             :style="{ '--cover-offset': index - coverflowIndex, '--cover-distance': Math.abs(index - coverflowIndex), '--cover-image': item.artwork ? `url(${item.artwork})` : 'none' }"
-            @pointerup.stop.prevent="handleCoverflowPointer(index, $event)"
             @keydown.enter.prevent="activateCoverflow(index)"
           >
             <span class="coverflow-card__sleeve">
@@ -345,10 +466,10 @@ onBeforeUnmount(() => {
         <button class="coverflow__arrow coverflow__arrow--left" :disabled="coverflowIndex === 0" aria-label="上一张封面" @click="moveCoverflow(-1)"><ChevronLeft :size="22" /><span>上一张</span></button>
         <button class="coverflow__arrow coverflow__arrow--right" :disabled="coverflowIndex >= coverflowItems.length - 1" aria-label="下一张封面" @click="moveCoverflow(1)"><ChevronRight :size="22" /><span>下一张</span></button>
         <div v-if="selectedCoverflow" class="coverflow__copy">
-          <p>{{ selectedCoverflow.kind === 'current' ? '正在播放' : selectedCoverflow.kind === 'history' ? '播放历史' : `接下来第 ${selectedCoverflow.queueIndex + 1} 首` }}</p>
+          <p>{{ selectedCoverflow.current ? '正在播放' : `播放列表第 ${(selectedCoverflow.track.sourceIndex ?? coverflowIndex) + 1} 首` }}</p>
           <h1>{{ selectedCoverflow.track.title }}</h1>
           <span>{{ selectedCoverflow.track.artist }} · {{ selectedCoverflow.track.album }}</span>
-          <small>{{ selectedCoverflow.kind === 'current' ? `双击封面${isPlaying ? '暂停' : '播放'}` : '单击浏览，双击切换并播放' }}</small>
+          <small>{{ selectedCoverflow.current ? `双击封面${isPlaying ? '暂停' : '播放'}` : '单击选择，双击播放' }}</small>
         </div>
       </section>
 

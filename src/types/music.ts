@@ -3,6 +3,15 @@ import type { AlbumInfo, ArtistInfo, LibraryStats, PlaylistInfo, QueueItem, Trac
 export type ViewId = 'home' | 'overview' | 'artists' | 'artist' | 'albums' | 'songs' | 'folders' | 'folder' | 'playlist' | 'album' | 'favourites' | 'radio' | 'search'
 export type NowPlayingTab = 'lyrics' | 'queue'
 export type DialogId = 'createPlaylist' | null
+export type LibraryFilterField = 'all' | 'title' | 'artist' | 'albumArtist' | 'album' | 'genre' | 'path'
+export type LibraryFilterOperator = 'contains' | 'equals' | 'startsWith'
+export type LibraryFilterMatchMode = 'all' | 'any'
+export interface LibraryFilterRule {
+  id: string
+  field: LibraryFilterField
+  operator: LibraryFilterOperator
+  value: string
+}
 
 export interface AlbumCard extends AlbumInfo {
   id: string
@@ -99,7 +108,9 @@ export interface PlayerUiState {
   selectedAlbum: AlbumCard | null
   queue: DisplayQueueItem[]
   currentTrack: DisplayTrack | null
-  playbackHistory: DisplayTrack[]
+  playbackTracks: DisplayTrack[]
+  playbackTrackIndex: number
+  playingPlaylistIndex: number
   currentArtwork: string
   lyrics: ParsedLyric[]
   lyricsSynced: boolean
@@ -126,10 +137,9 @@ export interface PlayerUiState {
     albumArtist: string
     genre: string
     folder: string
-    field: 'all' | 'title' | 'artist' | 'album' | 'genre' | 'path'
-    operator: 'contains' | 'equals' | 'startsWith'
-    value: string
     playState: 'all' | 'played' | 'unplayed' | 'recent'
+    matchMode: LibraryFilterMatchMode
+    rules: LibraryFilterRule[]
   }
   libraryStatus: { initialized: boolean; scanning: boolean | null; itemCount: number }
   customColumn: { label: string; pattern: string }

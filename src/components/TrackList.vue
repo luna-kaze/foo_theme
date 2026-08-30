@@ -22,26 +22,42 @@ const emit = defineEmits<{
   reorder: [from: number, to: number]
 }>()
 
-const selected = ref(new Set<string>())
+const selected = ref(new Set<number>())
 let anchorIndex = -1
 let dragIndex = -1
 
 function publishSelection() {
-  emit('selection', props.tracks.filter((track) => selected.value.has(trackKey(track))))
+  emit('selection', props.tracks.filter((_, index) => selected.value.has(index)))
+}
+
+function toggleSelection(index: number, event: Event) {
+  const next = new Set(selected.value)
+  if ((event.currentTarget as HTMLInputElement).checked) next.add(index)
+  else next.delete(index)
+  selected.value = next
+  anchorIndex = index
+  publishSelection()
+}
+
+function toggleAllSelection(event: Event) {
+  selected.value = (event.currentTarget as HTMLInputElement).checked
+    ? new Set(props.tracks.map((_, index) => index))
+    : new Set()
+  anchorIndex = -1
+  publishSelection()
 }
 
 function selectRow(track: DisplayTrack, index: number, event: MouseEvent) {
   if (event.shiftKey && anchorIndex >= 0) {
     const next = new Set(selected.value)
-    for (let cursor = Math.min(anchorIndex, index); cursor <= Math.max(anchorIndex, index); cursor += 1) next.add(trackKey(props.tracks[cursor]))
+    for (let cursor = Math.min(anchorIndex, index); cursor <= Math.max(anchorIndex, index); cursor += 1) next.add(cursor)
     selected.value = next
     publishSelection()
     return
   }
   if (event.ctrlKey || event.metaKey) {
     const next = new Set(selected.value)
-    const key = trackKey(track)
-    if (next.has(key)) next.delete(key); else next.add(key)
+    if (next.has(index)) next.delete(index); else next.add(index)
     selected.value = next
     anchorIndex = index
     publishSelection()
@@ -54,8 +70,8 @@ function selectRow(track: DisplayTrack, index: number, event: MouseEvent) {
 }
 
 function openMenu(track: DisplayTrack, index: number, event: MouseEvent) {
-  if (!selected.value.has(trackKey(track))) {
-    selected.value = new Set([trackKey(track)])
+  if (!selected.value.has(index)) {
+    selected.value = new Set([index])
     anchorIndex = index
     publishSelection()
   }
@@ -66,7 +82,7 @@ function selectAll(event: KeyboardEvent) {
   if (!(event.ctrlKey || event.metaKey) || event.key.toLocaleLowerCase() !== 'a') return
   event.preventDefault()
   event.stopPropagation()
-  selected.value = new Set(props.tracks.map(trackKey))
+  selected.value = new Set(props.tracks.map((_, index) => index))
   publishSelection()
 }
 
@@ -97,13 +113,13 @@ function isCurrent(track: DisplayTrack, currentTrack: DisplayTrack | null) {
 <template>
   <div class="track-list" :class="{ compact, 'has-custom-column': customColumnLabel }" tabindex="-1" @keydown="selectAll">
     <div class="track-list__header">
-      <span>#</span><span>标题</span><span>专辑</span><span>年份</span><span v-if="customColumnLabel">{{ customColumnLabel }}</span><span>时长</span><span />
+      <span class="track-select"><input type="checkbox" aria-label="选择全部曲目" :checked="tracks.length > 0 && selected.size === tracks.length" :indeterminate="selected.size > 0 && selected.size < tracks.length" @click.stop @change="toggleAllSelection" /></span><span>#</span><span>标题</span><span>专辑</span><span>年份</span><span v-if="customColumnLabel">{{ customColumnLabel }}</span><span>时长</span><span />
     </div>
     <div
       v-for="(track, index) in tracks"
       :key="`${trackKey(track)}-${index}`"
       class="track-row"
-      :class="{ current: isCurrent(track, currentTrack), selected: selected.has(trackKey(track)) }"
+      :class="{ current: isCurrent(track, currentTrack), selected: selected.has(index) }"
       role="button"
       tabindex="0"
       :draggable="reorderable"
@@ -116,6 +132,7 @@ function isCurrent(track: DisplayTrack, currentTrack: DisplayTrack | null) {
       @drop="dropRow(index, $event)"
       @dragend="dragIndex = -1"
     >
+      <span class="track-select"><input type="checkbox" :aria-label="`选择 ${track.title || '未命名曲目'}`" :checked="selected.has(index)" @click.stop @change="toggleSelection(index, $event)" /></span>
       <span class="track-row__index">
         <Volume2 v-if="isCurrent(track, currentTrack) && isPlaying" :size="15" />
         <span v-else>{{ index + 1 }}</span>
@@ -134,7 +151,7 @@ function isCurrent(track: DisplayTrack, currentTrack: DisplayTrack | null) {
       <span class="track-row__duration">{{ formatTime(track.duration) }}</span>
       <span class="track-row__more">
         <Heart v-if="Number(track.rating ?? 0) === 5" :size="13" fill="currentColor" class="track-row__favourite" />
-        <button aria-label="曲目操作" @keydown.stop @click.stop="emit('menu', track, index, $event)"><MoreHorizontal :size="17" /></button>
+        <button aria-label="曲目操作" @keydown.stop @click.stop="openMenu(track, index, $event)"><MoreHorizontal :size="17" /></button>
       </span>
     </div>
   </div>

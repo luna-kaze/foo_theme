@@ -11,6 +11,9 @@ import type {
   AlbumCard,
   DisplayQueueItem,
   DisplayTrack,
+  LibraryFilterField,
+  LibraryFilterMatchMode,
+  LibraryFilterRule,
   LibraryFolderCard,
   ParsedLyric,
   PlayerUiState,
@@ -18,7 +21,7 @@ import type {
   ViewId,
   ViewRoute,
 } from '../types/music'
-import { albumKey, isSameTrack, playablePath, trackKey, trackSubsong } from '../utils/track'
+import { albumKey, isSameTrack, localFilePath, playablePath, trackKey, trackSubsong } from '../utils/track'
 
 const state = reactive<PlayerUiState>({
   connected: false,
@@ -40,7 +43,9 @@ const state = reactive<PlayerUiState>({
   selectedAlbum: null,
   queue: [],
   currentTrack: null,
-  playbackHistory: [],
+  playbackTracks: [],
+  playbackTrackIndex: -1,
+  playingPlaylistIndex: -1,
   currentArtwork: '',
   lyrics: [],
   lyricsSynced: false,
@@ -62,7 +67,7 @@ const state = reactive<PlayerUiState>({
   searchLoading: false,
   dndSupported: false,
   importing: false,
-  libraryFilters: { artist: '', albumArtist: '', genre: '', folder: '', field: 'all', operator: 'contains', value: '', playState: 'all' },
+  libraryFilters: { artist: '', albumArtist: '', genre: '', folder: '', playState: 'all', matchMode: 'all', rules: [{ id: 'primary', field: 'all', operator: 'contains', value: '' }] },
   libraryStatus: { initialized: false, scanning: null, itemCount: 0 },
   customColumn: { label: '', pattern: '' },
 })
@@ -79,6 +84,7 @@ let searchGeneration = 0
 let libraryGeneration = 0
 let playlistGeneration = 0
 let queueGeneration = 0
+let playbackSequenceGeneration = 0
 let radioNonce = 0
 let ownedPlaylistPromise: Promise<{ index: number; name: string }> | null = null
 let ownerIdPromise: Promise<string> | null = null
@@ -93,6 +99,18 @@ let historyIndex = 0
 const ownershipConfigKey = 'foo-theme.owned-playlists.v1'
 const runtimeParams = new URLSearchParams(window.location.search)
 const parentWindowId = runtimeParams.get('mainWindowId') ?? ''
+const playbackOrders = [
+  { index: 0, mode: 'default' as const, label: '默认播放顺序' },
+  { index: 1, mode: 'repeat-playlist' as const, label: '循环播放列表' },
+  { index: 2, mode: 'repeat-track' as const, label: '单曲循环' },
+  { index: 3, mode: 'random' as const, label: '随机播放' },
+  { index: 4, mode: 'shuffle-tracks' as const, label: '随机音轨' },
+  { index: 5, mode: 'shuffle-albums' as const, label: '随机专辑' },
+  { index: 6, mode: 'shuffle-folders' as const, label: '随机文件夹' },
+]
+const customColumnValues = new Map<string, string>()
+let exactAlbumArtwork = new Map<string, string>()
+let namedAlbumArtwork = new Map<string, string | null>()
 
 const normalizeTrack = (track: TrackInfo | PlaybackTrackChangedPayload): DisplayTrack => {
   const fullPath = 'fullPath' in track ? track.fullPath : undefined
@@ -165,7 +183,7 @@ function notify(message: string, tone: 'info' | 'success' | 'error' = 'info') {
 }
 
 function refreshSafely(action: () => Promise<unknown>) {
-  void action().catch((error) => {
+  void Promise.resolve().then(action).catch((error) => {
     state.error = error instanceof Error ? error.message : '后台数据同步失败。'
   })
 }
@@ -194,24 +212,52 @@ async function runAction<T>(action: () => Promise<T>, successMessage?: string): 
   }
 }
 
-function attachArtwork(tracks: DisplayTrack[]): DisplayTrack[] {
-  const exactAlbums = new Map<string, AlbumCard>()
-  const namedAlbums = new Map<string, AlbumCard | null>()
-  state.albums.forEach((album) => {
-    exactAlbums.set(albumKey(album), album)
+function rebuildAlbumArtworkIndex(albums: AlbumCard[]) {
+  exactAlbumArtwork = new Map()
+  namedAlbumArtwork = new Map()
+  albums.forEach((album) => {
+    exactAlbumArtwork.set(albumKey(album), album.artworkUrl)
     const name = album.name.trim().toLocaleLowerCase()
-    namedAlbums.set(name, namedAlbums.has(name) ? null : album)
-  })
-  return tracks.map((track) => {
-    const album = exactAlbums.get(albumKey({ name: track.album, artist: track.albumArtist || track.artist }))
-      ?? namedAlbums.get(track.album.trim().toLocaleLowerCase())
-    return album?.artworkUrl ? { ...track, artworkUrl: album.artworkUrl } : track
+    namedAlbumArtwork.set(name, namedAlbumArtwork.has(name) ? null : album.artworkUrl)
   })
 }
 
-function setViewTracks(tracks: DisplayTrack[]) {
-  state.viewTracks = attachArtwork(tracks)
-  state.visibleTracks = state.viewTracks.slice()
+function attachArtwork(tracks: DisplayTrack[]): DisplayTrack[] {
+  return tracks.map((track) => {
+    const artworkUrl = exactAlbumArtwork.get(albumKey({ name: track.album, artist: track.albumArtist || track.artist }))
+      ?? namedAlbumArtwork.get(track.album.trim().toLocaleLowerCase())
+    return artworkUrl ? { ...track, artworkUrl } : track
+  })
+}
+
+function patchTrackCopies(track: DisplayTrack, patch: Partial<DisplayTrack>) {
+  const key = trackKey(track)
+  for (const collection of [state.tracks, state.recentTracks, state.viewTracks, state.visibleTracks, state.queue, state.playbackTracks]) {
+    collection.forEach((item) => {
+      if (trackKey(item) === key) Object.assign(item, patch)
+    })
+  }
+  if (trackKey(state.currentTrack) === key) Object.assign(state.currentTrack!, patch)
+}
+
+async function evaluateCustomColumn(tracks: DisplayTrack[], pattern: string) {
+  const result = await runAction(() => fb.titleformat.evalFieldsBatch(tracks.map(playablePath), { customValue: pattern }))
+  if (!result) return false
+  result.results.forEach((item, index) => {
+    if (!tracks[index] || !item.success) return
+    tracks[index].customValue = typeof item.customValue === 'string' ? item.customValue : ''
+    customColumnValues.set(trackKey(tracks[index]), tracks[index].customValue ?? '')
+  })
+  return true
+}
+
+async function setViewTracks(tracks: DisplayTrack[]) {
+  const nextTracks = attachArtwork(tracks).map((track) => ({ ...track, customValue: customColumnValues.get(trackKey(track)) }))
+  state.viewTracks = nextTracks
+  state.visibleTracks = nextTracks.slice()
+  if (!state.connected || !state.customColumn.pattern || !nextTracks.length) return
+  await evaluateCustomColumn(nextTracks, state.customColumn.pattern)
+  if (state.viewTracks === nextTracks) state.visibleTracks = nextTracks.slice()
 }
 
 function updateHistoryState() {
@@ -227,12 +273,15 @@ function useDemoData() {
   state.activePlaylist = state.playlists[0] ?? null
   state.queue = mockQueue.map((item, sourceIndex) => ({ ...item, queueSource: 'explicit', sourceIndex }))
   state.currentTrack = state.tracks[0] ?? null
+  state.playbackTracks = state.tracks.slice(0, 61).map((track, sourceIndex) => ({ ...track, sourceIndex }))
+  state.playbackTrackIndex = state.currentTrack ? 0 : -1
+  state.playingPlaylistIndex = -1
   state.currentArtwork = state.currentTrack?.artworkUrl ?? ''
   state.duration = state.currentTrack?.duration ?? 0
   state.lyrics = mockLyrics.slice()
   state.lyricsSynced = true
   state.playbackState = state.currentTrack ? 'paused' : 'stopped'
-  setViewTracks(state.recentTracks)
+  void setViewTracks(state.recentTracks)
 }
 
 async function loadAllTracks() {
@@ -296,6 +345,7 @@ async function loadLibrary() {
   await loadAlbumArtwork(albums)
   if (generation !== libraryGeneration) return
   state.albums = albums
+  rebuildAlbumArtworkIndex(albums)
   state.tracks = attachArtwork(trackResult.value.map(normalizeTrack))
   if (recentResult.status === 'fulfilled' && recentResult.value.success !== false) state.recentTracks = attachArtwork((recentResult.value.tracks ?? []).map(normalizeTrack))
 }
@@ -332,7 +382,7 @@ async function loadQueue() {
     ])
     const playlistIndex = playing.playlist
     const currentIndex = current.index
-    if (state.playbackOrder !== 2 && state.playbackOrder < 3 && playlistIndex != null && currentIndex != null && playlistIndex >= 0 && currentIndex >= 0) {
+    if (![2, 3, 4, 5, 6].includes(state.playbackOrder) && playlistIndex != null && currentIndex != null && playlistIndex >= 0 && currentIndex >= 0) {
       const count = (await fb.playlist.getCount(playlistIndex)).count
       const remaining = await fb.playlist.getTracks(playlistIndex, currentIndex + 1, Math.min(100, Math.max(0, count - currentIndex - 1)))
       const wrapped = state.playbackOrder === 1 && remaining.length < 100
@@ -351,7 +401,42 @@ async function loadQueue() {
   } catch {
     // Explicit queue entries remain useful when no playing playlist is available.
   }
-  if (generation === queueGeneration) state.queue = explicit.length ? explicit : upcoming
+  if (generation === queueGeneration) state.queue = [...explicit, ...upcoming]
+}
+
+function setPlaybackWindow(tracks: DisplayTrack[], currentIndex: number, playlistIndex: number) {
+  const start = Math.max(0, currentIndex - 30)
+  state.playbackTracks = tracks.slice(start, start + 61).map((track, offset) => ({ ...track, sourceIndex: start + offset }))
+  state.playbackTrackIndex = currentIndex - start
+  state.playingPlaylistIndex = playlistIndex
+}
+
+async function loadPlaybackSequence() {
+  const generation = ++playbackSequenceGeneration
+  const [playing, current] = await Promise.all([fb.player.getPlayingPlaylist(), fb.player.getCurrentTrackIndex(true)])
+  if (generation !== playbackSequenceGeneration) return
+  const playlistIndex = playing.playlist
+  const currentIndex = current.index
+  if (playlistIndex == null || currentIndex == null || playlistIndex < 0 || currentIndex < 0) {
+    state.playbackTracks = state.currentTrack ? [{ ...state.currentTrack, sourceIndex: 0 }] : []
+    state.playbackTrackIndex = state.currentTrack ? 0 : -1
+    state.playingPlaylistIndex = -1
+    return
+  }
+  if (state.playingPlaylistIndex === playlistIndex) {
+    const existingIndex = state.playbackTracks.findIndex((track) => track.sourceIndex === currentIndex)
+    if (existingIndex >= 0 && (!current.track || isSameTrack(state.playbackTracks[existingIndex], normalizeTrack(current.track)))) {
+      state.playbackTrackIndex = existingIndex
+      return
+    }
+  }
+  const count = (await fb.playlist.getCount(playlistIndex)).count
+  const start = Math.max(0, Math.min(currentIndex - 30, Math.max(0, count - 61)))
+  const tracks = await fb.playlist.getTracks(playlistIndex, start, Math.min(61, count - start))
+  if (generation !== playbackSequenceGeneration) return
+  state.playbackTracks = attachArtwork(tracks.map((track, offset) => ({ ...normalizeTrack(track), sourceIndex: start + offset })))
+  state.playbackTrackIndex = currentIndex - start
+  state.playingPlaylistIndex = playlistIndex
 }
 
 async function loadCurrentArtwork(request: number, key: string, path: string) {
@@ -384,9 +469,7 @@ async function syncCurrentTrack(track?: TrackInfo | PlaybackTrackChangedPayload 
   const request = ++mediaRequest
   const nextTrack = track === undefined ? await fb.player.getCurrentTrack() : track
   if (request !== mediaRequest) return
-  const previous = state.currentTrack
   const normalized = nextTrack ? attachArtwork([normalizeTrack(nextTrack)])[0] : null
-  if (previous && normalized && !isSameTrack(previous, normalized)) state.playbackHistory = [previous, ...state.playbackHistory].slice(0, 12)
   state.currentTrack = normalized
   state.duration = state.currentTrack?.duration ?? 0
   state.currentArtwork = ''
@@ -417,6 +500,7 @@ function bindEvents() {
   }
   const onPlaylistItemsChanged = (event: { playlist: number }) => {
     if (state.route.view === 'playlist' && state.route.playlistIndex === event.playlist) refreshSafely(refreshActivePlaylist)
+    if (state.playingPlaylistIndex === event.playlist) refreshSafely(loadPlaybackSequence)
     refreshSafely(loadPlaylists)
     refreshSafely(loadQueue)
   }
@@ -434,6 +518,7 @@ function bindEvents() {
       state.position = 0
       refreshSafely(() => syncCurrentTrack(track))
       refreshSafely(loadQueue)
+      refreshSafely(loadPlaybackSequence)
       refreshSafely(syncPlaybackCapabilities)
     }),
     fb.on('playback:stateChanged', (event) => {
@@ -448,7 +533,6 @@ function bindEvents() {
     }),
     fb.on('playback:stopped', (event) => {
       if (event.reason === 'starting_another') return
-      if (state.currentTrack) state.playbackHistory = [state.currentTrack, ...state.playbackHistory].slice(0, 12)
       state.playbackState = 'stopped'
       state.isPlaying = false
       state.position = 0
@@ -501,23 +585,17 @@ function bindEvents() {
       await loadPlaylists()
     })),
     fb.on('playlist:lockChanged', () => refreshSafely(loadPlaylists)),
-    fb.on('playlist:reordered', () => refreshSafely(reloadPlaylistStructure)),
+    fb.on('playlist:reordered', () => {
+      refreshSafely(reloadPlaylistStructure)
+      refreshSafely(loadPlaybackSequence)
+    }),
     fb.on('metadb:changed', (event) => {
       event.tracks.forEach((changed) => {
-        const changedKey = trackKey(normalizeTrack(changed as TrackInfo))
-        const rating = changed.rating
-        if (rating == null) return
-        for (const collection of [state.tracks, state.recentTracks, state.viewTracks, state.visibleTracks, state.queue]) {
-          collection.forEach((track) => {
-            if (trackKey(track) === changedKey) track.rating = rating
-          })
-        }
-        state.playbackHistory.forEach((track) => {
-          if (trackKey(track) === changedKey) Object.assign(track, changed)
-        })
-        if (trackKey(state.currentTrack) === changedKey) state.currentTrack!.rating = rating
+        const normalized = normalizeTrack(changed as TrackInfo)
+        const patch = Object.fromEntries(Object.entries(changed).filter(([, value]) => value !== undefined)) as Partial<DisplayTrack>
+        patchTrackCopies(normalized, patch)
       })
-      if (state.route.view === 'favourites') refreshSafely(() => navigate(state.route, 'none'))
+      if (state.route.view === 'favourites' || state.route.view === 'songs') refreshSafely(() => navigate(state.route, 'none'))
     }),
     fb.on('playback:edited', (track) => refreshSafely(() => syncCurrentTrack(track))),
     fb.on('playback:dynamicInfoTrack', (event) => {
@@ -555,6 +633,17 @@ async function syncNoDragRegion() {
   await fb.ui.setNoDragRegions([{ x: 0, y: 0, width: window.innerWidth, height: window.innerHeight }])
 }
 
+async function recoverMiniPlayerWindow() {
+  if (parentWindowId || runtimeParams.get('mode') === 'mini') return
+  try {
+    const windows = await fb.ui.getAllWindows()
+    const miniPlayer = windows.items.find((item) => !item.isMain && (item.profile === 'miniPlayer' || item.url.includes('mode=mini')))
+    miniPlayerWindowId = miniPlayer?.windowId ?? ''
+  } catch {
+    miniPlayerWindowId = ''
+  }
+}
+
 function scheduleNoDragRegion() {
   if (noDragResizeTimer) clearTimeout(noDragResizeTimer)
   noDragResizeTimer = setTimeout(() => void syncNoDragRegion().catch(() => undefined), 80)
@@ -581,6 +670,7 @@ async function initialize() {
       if (!state.connected) throw new Error('foobar2000 宿主桥接不可用。')
       bindEvents()
       await syncNoDragRegion()
+      await recoverMiniPlayerWindow()
       window.addEventListener('resize', scheduleNoDragRegion)
       const [library, playlists, capabilities] = await Promise.allSettled([
         loadLibrary(),
@@ -605,7 +695,7 @@ async function initialize() {
       state.volume = volume.volume
       state.muted = volume.muted
       state.playbackOrder = order.order
-      await Promise.allSettled([loadQueue(), syncCurrentTrack(), navigate(state.route, 'none')])
+      await Promise.allSettled([loadQueue(), syncCurrentTrack(), loadPlaybackSequence(), navigate(state.route, 'none')])
       if (library.status === 'rejected' || playlists.status === 'rejected') notify('部分 foobar2000 数据无法加载。', 'error')
       state.error = ''
       void fb.ui.setTitle('foobar2000').catch(() => undefined)
@@ -786,56 +876,90 @@ async function enrichLibraryPlaycounts() {
   playcountLibraryGeneration = generation
 }
 
+function matchesLibraryRule(track: DisplayTrack, rule: LibraryFilterRule) {
+  const query = rule.value.trim().toLocaleLowerCase()
+  if (!query) return true
+  const fields = rule.field === 'all'
+    ? [track.title, track.artist, track.albumArtist || track.artist, track.album, track.genre || '', track.path]
+    : [rule.field === 'albumArtist' ? track.albumArtist || track.artist : String(track[rule.field as Exclude<LibraryFilterField, 'all'>] || '')]
+  if (rule.field === 'genre' && rule.operator === 'equals') {
+    return fields[0].split(/[;,]/).some((value) => value.trim().toLocaleLowerCase() === query)
+  }
+  return fields.some((field) => {
+    const value = field.toLocaleLowerCase()
+    if (rule.operator === 'equals') return value === query
+    if (rule.operator === 'startsWith') return value.startsWith(query)
+    return value.includes(query)
+  })
+}
+
 function filterLibraryTracks(tracks: DisplayTrack[]) {
   const filters = state.libraryFilters
-  const query = filters.value.trim().toLocaleLowerCase()
+  const activeRules = filters.rules.filter((rule) => rule.value.trim())
   const filtered = tracks.filter((track) => {
-    if (filters.artist && track.artist !== filters.artist) return false
-    if (filters.albumArtist && (track.albumArtist || track.artist) !== filters.albumArtist) return false
-    if (filters.genre && !String(track.genre || '').split(/[;,]/).map((value) => value.trim()).includes(filters.genre)) return false
+    if (filters.artist && track.artist.toLocaleLowerCase() !== filters.artist.toLocaleLowerCase()) return false
+    if (filters.albumArtist && (track.albumArtist || track.artist).toLocaleLowerCase() !== filters.albumArtist.toLocaleLowerCase()) return false
+    if (filters.genre && !String(track.genre || '').split(/[;,]/).some((value) => value.trim().toLocaleLowerCase() === filters.genre.toLocaleLowerCase())) return false
     if (filters.folder && !track.path.replaceAll('\\', '/').toLocaleLowerCase().startsWith(filters.folder.toLocaleLowerCase())) return false
     if (filters.playState === 'played' && !track.playCount) return false
     if (filters.playState === 'unplayed' && track.playCount) return false
-    if (!query) return true
-    const fields = filters.field === 'all'
-      ? [track.title, track.artist, track.album, track.genre || '', track.path]
-      : [String(track[filters.field] || '')]
-    return fields.some((field) => {
-      const value = field.toLocaleLowerCase()
-      if (filters.operator === 'equals') return value === query
-      if (filters.operator === 'startsWith') return value.startsWith(query)
-      return value.includes(query)
-    })
+    if (!activeRules.length) return true
+    return filters.matchMode === 'all'
+      ? activeRules.every((rule) => matchesLibraryRule(track, rule))
+      : activeRules.some((rule) => matchesLibraryRule(track, rule))
   })
   return filters.playState === 'recent'
     ? filtered.filter((track) => track.lastPlayed).sort((a, b) => String(b.lastPlayed).localeCompare(String(a.lastPlayed)))
     : filtered
 }
 
-async function setLibraryFilter(key: keyof PlayerUiState['libraryFilters'], value: string) {
-  Object.assign(state.libraryFilters, { [key]: value })
+async function refreshLibraryFilters() {
   if (state.route.view === 'songs') await navigate(state.route, 'none')
 }
 
+async function setLibraryFilterFacet(key: 'artist' | 'albumArtist' | 'genre' | 'folder' | 'playState', value: string) {
+  Object.assign(state.libraryFilters, { [key]: value })
+  await refreshLibraryFilters()
+}
+
+async function addLibraryFilterRule() {
+  state.libraryFilters.rules.push({ id: crypto.randomUUID(), field: 'all', operator: 'contains', value: '' })
+}
+
+async function updateLibraryFilterRule(id: string, patch: Partial<Pick<LibraryFilterRule, 'field' | 'operator' | 'value'>>) {
+  const rule = state.libraryFilters.rules.find((item) => item.id === id)
+  if (!rule) return
+  Object.assign(rule, patch)
+  await refreshLibraryFilters()
+}
+
+async function removeLibraryFilterRule(id: string) {
+  if (state.libraryFilters.rules.length === 1) Object.assign(state.libraryFilters.rules[0], { field: 'all', operator: 'contains', value: '' })
+  else state.libraryFilters.rules = state.libraryFilters.rules.filter((rule) => rule.id !== id)
+  await refreshLibraryFilters()
+}
+
+async function setLibraryFilterMatchMode(mode: LibraryFilterMatchMode) {
+  state.libraryFilters.matchMode = mode
+  await refreshLibraryFilters()
+}
+
 async function clearLibraryFilters() {
-  Object.assign(state.libraryFilters, { artist: '', albumArtist: '', genre: '', folder: '', field: 'all', operator: 'contains', value: '', playState: 'all' })
-  if (state.route.view === 'songs') await navigate(state.route, 'none')
+  Object.assign(state.libraryFilters, { artist: '', albumArtist: '', genre: '', folder: '', playState: 'all', matchMode: 'all', rules: [{ id: 'primary', field: 'all', operator: 'contains', value: '' }] })
+  await refreshLibraryFilters()
 }
 
 async function applyCustomColumn(label: string, pattern: string) {
   const trimmedPattern = pattern.trim()
   if (!trimmedPattern) {
     state.customColumn = { label: '', pattern: '' }
+    customColumnValues.clear()
     state.viewTracks.forEach((track) => { track.customValue = undefined })
     state.visibleTracks = state.viewTracks.slice()
     return
   }
   const tracks = state.visibleTracks
-  const result = await runAction(() => fb.titleformat.evalFieldsBatch(tracks.map(playablePath), { customValue: trimmedPattern }))
-  if (!result) return
-  result.results.forEach((item, index) => {
-    if (tracks[index] && item.success) tracks[index].customValue = typeof item.customValue === 'string' ? item.customValue : ''
-  })
+  if (!await evaluateCustomColumn(tracks, trimmedPattern)) return
   state.customColumn = { label: label.trim() || '自定义', pattern: trimmedPattern }
 }
 
@@ -885,10 +1009,10 @@ async function navigate(route: ViewRoute, historyMode: 'push' | 'replace' | 'non
       state.route = snapshotRoute
       history[historyIndex] = snapshotRoute
     }
-    setViewTracks(tracks)
+    await setViewTracks(tracks)
   } catch (error) {
     if (generation !== routeGeneration) return
-    setViewTracks([])
+    await setViewTracks([])
     const message = error instanceof Error ? error.message : '无法加载当前页面。'
     state.error = message
     notify(message, 'error')
@@ -1012,6 +1136,9 @@ async function playTrack(track: DisplayTrack, index?: number) {
     return
   }
   if (!state.connected) {
+    const collection = state.visibleTracks.length ? state.visibleTracks : [track]
+    const currentIndex = collection.findIndex((item) => isSameTrack(item, track))
+    setPlaybackWindow(collection, Math.max(0, currentIndex), -1)
     state.currentTrack = track
     state.currentArtwork = track.artworkUrl ?? state.albums.find((album) => album.name === track.album)?.artworkUrl ?? ''
     state.duration = track.duration
@@ -1025,7 +1152,8 @@ async function playTrack(track: DisplayTrack, index?: number) {
   if (route.view === 'playlist') {
     const resolvedIndex = await resolvePlaylistTrackIndex(route.playlistIndex, track, track.sourceIndex ?? index)
     if (resolvedIndex == null) return
-    await runAction(() => fb.playlist.playTrack(route.playlistIndex, resolvedIndex))
+    const result = await runAction(() => fb.playlist.playTrack(route.playlistIndex, resolvedIndex))
+    if (result) setPlaybackWindow(state.visibleTracks, resolvedIndex, route.playlistIndex)
     return
   }
   const collection = state.visibleTracks.length ? state.visibleTracks : [track]
@@ -1085,8 +1213,9 @@ async function playGeneratedCollection(tracks: DisplayTrack[], playIndex = 0, ra
     if (!entries.length) throw new Error('没有可播放的曲目。')
     if (mappedPlayIndex < 0) throw new Error('所选曲目没有可播放路径。')
     const context = await ensureOwnedPlaybackPlaylist()
-    const latest = (await fb.playlist.getAll()).find((playlist) => playlist.name === context.name)
-    const matches = (await fb.playlist.getAll()).filter((playlist) => playlist.name === context.name)
+    const playlists = await fb.playlist.getAll()
+    const latest = playlists.find((playlist) => playlist.name === context.name)
+    const matches = playlists.filter((playlist) => playlist.name === context.name)
     if (!latest || matches.length !== 1 || latest.isLocked || latest.isAutoplaylist) throw new Error('主题播放上下文已变化，已停止以保护播放列表。')
     const previousOrder = random ? await fb.player.getOrder() : null
     let orderChanged = false
@@ -1098,6 +1227,7 @@ async function playGeneratedCollection(tracks: DisplayTrack[], playIndex = 0, ra
       }
       const result = await fb.playlist.replaceAllAndPlay({ playlist: latest.index, paths: entries.map((item) => item.path), playIndex: mappedPlayIndex })
       if (result.success === false) throw new Error(result.error || '无法播放所选集合。')
+      setPlaybackWindow(entries.map((entry) => tracks[entry.originalIndex]), mappedPlayIndex, latest.index)
       if (random) state.playbackOrder = 3
       return result
     } catch (error) {
@@ -1418,8 +1548,18 @@ async function syncPlaybackCapabilities() {
   state.isPlaying = playback.state === 'playing'
 }
 
-async function playHistoryTrack(track: DisplayTrack) {
-  await playGeneratedCollection([track])
+async function playPlaybackTrack(track: DisplayTrack) {
+  if (!state.connected) return playTrack(track)
+  const playlistIndex = state.playingPlaylistIndex
+  const trackIndex = track.sourceIndex
+  if (playlistIndex < 0 || trackIndex == null || trackIndex < 0) return
+  const candidate = await fb.playlist.getTracks(playlistIndex, trackIndex, 1)
+  if (!candidate[0] || trackKey(candidate[0]) !== trackKey(track)) {
+    notify('正在播放的列表已变化，已重新同步。', 'info')
+    await loadPlaybackSequence()
+    return
+  }
+  await runAction(() => fb.playlist.playTrack(playlistIndex, trackIndex))
 }
 
 async function setVolume(volume: number) {
@@ -1444,14 +1584,8 @@ async function toggleMute() {
 }
 
 async function cyclePlaybackOrder() {
-  const orders = [
-    { index: 0, mode: 'default' as const, label: '默认播放顺序' },
-    { index: 1, mode: 'repeat-playlist' as const, label: '循环播放列表' },
-    { index: 2, mode: 'repeat-track' as const, label: '单曲循环' },
-    { index: 3, mode: 'random' as const, label: '随机播放' },
-  ]
-  const current = orders.findIndex((item) => item.index === state.playbackOrder)
-  const next = orders[(current + 1) % orders.length]
+  const current = playbackOrders.findIndex((item) => item.index === state.playbackOrder)
+  const next = playbackOrders[(current + 1) % playbackOrders.length]
   if (!state.connected) {
     state.playbackOrder = next.index
     notify(next.label)
@@ -1514,7 +1648,7 @@ async function addTracksToQueue(tracks: DisplayTrack[]) {
   if (!tracks.length) return
   if (!state.connected) {
     const offset = state.queue.filter((item) => item.queueSource === 'explicit').length
-    state.queue.unshift(...tracks.map((track, index) => ({ ...track, queueSource: 'explicit' as const, sourceIndex: offset + index })))
+    state.queue.push(...tracks.map((track, index) => ({ ...track, queueSource: 'explicit' as const, sourceIndex: offset + index })))
     return
   }
   const result = await runAction(() => fb.queue.addPaths(tracks.map(playablePath)))
@@ -1669,6 +1803,10 @@ async function openMiniPlayer() {
 
 async function startWindowDrag() {
   if (state.connected) await runAction(() => fb.ui.startDrag())
+}
+
+async function toggleWindowMaximize() {
+  if (state.connected) await runAction(() => fb.ui.toggleMaximize())
 }
 
 async function closeWindow() {
@@ -1863,12 +2001,7 @@ async function toggleFavourite(track: DisplayTrack) {
     const result = await runAction(() => fb.rating.set(playablePath(track), nextRating, { cueIndex: trackSubsong(track) }))
     if (!result) return
   }
-  for (const collection of [state.tracks, state.recentTracks, state.viewTracks, state.visibleTracks, state.queue]) {
-    collection.forEach((item) => {
-      if (trackKey(item) === key) item.rating = nextRating
-    })
-  }
-  if (trackKey(state.currentTrack) === key) state.currentTrack!.rating = nextRating
+  patchTrackCopies(track, { rating: nextRating })
   notify(nextRating ? '已添加到收藏' : '已取消收藏', 'success')
   if (state.view === 'favourites' && !nextRating) {
     state.viewTracks = state.viewTracks.filter((item) => trackKey(item) !== key)
@@ -1927,8 +2060,7 @@ async function setTrackRating(track: DisplayTrack, rating: number) {
   const value = Math.min(5, Math.max(0, Math.round(rating)))
   const result = await runAction(() => fb.rating.set(playablePath(track), value, { cueIndex: trackSubsong(track) }))
   if (!result) return false
-  track.rating = value
-  if (isSameTrack(track, state.currentTrack)) state.currentTrack!.rating = value
+  patchTrackCopies(track, { rating: value })
   notify(value ? `已设置为 ${value} 星` : '已清除评分', 'success')
   return true
 }
@@ -1939,8 +2071,7 @@ async function setTracksRating(tracks: DisplayTrack[], rating: number) {
   for (const track of tracks) {
     const result = await runAction(() => fb.rating.set(playablePath(track), value, { cueIndex: trackSubsong(track) }))
     if (!result) continue
-    track.rating = value
-    if (isSameTrack(track, state.currentTrack)) state.currentTrack!.rating = value
+    patchTrackCopies(track, { rating: value })
     succeeded += 1
   }
   if (succeeded) notify(`已将 ${succeeded} 首曲目设置为 ${value || '未评'}星`, 'success')
@@ -1957,12 +2088,6 @@ async function clearReplayGain(tracks: DisplayTrack[]) {
   const result = await runAction(() => fb.replaygain.clear(tracks.map(playablePath)))
   if (result) notify(`已清除 ${result.clearedCount ?? tracks.length} 首曲目的 ReplayGain`, 'success')
   return Boolean(result)
-}
-
-function localFilePath(track: DisplayTrack) {
-  const path = (track.absolutePath || track.path).replace(/\|subsong:\d+$/i, '')
-  if (!path || /^[a-z][a-z\d+.-]*:\/\//i.test(path) || track.subsong != null) return ''
-  return path
 }
 
 async function embedTrackArtwork(track: DisplayTrack, type: 'front' | 'back' | 'disc' | 'artist' = 'front') {
@@ -2147,8 +2272,6 @@ async function loadLibraryStatus() {
 
 async function pollLibraryStatus() {
   if (libraryStatusTimer) clearTimeout(libraryStatusTimer)
-  if (noDragResizeTimer) clearTimeout(noDragResizeTimer)
-  window.removeEventListener('resize', scheduleNoDragRegion)
   await loadLibraryStatus()
   if (state.libraryStatus.scanning === true) libraryStatusTimer = setTimeout(() => refreshSafely(pollLibraryStatus), 1200)
   else if (state.libraryStatus.scanning === false) {
@@ -2185,15 +2308,20 @@ function closeNowPlaying() {
 function dispose() {
   lifecycleGeneration += 1
   routeGeneration += 1
+  searchGeneration += 1
   libraryGeneration += 1
   playlistGeneration += 1
   queueGeneration += 1
+  playbackSequenceGeneration += 1
+  mediaRequest += 1
   subscriptions.forEach((unsubscribe) => unsubscribe())
   subscriptions = []
   if (toastTimer) clearTimeout(toastTimer)
   if (searchTimer) clearTimeout(searchTimer)
   if (libraryReloadTimer) clearTimeout(libraryReloadTimer)
   if (libraryStatusTimer) clearTimeout(libraryStatusTimer)
+  if (noDragResizeTimer) clearTimeout(noDragResizeTimer)
+  window.removeEventListener('resize', scheduleNoDragRegion)
   initPromise = null
 }
 
@@ -2247,7 +2375,11 @@ export function useFoobar() {
     setSearch,
     submitSearch,
     clearSearch,
-    setLibraryFilter,
+    setLibraryFilterFacet,
+    addLibraryFilterRule,
+    updateLibraryFilterRule,
+    removeLibraryFilterRule,
+    setLibraryFilterMatchMode,
     clearLibraryFilters,
     applyCustomColumn,
     selectActivePlaylist,
@@ -2274,6 +2406,7 @@ export function useFoobar() {
     toggleDesktopLyrics,
     openMiniPlayer,
     startWindowDrag,
+    toggleWindowMaximize,
     closeWindow,
     shuffleCurrent,
     togglePlayback,
@@ -2313,7 +2446,7 @@ export function useFoobar() {
     importDroppedPaths,
     removeQueueItem,
     playQueueItem,
-    playHistoryTrack,
+    playPlaybackTrack,
     moveQueueItemToTop,
     clearQueue,
     refreshLibrary,

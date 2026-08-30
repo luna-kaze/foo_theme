@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ArrowLeft, ArrowRight, FileMusic, FolderOpen, Play, Radio, SearchX, Shuffle } from '@lucide/vue'
-import type { AlbumCard, DisplayTrack, ViewId } from '../types/music'
+import type { AlbumCard, DisplayTrack, LibraryFilterRule, ViewId } from '../types/music'
 import type { PlaylistInfo } from 'foo-webview-sdk'
 import AlbumGrid from './AlbumGrid.vue'
 import ArtworkImage from './ArtworkImage.vue'
@@ -23,6 +23,8 @@ defineProps<{
   libraryFilters: PlayerUiState['libraryFilters']
   filterOptions: { artists: string[]; albumArtists: string[]; genres: string[]; folders: string[] }
   customColumn: PlayerUiState['customColumn']
+  albumSelectionMode: boolean
+  selectedAlbumIds: string[]
 }>()
 
 const emit = defineEmits<{
@@ -38,10 +40,14 @@ const emit = defineEmits<{
   clearSearch: []
   albumMenu: [album: AlbumCard, event: MouseEvent]
   selection: [tracks: DisplayTrack[]]
-  filterChange: [key: keyof PlayerUiState['libraryFilters'], value: string]
+  filterFacetChange: [key: 'artist' | 'albumArtist' | 'genre' | 'folder' | 'playState', value: string]
+  filterRuleAdd: []
+  filterRuleUpdate: [id: string, patch: Partial<Pick<LibraryFilterRule, 'field' | 'operator' | 'value'>>]
+  filterRuleRemove: [id: string]
   clearFilters: []
   reorder: [from: number, to: number]
-  customColumn: [label: string, pattern: string]
+  albumSelection: [album: AlbumCard, selected: boolean]
+  cancelAlbumSelection: []
 }>()
 </script>
 
@@ -91,8 +97,8 @@ const emit = defineEmits<{
     </template>
 
     <template v-else-if="view === 'albums'">
-      <section class="page-heading"><p class="eyebrow">音乐库</p><h1>专辑</h1><p>收藏中共有 {{ albums.length }} 张专辑</p></section>
-      <AlbumGrid v-if="albums.length" :albums="albums" @open="emit('openAlbum', $event)" @menu="(album, event) => emit('albumMenu', album, event)" />
+      <section class="page-heading page-heading--row"><div><p class="eyebrow">音乐库</p><h1>{{ albumSelectionMode ? `已选择 ${selectedAlbumIds.length} 张专辑` : '专辑' }}</h1><p>收藏中共有 {{ albums.length }} 张专辑</p></div><button v-if="albumSelectionMode" class="secondary-button" @click="emit('cancelAlbumSelection')">退出选择</button></section>
+      <AlbumGrid v-if="albums.length" :albums="albums" :selection-mode="albumSelectionMode" :selected-ids="selectedAlbumIds" @open="emit('openAlbum', $event)" @menu="(album, event) => emit('albumMenu', album, event)" @selection="(album, selected) => emit('albumSelection', album, selected)" />
       <div v-else class="collection-empty"><FileMusic :size="30" /><strong>没有找到专辑</strong><span>打开本地音乐，或在 foobar2000 首选项中更新监视文件夹。</span><div><button class="primary-button" @click="emit('openFiles')">打开文件</button><button class="secondary-button" @click="emit('openFolder')">打开文件夹</button></div></div>
     </template>
 
@@ -133,7 +139,7 @@ const emit = defineEmits<{
           <button v-if="tracks.length" class="round-play" aria-label="播放全部" @click="emit('playTrack', tracks[0], 0)"><Play :size="22" fill="currentColor" /></button>
         </div>
       </section>
-      <LibraryFilterBar v-if="view === 'songs'" :filters="libraryFilters" :options="filterOptions" :result-count="tracks.length" :custom-column="customColumn" @change="(key, value) => emit('filterChange', key, value)" @clear="emit('clearFilters')" @custom-column="(label, pattern) => emit('customColumn', label, pattern)" />
+      <LibraryFilterBar v-if="view === 'songs'" :filters="libraryFilters" :options="filterOptions" :result-count="tracks.length" @facet-change="(key, value) => emit('filterFacetChange', key, value)" @rule-add="emit('filterRuleAdd')" @rule-update="(id, patch) => emit('filterRuleUpdate', id, patch)" @rule-remove="emit('filterRuleRemove', $event)" @clear="emit('clearFilters')" />
       <section v-if="view === 'search' && albums.length" class="content-section search-albums">
         <div class="section-heading"><div><p class="eyebrow">专辑</p><h2>匹配的专辑</h2></div><span>{{ albums.length }}</span></div>
         <AlbumGrid :albums="albums" :limit="6" @open="emit('openAlbum', $event)" @menu="(album, event) => emit('albumMenu', album, event)" />

@@ -31,6 +31,7 @@ const emit = defineEmits<{
   desktopLyrics: []
   miniPlayer: []
   drag: []
+  maximize: []
 }>()
 
 const menuOpen = ref(false)
@@ -106,7 +107,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <header ref="root" class="topbar" @pointerdown="prepareDrag" @dblclick.stop.prevent>
+  <header ref="root" class="topbar" @pointerdown="prepareDrag" @dblclick.stop.prevent="emit('maximize')">
     <div class="history-buttons">
       <button aria-label="后退" :disabled="!canGoBack" @click="navigate('back')"><ChevronLeft :size="19" /></button>
       <button aria-label="前进" :disabled="!canGoForward" @click="navigate('forward')"><ChevronRight :size="19" /></button>
