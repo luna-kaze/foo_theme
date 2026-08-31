@@ -15,10 +15,10 @@ import TrackInspector from './components/TrackInspector.vue'
 import FileOperationDialog from './components/FileOperationDialog.vue'
 import TrackActionMenu from './components/TrackActionMenu.vue'
 import { useFoobar } from './composables/useFoobar'
-import type { OutputDevice, PlaylistInfo } from 'foo-webview-sdk'
+import fb, { type OutputDevice, type PlaylistInfo } from 'foo-webview-sdk'
 import type { AlbumCard, DisplayTrack, LibraryFolderCard, TrackDetails, ViewId } from './types/music'
 import { menuIcons, showContextMenu, type ContextMenuItem } from './utils/contextMenu'
-import { isSameTrack, localFilePath, trackKey } from './utils/track'
+import { isSameTrack, localFilePath, playablePath, trackKey } from './utils/track'
 
 const player = useFoobar()
 const { state, filteredAlbums, libraryFilterOptions } = player
@@ -432,19 +432,34 @@ async function openPopup(items: ContextMenuItem[], event: MouseEvent) {
   }
 }
 
+async function loadMenuCover(track?: DisplayTrack, fallback = '') {
+  if (/^(?:data:image\/|https?:\/\/)/i.test(fallback)) return fallback
+  const path = track ? playablePath(track) : ''
+  if (!state.connected || !path) return ''
+  try {
+    const artwork = await fb.artwork.getByPath(path, 'front')
+    return artwork.available ? artwork.dataUrl ?? '' : ''
+  } catch {
+    return ''
+  }
+}
+
 async function openTrackMenu(track: DisplayTrack, index: number, event: MouseEvent) {
   const targets = selectedTracks.value.some((item) => isSameTrack(item, track)) ? selectedTracks.value : [track]
   if (state.connected) {
     trackMenu.open = false
     try {
-      const pluginActions = await player.getPluginContextActions(targets)
+      const [pluginActions, cover] = await Promise.all([
+        player.getPluginContextActions(targets),
+        loadMenuCover(track, track.artworkUrl),
+      ])
       const pluginItems: ContextMenuItem[] = []
       const converterItem = pluginMenuItem('track:converter', '转换', pluginActions.converter, player.pluginIntegrations.converter.installed, menuIcons.convert)
       const dopItem = pluginMenuItem('track:dop', 'iPod', pluginActions.dop, player.pluginIntegrations.dop.installed, menuIcons.device)
       if (converterItem) pluginItems.push(converterItem)
       if (dopItem) pluginItems.push(dopItem)
       const items: ContextMenuItem[] = [
-        { id: 'track:header', type: 'nowplaying', cover: track.artworkUrl, title: targets.length > 1 ? `已选择 ${targets.length} 首曲目` : track.title, subtitle: targets.length > 1 ? '批量操作' : `${track.artist} · ${track.album}` },
+        { id: 'track:header', type: 'nowplaying', cover, title: targets.length > 1 ? `已选择 ${targets.length} 首曲目` : track.title, subtitle: targets.length > 1 ? '批量操作' : `${track.artist} · ${track.album}` },
         { type: 'separator' },
         { id: 'track:play', label: '立即播放', iconSvg: menuIcons.play },
         { id: 'track:next', label: '下一首播放', iconSvg: menuIcons.next },
@@ -510,6 +525,7 @@ async function openAlbumMenu(album: AlbumCard, event: MouseEvent) {
     : [album]
   const multiple = targets.length > 1
   const albumTracks = await getAlbumSelectionTracks(targets)
+  const cover = await loadMenuCover(albumTracks[0], album.artworkUrl)
   const freedbTracks = targets.length === 1 ? sortAlbumTracks(albumTracks) : []
   const pluginActions = await player.getPluginContextActions(albumTracks)
   const pluginItems: ContextMenuItem[] = []
@@ -520,7 +536,7 @@ async function openAlbumMenu(album: AlbumCard, event: MouseEvent) {
   if (freedbItem) pluginItems.push(freedbItem)
   if (dopItem) pluginItems.push(dopItem)
   const action = await openPopup([
-    { id: 'album:header', type: 'nowplaying', cover: album.artworkUrl, title: multiple ? `已选择 ${targets.length} 张专辑` : album.name, subtitle: multiple ? '批量专辑操作' : `${album.artist}${album.year ? ` · ${album.year}` : ''}` },
+    { id: 'album:header', type: 'nowplaying', cover, title: multiple ? `已选择 ${targets.length} 张专辑` : album.name, subtitle: multiple ? '批量专辑操作' : `${album.artist}${album.year ? ` · ${album.year}` : ''}` },
     { type: 'separator' },
     ...(state.view === 'albums' ? [{ id: 'album:select', label: albumSelectionMode.value ? '退出专辑选择' : '选择专辑', iconSvg: menuIcons.info }] : []),
     { id: 'album:open', label: '打开专辑', iconSvg: menuIcons.album, enabled: !multiple },
