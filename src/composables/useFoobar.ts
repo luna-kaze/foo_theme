@@ -1,4 +1,4 @@
-import { computed, reactive } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import fb, {
   type AlbumInfo,
   type ArtistInfo,
@@ -144,6 +144,7 @@ const ipodCommands = reactive<Record<IpodMainAction, boolean>>({
   properties: false, rawProperties: false, systemLog: false, eject: false,
 })
 const ipodCommandCache = new Map<IpodMainAction, { guid: string; subGuid?: string }>()
+const airplayMetadataRevision = ref(0)
 
 const normalizeTrack = (track: TrackInfo | PlaybackTrackChangedPayload): DisplayTrack => {
   const fullPath = 'fullPath' in track ? track.fullPath : undefined
@@ -635,6 +636,9 @@ function bindEvents() {
       if (!state.currentTrack) return
       if (event.artist != null) state.currentTrack.artist = event.artist
       if (event.title != null) state.currentTrack.title = event.title
+      if (playablePath(state.currentTrack).toLocaleLowerCase().startsWith('airplay://live/')) {
+        airplayMetadataRevision.value += 1
+      }
     }),
     fb.on('library:itemsAdded', scheduleLibraryReload),
     fb.on('library:itemsRemoved', scheduleLibraryReload),
@@ -2587,6 +2591,7 @@ export function useFoobar() {
     pluginIntegrations,
     ipodDevice,
     ipodCommands,
+    airplayMetadataRevision,
     initialize,
     dispose,
     setView,
