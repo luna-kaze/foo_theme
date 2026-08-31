@@ -19,6 +19,7 @@ const props = defineProps<{
   lyricsSynced: boolean
   playbackTracks: DisplayTrack[]
   playbackTrackIndex: number
+  fullscreen: boolean
 }>()
 
 const emit = defineEmits<{
@@ -86,21 +87,33 @@ const playbackProgress = computed(() => {
 const tonearmAngle = computed(() => tonearmDragAngle.value ?? (props.playbackState === 'playing' ? 3 + playbackProgress.value * 33 : -10))
 
 type CoverflowItem = {
-  track: DisplayTrack
+  track: DisplayTrack | null
   artwork: string
   current: boolean
+  idle: boolean
   key: string
 }
 
-const coverflowItems = computed<CoverflowItem[]>(() => props.playbackTracks.map((track, index) => ({
+const coverflowItems = computed<CoverflowItem[]>(() => {
+  if (props.playbackTracks.length) return props.playbackTracks.map((track, index) => ({
     track,
     artwork: index === props.playbackTrackIndex ? props.artwork || track.artworkUrl || '' : track.artworkUrl || '',
     current: index === props.playbackTrackIndex,
+    idle: false,
     key: `playlist:${track.sourceIndex ?? index}:${trackKey(track)}`,
-  })))
+  }))
+  return [{
+    track: props.track,
+    artwork: standardCover.value.artwork || props.artwork || props.track?.artworkUrl || '',
+    current: false,
+    idle: true,
+    key: `idle:${standardCover.value.key}`,
+  }]
+})
 
 const selectedCoverflow = computed(() => coverflowItems.value[coverflowIndex.value] ?? null)
 const currentCoverflowIndex = computed(() => Math.max(0, props.playbackTrackIndex))
+const idleCoverflow = computed(() => selectedCoverflow.value?.idle === true)
 const backgroundArtwork = computed(() => modeTransition.value ? props.artwork : mode.value === 'coverflow' ? selectedCoverflow.value?.artwork || props.artwork : props.artwork)
 const handoffCoverStyle = computed(() => ({
   top: `${handoffCover.top}px`,
@@ -310,7 +323,7 @@ function selectCoverflow(index: number) {
 
 function activateCoverflow(index: number) {
   const item = coverflowItems.value[index]
-  if (!item) return
+  if (!item || item.idle || !item.track) return
   coverflowIndex.value = index
   if (item.current) emit('toggle')
   else emit('playTrack', item.track)
@@ -392,7 +405,7 @@ async function setMode(nextMode: 'standard' | 'coverflow') {
   }
   else setHandoffRect(centerRect)
   coverflowIndex.value = currentCoverflowIndex.value
-  standardCover.value = currentStandardCover()
+  if (props.track || props.artwork) standardCover.value = currentStandardCover()
   standardCoverVisible.value = true
   mode.value = 'standard'
   modeTransition.value = 'handoff-standard'
@@ -405,13 +418,14 @@ async function setMode(nextMode: 'standard' | 'coverflow') {
 }
 
 function onCoverflowWheel(event: WheelEvent) {
+  if (idleCoverflow.value) return
   if (Math.abs(event.deltaY) < 4 && Math.abs(event.deltaX) < 4) return
   moveCoverflow((event.deltaY || event.deltaX) > 0 ? 1 : -1)
 }
 
 watch(activeLyric, () => void nextTick(() => scrollToActive()))
 watch(() => trackKey(props.track), () => {
-  scheduleStandardCoverChange()
+  if (props.track || props.artwork) scheduleStandardCoverChange()
   lyricRows.value = []
   lastCoverflowPointer = { index: -1, time: 0, x: 0, y: 0 }
   coverForward.value = false
@@ -461,9 +475,14 @@ onBeforeUnmount(() => {
 
 <template>
   <Transition name="now-playing">
-    <section v-if="open" class="now-playing-panel immersive-player" :class="[`immersive-player--${mode}`, modeTransition && `mode-${modeTransition}`, handoffCover.visible && 'handoff-cover-active']" aria-label="沉浸式正在播放">
+    <section v-if="open" class="now-playing-panel immersive-player" :class="[`immersive-player--${mode}`, fullscreen && 'immersive-player--fullscreen', modeTransition && `mode-${modeTransition}`, handoffCover.visible && 'handoff-cover-active']" aria-label="沉浸式正在播放">
       <Transition name="immersive-backdrop">
-        <div :key="backgroundArtwork || 'empty'" class="immersive-player__backdrop" :style="backgroundArtwork ? { backgroundImage: `url(${backgroundArtwork})` } : {}" />
+        <div :key="backgroundArtwork || 'empty'" class="immersive-player__background" :style="backgroundArtwork ? { '--immersive-artwork': `url(${backgroundArtwork})` } : {}">
+          <div class="immersive-player__backdrop" />
+          <div class="immersive-player__chroma immersive-player__chroma--primary" />
+          <div class="immersive-player__chroma immersive-player__chroma--echo" />
+          <div class="immersive-player__prism" />
+        </div>
       </Transition>
       <div class="immersive-player__wash" />
       <div v-if="handoffCover.visible" class="immersive-handoff-cover" :style="handoffCoverStyle"><ArtworkImage :src="artwork || track?.artworkUrl" :alt="`${track?.album ?? '当前专辑'} 交接封面`" /></div>
@@ -547,25 +566,26 @@ onBeforeUnmount(() => {
             :key="item.key"
             :data-cover-index="index"
             class="coverflow-card"
-            :class="{ active: index === coverflowIndex, far: Math.abs(index - coverflowIndex) > 3 }"
+            :class="{ active: index === coverflowIndex, current: item.current || item.idle, idle: item.idle, far: Math.abs(index - coverflowIndex) > 3 }"
             :style="{ '--cover-offset': index - coverflowIndex, '--cover-distance': Math.abs(index - coverflowIndex), '--cover-image': item.artwork ? `url(${item.artwork})` : 'none' }"
             @keydown.enter.prevent="activateCoverflow(index)"
           >
             <span class="coverflow-card__sleeve">
-              <span class="coverflow-card__face"><ArtworkImage :src="item.artwork" :alt="`${item.track.album} 封面`" /></span>
+              <span class="coverflow-card__face"><ArtworkImage :src="item.artwork" :alt="`${item.track?.album ?? standardCover.album} 封面`" /></span>
               <i class="coverflow-card__edge coverflow-card__edge--left" />
               <i class="coverflow-card__edge coverflow-card__edge--right" />
-              <i class="coverflow-card__edge coverflow-card__edge--bottom"><b>{{ item.track.title }} · {{ item.track.artist }}</b></i>
+              <i class="coverflow-card__edge coverflow-card__edge--bottom"><b>{{ item.track ? `${item.track.title} · ${item.track.artist}` : standardCover.album }}</b></i>
             </span>
           </button>
         </div>
-        <button class="coverflow__arrow coverflow__arrow--left" :disabled="coverflowIndex === 0" aria-label="上一张封面" @click="moveCoverflow(-1)"><ChevronLeft :size="22" /><span>上一张</span></button>
-        <button class="coverflow__arrow coverflow__arrow--right" :disabled="coverflowIndex >= coverflowItems.length - 1" aria-label="下一张封面" @click="moveCoverflow(1)"><ChevronRight :size="22" /><span>下一张</span></button>
+        <button v-if="!idleCoverflow" class="coverflow__arrow coverflow__arrow--left" :disabled="coverflowIndex === 0" aria-label="上一张封面" @click="moveCoverflow(-1)"><ChevronLeft :size="22" /><span>上一张</span></button>
+        <button v-if="!idleCoverflow" class="coverflow__arrow coverflow__arrow--right" :disabled="coverflowIndex >= coverflowItems.length - 1" aria-label="下一张封面" @click="moveCoverflow(1)"><ChevronRight :size="22" /><span>下一张</span></button>
         <div v-if="selectedCoverflow" class="coverflow__copy">
-          <p>{{ selectedCoverflow.current ? '正在播放' : `播放列表第 ${(selectedCoverflow.track.sourceIndex ?? coverflowIndex) + 1} 首` }}</p>
-          <h1>{{ selectedCoverflow.track.title }}</h1>
-          <span>{{ selectedCoverflow.track.artist }} · {{ selectedCoverflow.track.album }}</span>
-          <small>{{ selectedCoverflow.current ? `双击封面${isPlaying ? '暂停' : '播放'}` : '单击选择，双击播放' }}</small>
+          <p>{{ selectedCoverflow.idle ? (selectedCoverflow.track ? '未加入播放列表' : '当前没有播放') : selectedCoverflow.current ? '正在播放' : `播放列表第 ${(selectedCoverflow.track?.sourceIndex ?? coverflowIndex) + 1} 首` }}</p>
+          <h1>{{ selectedCoverflow.track?.title || standardCover.album || '当前没有播放' }}</h1>
+          <span v-if="selectedCoverflow.track">{{ selectedCoverflow.track.artist }} · {{ selectedCoverflow.track.album }}</span>
+          <span v-else>最后播放的专辑封面会保留在这里</span>
+          <small>{{ selectedCoverflow.idle ? '播放列表开始后会在此展开封面流' : selectedCoverflow.current ? `双击封面${isPlaying ? '暂停' : '播放'}` : '单击选择，双击播放' }}</small>
         </div>
       </section>
 

@@ -59,6 +59,7 @@ const state = reactive<PlayerUiState>({
   muted: false,
   playbackOrder: 0,
   nowPlayingOpen: false,
+  isFullscreen: false,
   nowPlayingTab: 'lyrics',
   canGoBack: false,
   canGoForward: false,
@@ -94,7 +95,6 @@ let noDragResizeTimer: ReturnType<typeof setTimeout> | null = null
 let playcountLibraryGeneration = -1
 const priorFavouriteRatings = new Map<string, number>()
 let desktopLyricsCommand: { guid: string; subGuid?: string } | null = null
-let ipodManagerCommand: { guid: string; subGuid?: string } | null = null
 let miniPlayerWindowId = ''
 const history: ViewRoute[] = [{ view: 'home' }]
 let historyIndex = 0
@@ -116,11 +116,34 @@ let namedAlbumArtwork = new Map<string, string | null>()
 
 export type PluginId = 'converter' | 'freedb' | 'dop'
 export type PluginContextAction = { commandId: number; label: string }
+export type IpodMainAction = 'devicePanel' | 'loadLibrary' | 'rewriteDatabase' | 'recoverOrphans' | 'synchronise' | 'sendPlaylists' | 'manageContents' | 'fileSystemExplorer' | 'properties' | 'rawProperties' | 'systemLog' | 'eject'
+export type IpodDeviceStatus = 'unavailable' | 'unknown' | 'connected' | 'disconnected'
+const ipodCommandQueries: Record<IpodMainAction, string[]> = {
+  devicePanel: ['iPod Manager', 'iPod'],
+  loadLibrary: ['Load library'],
+  rewriteDatabase: ['Rewrite database'],
+  recoverOrphans: ['Recover orphaned tracks'],
+  synchronise: ['Synchronise', 'Synchronize'],
+  sendPlaylists: ['Send playlists'],
+  manageContents: ['Manage contents'],
+  fileSystemExplorer: ['File system explorer'],
+  properties: ['Properties'],
+  rawProperties: ['Raw properties'],
+  systemLog: ['System log viewer'],
+  eject: ['Eject'],
+}
 const pluginIntegrations = reactive<Record<PluginId, { installed: boolean; name: string; version: string }>>({
   converter: { installed: false, name: 'Converter', version: '' },
   freedb: { installed: false, name: 'freedb', version: '' },
   dop: { installed: false, name: 'iPod Manager', version: '' },
 })
+const ipodDevice = reactive<{ status: IpodDeviceStatus; probing: boolean }>({ status: 'unknown', probing: false })
+const ipodCommands = reactive<Record<IpodMainAction, boolean>>({
+  devicePanel: false, loadLibrary: false, rewriteDatabase: false, recoverOrphans: false,
+  synchronise: false, sendPlaylists: false, manageContents: false, fileSystemExplorer: false,
+  properties: false, rawProperties: false, systemLog: false, eject: false,
+})
+const ipodCommandCache = new Map<IpodMainAction, { guid: string; subGuid?: string }>()
 
 const normalizeTrack = (track: TrackInfo | PlaybackTrackChangedPayload): DisplayTrack => {
   const fullPath = 'fullPath' in track ? track.fullPath : undefined
@@ -632,7 +655,14 @@ function bindEvents() {
       miniPlayerWindowId = ''
       refreshSafely(restoreCurrentWindow)
     }),
+    fb.on('window:stateChanged', (event) => {
+      state.isFullscreen = event.isFullscreen
+    }),
   ]
+}
+
+function syncBrowserFullscreen() {
+  if (!state.connected) state.isFullscreen = Boolean(document.fullscreenElement)
 }
 
 async function syncNoDragRegion() {
@@ -667,6 +697,7 @@ async function initialize() {
     const webViewDetected = Boolean((window as Window & { chrome?: { webview?: unknown } }).chrome?.webview)
     if (!webViewDetected && !fb.isAvailable()) {
       useDemoData()
+      document.addEventListener('fullscreenchange', syncBrowserFullscreen)
       state.loading = false
       return
     }
@@ -682,15 +713,18 @@ async function initialize() {
       await syncNoDragRegion()
       await recoverMiniPlayerWindow()
       window.addEventListener('resize', scheduleNoDragRegion)
-      const [library, playlists, capabilities] = await Promise.allSettled([
+      const [library, playlists, capabilities, , windowState] = await Promise.allSettled([
         loadLibrary(),
         loadPlaylists(),
         fb.dnd.getCapabilities(),
         loadPluginIntegrations(),
+        fb.ui.getState(),
       ])
       await loadLibraryStatus()
+      await refreshIpodCommands()
       if (generation !== lifecycleGeneration) return
       state.dndSupported = capabilities.status === 'fulfilled' && capabilities.value.success && capabilities.value.paths
+      state.isFullscreen = windowState.status === 'fulfilled' && windowState.value.isFullscreen
       const [playback, position, volume, order] = await Promise.all([
         fb.player.getState(),
         fb.player.getPosition(),
@@ -785,6 +819,7 @@ async function materializeRoute(route: ViewRoute): Promise<DisplayTrack[]> {
     await loadLibraryRoots()
     return []
   }
+  if (route.view === 'ipod') return []
   if (route.view === 'folder') {
     if (!state.connected) {
       state.libraryFolders = []
@@ -975,6 +1010,7 @@ async function applyCustomColumn(label: string, pattern: string) {
 }
 
 async function navigate(route: ViewRoute, historyMode: 'push' | 'replace' | 'none' = 'push') {
+  if (route.view === 'ipod' && !pluginIntegrations.dop.installed) route = { view: 'home' }
   if (route.view === 'playlist') {
     const playlistRoute = route
     const indexed = state.playlists.find((playlist) => playlist.index === playlistRoute.playlistIndex)
@@ -1251,6 +1287,14 @@ async function playGeneratedCollection(tracks: DisplayTrack[], playIndex = 0, ra
   }, message)
 }
 
+async function playTrackCollection(tracks: DisplayTrack[], random = false) {
+  if (!tracks.length) {
+    notify('所选文件夹没有可播放的曲目。', 'info')
+    return
+  }
+  await playGeneratedCollection(tracks, random ? Math.floor(Math.random() * tracks.length) : 0, random, random ? '已随机播放所选文件夹' : undefined)
+}
+
 async function resolvePlaylistTrackIndex(playlistIndex: number, track: DisplayTrack, hintedIndex?: number) {
   if (hintedIndex != null && hintedIndex >= 0) {
     const candidate = await fb.playlist.getTracks(playlistIndex, hintedIndex, 1)
@@ -1295,6 +1339,15 @@ async function getAlbumTracks(album: AlbumCard) {
   if (!state.connected) return state.tracks.filter((track) => track.album === album.name)
   const result = await runAction(() => fb.library.getAlbumTracks(album.name, album.artist))
   return result ? result.tracks.map(normalizeTrack) : []
+}
+
+async function getFolderTracks(folder: LibraryFolderCard) {
+  if (!state.connected) {
+    const prefix = folder.absolutePath.replaceAll('\\', '/').toLocaleLowerCase()
+    return state.tracks.filter((track) => (track.absolutePath || track.path).replaceAll('\\', '/').toLocaleLowerCase().startsWith(prefix))
+  }
+  const result = await runAction(() => fb.library.browseTree({ rootId: folder.rootId, pathId: folder.pathId, includeFiles: true, recursiveFiles: true }))
+  return result ? result.files.map(normalizeTrack) : []
 }
 
 async function shuffleAlbum(album: AlbumCard) {
@@ -1815,34 +1868,78 @@ async function runPluginContextAction(action: PluginContextAction, tracks: Displ
   await runAction(() => fb.menu.runContextCommandById(action.commandId, { mode: 'handles', handles }))
 }
 
-async function findIpodManagerCommand() {
-  for (const query of ['iPod Manager', 'iPod']) {
-    const result = await fb.discovery.searchCommands(query, { scope: 'mainmenu', expandDynamic: true, includeHidden: true })
-    const command = result.results?.find((item) => {
-      const label = `${item.path ?? ''} ${item.name}`.toLocaleLowerCase()
-      return item.type === 'mainmenu' && item.executable !== false && label.includes('ipod')
-    })
-    if (command) return { guid: command.guid, subGuid: command.subGuid }
-  }
-  return null
+function clearIpodCommands() {
+  ipodCommandCache.clear()
+  ;(Object.keys(ipodCommands) as IpodMainAction[]).forEach((action) => { ipodCommands[action] = false })
 }
 
-async function openIpodManager() {
+function matchesIpodCommand(action: IpodMainAction, name: string, path = '') {
+  const normalized = `${path} ${name}`.replaceAll('&', '').replace(/\.{3}|…/g, '').trim().toLocaleLowerCase()
+  const query = ipodCommandQueries[action].find((item) => normalized.includes(item.toLocaleLowerCase()))
+  if (!query) return false
+  if (action === 'properties' && normalized.includes('raw properties')) return false
+  return true
+}
+
+async function refreshIpodCommands() {
+  clearIpodCommands()
+  if (!state.connected || !pluginIntegrations.dop.installed) return
+  const result = await runAction(() => fb.discovery.getMainMenuCommands({ expandDynamic: true, includeHidden: true }))
+  if (!result?.commands) return
+  ;(Object.keys(ipodCommands) as IpodMainAction[]).forEach((action) => {
+    const command = result.commands.find((item) =>
+      item.executable !== false && matchesIpodCommand(action, item.name, item.path),
+    )
+    if (!command) return
+    ipodCommandCache.set(action, { guid: command.guid, subGuid: command.subGuid })
+    ipodCommands[action] = true
+  })
+}
+
+async function runIpodMainAction(action: IpodMainAction) {
   if (!state.connected) {
     notify('iPod 管理器仅可在 foobar2000 中使用。', 'info')
-    return
+    return false
   }
   if (!pluginIntegrations.dop.installed) {
     notify('未检测到 foo_dop 组件。', 'error')
+    return false
+  }
+  if (!ipodCommandCache.has(action)) await refreshIpodCommands()
+  const command = ipodCommandCache.get(action)
+  if (!command) {
+    notify('当前 foo_dop 版本未公开此主菜单命令。', 'info')
+    return false
+  }
+  const result = await runAction(() => fb.discovery.executeMainMenuCommand(command.guid, command.subGuid))
+  if (!result) {
+    ipodCommandCache.delete(action)
+    ipodCommands[action] = false
+  }
+  return Boolean(result)
+}
+
+async function refreshIpodDeviceStatus() {
+  if (!state.connected || !pluginIntegrations.dop.installed) {
+    ipodDevice.status = 'unavailable'
     return
   }
-  ipodManagerCommand ??= await findIpodManagerCommand()
-  if (!ipodManagerCommand) {
-    notify('未检测到 iPod 管理器主菜单命令。', 'error')
+  const sample = state.currentTrack ?? state.tracks.find((track) => Boolean(playablePath(track)))
+  if (!sample) {
+    ipodDevice.status = 'unknown'
     return
   }
-  const result = await runAction(() => fb.discovery.executeMainMenuCommand(ipodManagerCommand!.guid, ipodManagerCommand!.subGuid))
-  if (!result) ipodManagerCommand = null
+  ipodDevice.probing = true
+  try {
+    const actions = await getPluginContextActions([sample])
+    ipodDevice.status = actions.dop.some((action) => /send to ipod|发送到 ipod/i.test(action.label)) ? 'connected' : 'disconnected'
+  } finally {
+    ipodDevice.probing = false
+  }
+}
+
+async function openIpodManager() {
+  await runIpodMainAction('devicePanel')
 }
 
 async function findDesktopLyricsCommand() {
@@ -1936,6 +2033,14 @@ async function showInExplorer(track: DisplayTrack) {
     return
   }
   await runAction(() => fb.shell.showInExplorer((track.absolutePath || track.path).replace(/\|subsong:\d+$/i, '')))
+}
+
+async function showFolderInExplorer(folder: LibraryFolderCard) {
+  if (!state.connected) {
+    notify('文件位置功能仅可在 foobar2000 中使用。', 'info')
+    return
+  }
+  await runAction(() => fb.shell.showInExplorer(folder.absolutePath))
 }
 
 async function openTrackAlbum(track: DisplayTrack) {
@@ -2394,7 +2499,10 @@ async function showPreferences() {
 }
 
 async function toggleFullscreen() {
-  if (state.connected) await runAction(() => fb.ui.toggleFullscreen())
+  if (state.connected) {
+    const result = await runAction(() => fb.ui.toggleFullscreen())
+    if (result?.fullscreen != null) state.isFullscreen = result.fullscreen
+  }
   else if (document.fullscreenElement) await document.exitFullscreen()
   else await document.documentElement.requestFullscreen()
 }
@@ -2430,6 +2538,7 @@ function dispose() {
   if (libraryStatusTimer) clearTimeout(libraryStatusTimer)
   if (noDragResizeTimer) clearTimeout(noDragResizeTimer)
   window.removeEventListener('resize', scheduleNoDragRegion)
+  document.removeEventListener('fullscreenchange', syncBrowserFullscreen)
   initPromise = null
 }
 
@@ -2476,6 +2585,8 @@ export function useFoobar() {
     filteredAlbums,
     libraryFilterOptions,
     pluginIntegrations,
+    ipodDevice,
+    ipodCommands,
     initialize,
     dispose,
     setView,
@@ -2498,8 +2609,10 @@ export function useFoobar() {
     loadFavourites,
     loadRadio,
     playTrack,
+    playTrackCollection,
     playAlbum,
     getAlbumTracks,
+    getFolderTracks,
     shuffleAlbum,
     queueAlbum,
     addAlbumToPlaylist,
@@ -2514,6 +2627,9 @@ export function useFoobar() {
     setOutputDevice,
     getPluginContextActions,
     runPluginContextAction,
+    runIpodMainAction,
+    refreshIpodDeviceStatus,
+    refreshIpodCommands,
     openIpodManager,
     toggleDesktopLyrics,
     openMiniPlayer,
@@ -2539,6 +2655,7 @@ export function useFoobar() {
     playNext,
     removePlaylistTrack,
     showInExplorer,
+    showFolderInExplorer,
     openTrackAlbum,
     toggleFavourite,
     getTrackDetails,

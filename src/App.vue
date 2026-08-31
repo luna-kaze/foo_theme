@@ -6,6 +6,7 @@ import AppTopbar from './components/AppTopbar.vue'
 import CreatePlaylistDialog from './components/CreatePlaylistDialog.vue'
 import LibraryView from './components/LibraryView.vue'
 import MediaLibraryView from './components/MediaLibraryView.vue'
+import IpodManagerView from './components/IpodManagerView.vue'
 import MiniPlayer from './components/MiniPlayer.vue'
 import NowPlayingPanel from './components/NowPlayingPanel.vue'
 import PlayerBar from './components/PlayerBar.vue'
@@ -15,7 +16,7 @@ import FileOperationDialog from './components/FileOperationDialog.vue'
 import TrackActionMenu from './components/TrackActionMenu.vue'
 import { useFoobar } from './composables/useFoobar'
 import type { OutputDevice, PlaylistInfo } from 'foo-webview-sdk'
-import type { AlbumCard, DisplayTrack, TrackDetails, ViewId } from './types/music'
+import type { AlbumCard, DisplayTrack, LibraryFolderCard, TrackDetails, ViewId } from './types/music'
 import { menuIcons, showContextMenu, type ContextMenuItem } from './utils/contextMenu'
 import { isSameTrack, localFilePath, trackKey } from './utils/track'
 
@@ -29,12 +30,76 @@ const outputDevices = ref<OutputDevice[]>([])
 const outputLoading = ref(false)
 const connectionLabel = ref('foobar2000')
 const connectionTransitioning = ref(false)
+const immersiveFullscreenProgress = ref(0)
+const immersiveFullscreenTarget = ref(false)
+const immersiveShellStyle = computed(() => ({ '--immersive-fullscreen-progress': immersiveFullscreenProgress.value.toFixed(4) }))
 let airplayTimer: ReturnType<typeof setTimeout> | null = null
+let fullscreenSettleTimer: ReturnType<typeof setTimeout> | null = null
+let fullscreenWindowSettled = true
+const fullscreenSceneDelayMs = 260
+let immersiveFullscreenFrame = 0
+let immersiveFullscreenVelocity = 0
+let immersiveFullscreenLastFrame = 0
 const selectedTracks = ref<DisplayTrack[]>([])
 const albumSelectionMode = ref(false)
 const selectedAlbumIds = ref<string[]>([])
+const folderSelectionMode = ref(false)
+const selectedFolderIds = ref<string[]>([])
 const inspector = reactive({ open: false, mode: 'properties' as 'properties' | 'edit', tracks: [] as DisplayTrack[], album: null as AlbumCard | null, details: [] as TrackDetails[], loading: false, busy: false, request: 0 })
 const fileDialog = reactive({ open: false, mode: 'rename' as 'rename' | 'move' | 'delete', track: null as DisplayTrack | null, target: '', busy: false })
+
+function animateImmersiveFullscreen(time: number) {
+  const target = immersiveFullscreenTarget.value ? 1 : 0
+  const reducedMotion = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+  if (reducedMotion) {
+    immersiveFullscreenProgress.value = target
+    immersiveFullscreenVelocity = 0
+    immersiveFullscreenFrame = 0
+    immersiveFullscreenLastFrame = 0
+    return
+  }
+  const delta = immersiveFullscreenLastFrame ? Math.min(.02, (time - immersiveFullscreenLastFrame) / 1000) : 1 / 60
+  immersiveFullscreenLastFrame = time
+  const displacement = target - immersiveFullscreenProgress.value
+  immersiveFullscreenVelocity += (displacement * 1350 - immersiveFullscreenVelocity * 76) * delta
+  immersiveFullscreenProgress.value = Math.min(1, Math.max(0, immersiveFullscreenProgress.value + immersiveFullscreenVelocity * delta))
+  if (Math.abs(displacement) < .002 && Math.abs(immersiveFullscreenVelocity) < .012) {
+    immersiveFullscreenProgress.value = target
+    immersiveFullscreenVelocity = 0
+    immersiveFullscreenFrame = 0
+    immersiveFullscreenLastFrame = 0
+    return
+  }
+  immersiveFullscreenFrame = requestAnimationFrame(animateImmersiveFullscreen)
+}
+
+watch(immersiveFullscreenTarget, () => {
+  if (!immersiveFullscreenFrame) immersiveFullscreenFrame = requestAnimationFrame(animateImmersiveFullscreen)
+})
+
+function commitImmersiveFullscreenTarget() {
+  fullscreenWindowSettled = true
+  immersiveFullscreenTarget.value = state.isFullscreen && state.nowPlayingOpen
+}
+
+function scheduleFullscreenSettle() {
+  if (fullscreenSettleTimer) clearTimeout(fullscreenSettleTimer)
+  fullscreenSettleTimer = setTimeout(commitImmersiveFullscreenTarget, 180 + fullscreenSceneDelayMs)
+}
+
+function onFullscreenWindowResize() {
+  if (!fullscreenWindowSettled) scheduleFullscreenSettle()
+}
+
+watch(() => state.isFullscreen, () => {
+  fullscreenWindowSettled = false
+  scheduleFullscreenSettle()
+})
+
+watch(() => state.nowPlayingOpen, () => {
+  if (fullscreenWindowSettled) commitImmersiveFullscreenTarget()
+})
+
 const primaryRouteKey = computed(() => {
   const route = state.route
   if (route.view === 'playlist') return `playlist:${route.playlistIndex}`
@@ -61,6 +126,11 @@ watch(() => state.currentTrack?.path ?? '', (path, previous) => {
 
 watch(() => state.view, (view) => {
   if (view !== 'albums') cancelAlbumSelection()
+  if (view !== 'folders' && view !== 'folder') cancelFolderSelection()
+  if (view === 'ipod') {
+    void player.refreshIpodCommands()
+    void player.refreshIpodDeviceStatus()
+  }
 })
 
 function setAlbumSelection(album: AlbumCard, selected: boolean) {
@@ -73,6 +143,29 @@ function setAlbumSelection(album: AlbumCard, selected: boolean) {
 function cancelAlbumSelection() {
   albumSelectionMode.value = false
   selectedAlbumIds.value = []
+}
+
+function folderId(folder: LibraryFolderCard) {
+  return `${folder.rootId}\u0000${folder.pathId}`
+}
+
+function setFolderSelection(folder: LibraryFolderCard, selected: boolean) {
+  const ids = new Set(selectedFolderIds.value)
+  if (selected) ids.add(folderId(folder))
+  else ids.delete(folderId(folder))
+  selectedFolderIds.value = [...ids]
+}
+
+function cancelFolderSelection() {
+  folderSelectionMode.value = false
+  selectedFolderIds.value = []
+}
+
+async function getFolderSelectionTracks(folders: LibraryFolderCard[]) {
+  const groups = await Promise.all(folders.map((folder) => player.getFolderTracks(folder)))
+  const unique = new Map<string, DisplayTrack>()
+  groups.flat().forEach((track) => unique.set(trackKey(track), track))
+  return [...unique.values()]
 }
 
 async function getAlbumSelectionTracks(albums: AlbumCard[]) {
@@ -212,6 +305,7 @@ onMounted(() => {
   void player.initialize()
   if (miniMode) document.body.classList.add('mini-window')
   window.addEventListener('keydown', onKeydown)
+  window.addEventListener('resize', onFullscreenWindowResize)
   if (miniMode) return
   window.addEventListener('dragenter', onDragEnter)
   window.addEventListener('dragover', onDragOver)
@@ -222,12 +316,15 @@ onMounted(() => {
 onBeforeUnmount(() => {
   document.body.classList.remove('mini-window')
   window.removeEventListener('keydown', onKeydown)
+  window.removeEventListener('resize', onFullscreenWindowResize)
   window.removeEventListener('dragenter', onDragEnter)
   window.removeEventListener('dragover', onDragOver)
   window.removeEventListener('dragleave', onDragLeave)
   window.removeEventListener('drop', onDrop)
   player.dispose()
   if (airplayTimer) clearTimeout(airplayTimer)
+  if (fullscreenSettleTimer) clearTimeout(fullscreenSettleTimer)
+  if (immersiveFullscreenFrame) cancelAnimationFrame(immersiveFullscreenFrame)
 })
 
 function openNowPlaying() {
@@ -343,7 +440,7 @@ async function openTrackMenu(track: DisplayTrack, index: number, event: MouseEve
       const pluginActions = await player.getPluginContextActions(targets)
       const pluginItems: ContextMenuItem[] = []
       const converterItem = pluginMenuItem('track:converter', '转换', pluginActions.converter, player.pluginIntegrations.converter.installed, menuIcons.convert)
-      const dopItem = pluginMenuItem('track:dop', '发送到 iPod', pluginActions.dop, player.pluginIntegrations.dop.installed, menuIcons.device)
+      const dopItem = pluginMenuItem('track:dop', 'iPod', pluginActions.dop, player.pluginIntegrations.dop.installed, menuIcons.device)
       if (converterItem) pluginItems.push(converterItem)
       if (dopItem) pluginItems.push(dopItem)
       const items: ContextMenuItem[] = [
@@ -418,7 +515,7 @@ async function openAlbumMenu(album: AlbumCard, event: MouseEvent) {
   const pluginItems: ContextMenuItem[] = []
   const converterItem = pluginMenuItem('album:converter', '转换', pluginActions.converter, player.pluginIntegrations.converter.installed, menuIcons.convert)
   const freedbItem = freedbTracks.length ? pluginMenuItem('album:freedb', '获取专辑信息', pluginActions.freedb, player.pluginIntegrations.freedb.installed, menuIcons.tag) : null
-  const dopItem = pluginMenuItem('album:dop', '发送到 iPod', pluginActions.dop, player.pluginIntegrations.dop.installed, menuIcons.device)
+  const dopItem = pluginMenuItem('album:dop', 'iPod', pluginActions.dop, player.pluginIntegrations.dop.installed, menuIcons.device)
   if (converterItem) pluginItems.push(converterItem)
   if (freedbItem) pluginItems.push(freedbItem)
   if (dopItem) pluginItems.push(dopItem)
@@ -461,6 +558,54 @@ async function openAlbumMenu(album: AlbumCard, event: MouseEvent) {
   if (action) await runSelectedPluginAction(action, 'album:dop', pluginActions.dop, albumTracks)
 }
 
+async function openFolderMenu(folder: LibraryFolderCard, event: MouseEvent) {
+  event.preventDefault()
+  if (folderSelectionMode.value && !selectedFolderIds.value.includes(folderId(folder))) setFolderSelection(folder, true)
+  const targets = folderSelectionMode.value
+    ? state.libraryFolders.filter((item) => selectedFolderIds.value.includes(folderId(item)))
+    : [folder]
+  const multiple = targets.length > 1
+  try {
+    const tracks = await getFolderSelectionTracks(targets)
+    const pluginActions = await player.getPluginContextActions(tracks)
+    const dopItem = pluginMenuItem('folder:dop', 'iPod', pluginActions.dop, player.pluginIntegrations.dop.installed, menuIcons.device)
+    const action = await openPopup([
+      { id: 'folder:header', label: multiple ? `已选择 ${targets.length} 个文件夹` : folder.name, iconSvg: menuIcons.folder, enabled: false },
+      { type: 'separator' },
+      { id: 'folder:select', label: folderSelectionMode.value ? '退出文件夹选择' : '选择文件夹', iconSvg: menuIcons.info },
+      { id: 'folder:open', label: '打开文件夹', iconSvg: menuIcons.folder, enabled: !multiple },
+      { id: 'folder:play', label: multiple ? `播放 ${targets.length} 个文件夹` : '播放文件夹', iconSvg: menuIcons.play, enabled: tracks.length > 0 },
+      { id: 'folder:shuffle', label: multiple ? `随机播放 ${targets.length} 个文件夹` : '随机播放文件夹', iconSvg: menuIcons.shuffle, enabled: tracks.length > 0 },
+      { id: 'folder:queue', label: multiple ? `将 ${targets.length} 个文件夹添加到队列` : '添加文件夹到队列', iconSvg: menuIcons.queue, enabled: tracks.length > 0 },
+      { type: 'separator' },
+      { id: 'folder:playlist', label: multiple ? `将 ${targets.length} 个文件夹添加到播放列表` : '添加文件夹到播放列表', iconSvg: menuIcons.playlist, enabled: tracks.length > 0 && state.playlists.length > 0, submenu: playlistSubmenu('folder:playlist') },
+      ...(dopItem ? [{ type: 'separator' } as ContextMenuItem, dopItem] : []),
+      { id: 'folder:location', label: '在资源管理器中显示', iconSvg: menuIcons.folder, enabled: !multiple && Boolean(folder.absolutePath) },
+      { type: 'separator' },
+      { id: 'folder:properties', label: multiple ? '文件夹曲目属性' : '文件夹属性', iconSvg: menuIcons.info, enabled: tracks.length > 0 },
+    ], event)
+    if (!action) return
+    if (action === 'folder:select') {
+      if (folderSelectionMode.value) cancelFolderSelection()
+      else {
+        folderSelectionMode.value = true
+        selectedFolderIds.value = [folderId(folder)]
+      }
+      return
+    }
+    if (action === 'folder:open') await player.selectLibraryFolder(folder)
+    if (action === 'folder:play') await player.playTrackCollection(tracks)
+    if (action === 'folder:shuffle') await player.playTrackCollection(tracks, true)
+    if (action === 'folder:queue') await player.addTracksToQueue(tracks)
+    if (action.startsWith('folder:playlist:')) await player.addTracksToPlaylist(tracks, Number(action.split(':').at(-1)))
+    if (action === 'folder:location') await player.showFolderInExplorer(folder)
+    if (action === 'folder:properties') await openInspector('properties', tracks)
+    await runSelectedPluginAction(action, 'folder:dop', pluginActions.dop, tracks)
+  } catch (error) {
+    player.notify(error instanceof Error ? error.message : '无法打开文件夹菜单。', 'error')
+  }
+}
+
 async function openPlaylistMenu(playlist: PlaylistInfo, event: MouseEvent) {
   const writable = !playlist.isLocked && !playlist.isAutoplaylist
   const action = await openPopup([
@@ -474,6 +619,7 @@ async function openPlaylistMenu(playlist: PlaylistInfo, event: MouseEvent) {
     { id: 'playlist:undo', label: '撤销上次更改', iconSvg: menuIcons.refresh, enabled: writable },
     { id: 'playlist:sort-title', label: '按标题排序', iconSvg: menuIcons.refresh, enabled: writable },
     { id: 'playlist:sort-album', label: '按专辑 / 音轨排序', iconSvg: menuIcons.album, enabled: writable },
+    ...(player.pluginIntegrations.dop.installed ? [{ type: 'separator' } as ContextMenuItem, { id: 'playlist:ipod', label: '发送播放列表到 iPod…', iconSvg: menuIcons.device }] : []),
     { type: 'separator' },
     { id: 'playlist:clear', label: '清空播放列表', iconSvg: menuIcons.remove, enabled: writable && playlist.trackCount > 0 },
     { id: 'playlist:remove', label: '删除播放列表', iconSvg: menuIcons.remove, enabled: !playlist.isLocked },
@@ -485,6 +631,7 @@ async function openPlaylistMenu(playlist: PlaylistInfo, event: MouseEvent) {
   if (action === 'playlist:undo') await player.undoPlaylistChange(playlist.index)
   if (action === 'playlist:sort-title') await player.sortPlaylist(playlist.index, '%title%')
   if (action === 'playlist:sort-album') await player.sortPlaylist(playlist.index, '%album artist%|%date%|%album%|%discnumber%|%tracknumber%')
+  if (action === 'playlist:ipod') await player.runIpodMainAction('sendPlaylists')
   if (action === 'playlist:clear') await player.clearPlaylist(playlist.index)
   if (action === 'playlist:remove') await player.removePlaylist(playlist.index)
 }
@@ -579,12 +726,13 @@ function onDrop(event: DragEvent) {
     @drag="player.startWindowDrag"
     @close="player.closeWindow"
   />
-  <div v-else class="app-shell" @contextmenu="openAppMenu">
+  <div v-else class="app-shell" :class="{ 'immersive-fullscreen-active': immersiveFullscreenTarget }" :style="immersiveShellStyle" @contextmenu="openAppMenu">
     <AppSidebar
       :view="state.view"
       :playlists="state.playlists"
-      :active-playlist="state.browsingPlaylist ?? state.activePlaylist"
-      :search="state.search"
+       :active-playlist="state.browsingPlaylist ?? state.activePlaylist"
+       :search="state.search"
+       :ipod-available="player.pluginIntegrations.dop.installed"
       @navigate="navigatePrimary"
       @playlist="selectPrimaryPlaylist"
       @search="player.setSearch"
@@ -627,8 +775,22 @@ function onDrop(event: DragEvent) {
       <div class="workspace-scroll">
         <Transition name="route-page" mode="out-in">
           <div :key="primaryRouteKey" class="route-page">
+            <IpodManagerView
+              v-if="state.view === 'ipod'"
+              :connected="state.connected"
+              :installed="player.pluginIntegrations.dop.installed"
+              :version="player.pluginIntegrations.dop.version"
+              :status="player.ipodDevice.status"
+              :probing="player.ipodDevice.probing"
+              :available-actions="player.ipodCommands"
+              :playlists="state.playlists"
+              @action="player.runIpodMainAction"
+              @refresh="player.refreshIpodDeviceStatus"
+              @preferences="player.showPreferences"
+              @playlist="selectPrimaryPlaylist"
+            />
             <MediaLibraryView
-              v-if="['overview', 'artists', 'artist', 'folders', 'folder'].includes(state.view)"
+              v-else-if="['overview', 'artists', 'artist', 'folders', 'folder'].includes(state.view)"
               :route="state.route"
               :stats="state.libraryStats"
               :artists="state.artists"
@@ -638,9 +800,14 @@ function onDrop(event: DragEvent) {
               :current-track="state.currentTrack"
               :is-playing="state.isPlaying"
               :loading="state.loading || state.searchLoading"
+              :folder-selection-mode="folderSelectionMode"
+              :selected-folder-ids="selectedFolderIds"
               @navigate="navigatePrimary"
               @artist="player.selectArtist"
               @folder="player.selectLibraryFolder"
+              @folder-menu="openFolderMenu"
+              @folder-selection="setFolderSelection"
+              @cancel-folder-selection="cancelFolderSelection"
               @back="goBackPrimary"
               @open-album="openPrimaryAlbum"
               @album-menu="openAlbumMenu"
@@ -706,6 +873,7 @@ function onDrop(event: DragEvent) {
       :lyrics-synced="state.lyricsSynced"
       :playback-tracks="state.playbackTracks"
       :playback-track-index="state.playbackTrackIndex"
+      :fullscreen="state.isFullscreen"
       @close="player.closeNowPlaying"
       @toggle="player.togglePlayback"
       @seek="player.seek"

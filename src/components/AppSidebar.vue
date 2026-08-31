@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Album, BarChart3, Folder, Heart, Home, ListMusic, Music2, Plus, Search, Users } from '@lucide/vue'
+import { Album, BarChart3, Folder, Heart, Home, ListMusic, Music2, Plus, Search, Smartphone, Users } from '@lucide/vue'
 import type { PlaylistInfo } from 'foo-webview-sdk'
 import type { ViewId } from '../types/music'
 import foobarLogo from '../assets/foobar2000.png'
@@ -9,6 +9,7 @@ defineProps<{
   playlists: PlaylistInfo[]
   activePlaylist: PlaylistInfo | null
   search: string
+  ipodAvailable: boolean
 }>()
 
 const emit = defineEmits<{
@@ -60,6 +61,13 @@ const emit = defineEmits<{
         <Folder :size="18" />
         <span>文件夹</span>
       </button>
+      <template v-if="ipodAvailable">
+        <p class="sidebar-nav__label">设备</p>
+        <button :class="{ active: view === 'ipod' }" @click="emit('navigate', 'ipod')">
+          <Smartphone :size="18" />
+          <span>iPod</span>
+        </button>
+      </template>
     </nav>
 
     <div class="sidebar-section">

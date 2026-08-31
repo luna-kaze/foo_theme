@@ -1,6 +1,6 @@
 # foobar2000 WebView 主题
 
-基于 Vue 3、TypeScript、Vite 与 `foo-webview-sdk` 构建的现代 WebView2 深色中文播放器界面。信息架构参考 Cider 1，实现与视觉系统为原创。通过 `foo_ui_webview2` 插件以宿主桥接方式接管 foobar2000 的界面。
+基于 Vue 3、TypeScript、Vite 与 `foo-webview-sdk` 构建的现代 WebView2 深色中文播放器界面，通过 `foo_ui_webview2` 以宿主桥接方式运行于 foobar2000。
 
 ## 使用方法
 
@@ -53,7 +53,7 @@ npm run dev
 - 独立队列浮层、迷你播放器、F11 全屏
 - 输出设备枚举与切换、桌面歌词入口
 - AirPlay 连接状态指示
-- 插件扩展入口：转换（foo_converter）、获取专辑信息（foo_freedb）、发送到 iPod / iPod 管理器（foo_dop）
+- 插件扩展入口：转换（foo_converter）、获取专辑信息（foo_freedb）、完整 iPod 工作台与上下文操作（foo_dop）
 
 ### 媒体管理
 
@@ -71,23 +71,27 @@ npm run dev
 - 队列：查看、添加、置顶、移除、清空
 - 拖拽导入（CUE/M3U/PLS 去重）与文件/文件夹选择器导入
 
-## 利用的插件
+## 插件依赖
+
+### 必要组件
 
 | 插件 | 用途 |
 | --- | --- |
 | `foo_ui_webview2` | 主题核心宿主，提供界面渲染与 SDK 桥接（播放、媒体库、播放列表、队列、元数据、封面、歌词、窗口控制） |
 | `foo_playcount` | 播放次数、首次/最后播放、添加时间、评分存储，支撑播放统计筛选与收藏 |
-| `foo_uie_eslyric` | 通过命令触发 ESLyric 桌面歌词 |
+| `foo_uie_eslyric` | 提供右上角固定的 ESLyric 桌面歌词入口 |
+
+### 可选组件
+
+| 插件 | 用途 |
+| --- | --- |
 | `foo_airplay` | 通过流路径识别 AirPlay 连接状态 |
 | `foo_converter` | 在曲目/专辑右键菜单中提供转换预设入口 |
 | `foo_freedb` | 在专辑右键菜单中获取专辑信息（freedb） |
-| `foo_dop` | 在曲目/专辑右键菜单中发送到 iPod，并在顶部菜单打开 iPod 管理器 |
-| `foo_out_wasapi` / `foo_out_wasapis` / `foo_out_asio` 等 | 通过通用输出设备接口枚举与切换 |
-| `foo_input_*` 系列解码器 | 经媒体库间接支持其音频格式 |
-
-> 频谱/响度面板、原生 Coverflow、JSplitter、DSP 等插件未在界面中嵌入，保留 foobar2000 原生行为。
+| `foo_dop` | 检测到组件后显示 iPod 工作台，提供上下文操作、同步、内容管理、设备属性、日志、数据库维护和安全弹出入口 |
 
 ## 其他说明
 
 - WebView SDK 无法增删 foobar2000 的媒体库监视文件夹，请通过「偏好设置」管理，再使用应用菜单中的「重新扫描媒体库」。
+- `foo_dop` 未公开容量、电池、同步进度等设备数据接口；主题仅包装宿主动态发现的可执行命令，原生窗口负责实际设备操作。
 - 打开本地文件只会放入 `Opened Music` 播放列表，不会伪装成已加入媒体库。

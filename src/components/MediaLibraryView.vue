@@ -16,12 +16,17 @@ const props = defineProps<{
   currentTrack: DisplayTrack | null
   isPlaying: boolean
   loading: boolean
+  folderSelectionMode: boolean
+  selectedFolderIds: string[]
 }>()
 
 const emit = defineEmits<{
   navigate: [view: ViewId]
   artist: [name: string]
   folder: [folder: LibraryFolderCard]
+  folderMenu: [folder: LibraryFolderCard, event: MouseEvent]
+  folderSelection: [folder: LibraryFolderCard, selected: boolean]
+  cancelFolderSelection: []
   openAlbum: [album: AlbumCard]
   albumMenu: [album: AlbumCard, event: MouseEvent]
   playTrack: [track: DisplayTrack, index: number]
@@ -51,6 +56,19 @@ const artistArtwork = computed(() => {
   })
   return artwork
 })
+
+function folderId(folder: LibraryFolderCard) {
+  return `${folder.rootId}\u0000${folder.pathId}`
+}
+
+function isFolderSelected(folder: LibraryFolderCard) {
+  return props.selectedFolderIds.includes(folderId(folder))
+}
+
+function openFolder(folder: LibraryFolderCard) {
+  if (props.folderSelectionMode) emit('folderSelection', folder, !isFolderSelected(folder))
+  else emit('folder', folder)
+}
 </script>
 
 <template>
@@ -87,18 +105,18 @@ const artistArtwork = computed(() => {
     </template>
 
     <template v-else-if="route.view === 'folders'">
-      <section class="page-heading"><p class="eyebrow">媒体库</p><h1>文件夹</h1><p>按 foobar2000 已配置的媒体库根目录浏览。</p></section>
+      <section class="page-heading page-heading--row"><div><p class="eyebrow">媒体库</p><h1>{{ folderSelectionMode ? `已选择 ${selectedFolderIds.length} 个文件夹` : '文件夹' }}</h1><p>按 foobar2000 已配置的媒体库根目录浏览。</p></div><button v-if="folderSelectionMode" class="secondary-button" @click="emit('cancelFolderSelection')">退出选择</button></section>
       <section class="library-card-grid library-card-grid--folders">
-        <button v-for="folder in folders" :key="`${folder.rootId}:${folder.pathId}`" class="folder-browser-card" @click="emit('folder', folder)"><span><Folder :size="28" /></span><strong>{{ folder.name }}</strong><small>{{ folder.trackCount }} 首曲目</small><code>{{ folder.absolutePath }}</code></button>
+        <button v-for="folder in folders" :key="folderId(folder)" class="folder-browser-card" :class="{ selected: isFolderSelected(folder), 'selection-mode': folderSelectionMode }" @click="openFolder(folder)" @contextmenu.prevent.stop="emit('folderMenu', folder, $event)"><span><Folder :size="28" /></span><strong>{{ folder.name }}</strong><small>{{ folder.trackCount }} 首曲目</small><code>{{ folder.absolutePath }}</code><label class="folder-browser-card__select" @click.stop><input type="checkbox" :checked="isFolderSelected(folder)" :aria-label="`选择文件夹 ${folder.name}`" @change="emit('folderSelection', folder, ($event.target as HTMLInputElement).checked)"></label></button>
       </section>
     </template>
 
     <template v-else-if="route.view === 'artist' || route.view === 'folder'">
       <section class="page-heading page-heading--row">
-        <div><button class="media-library-back" @click="emit('back')">返回</button><p class="eyebrow">{{ route.view === 'artist' ? '艺术家' : '文件夹' }}</p><h1>{{ route.view === 'artist' ? route.artist : route.name }}</h1><p>{{ tracks.length }} 首曲目<template v-if="route.view === 'folder'"> · {{ folders.length }} 个子文件夹</template></p></div>
-        <div class="page-heading__actions"><button class="secondary-button" @click="emit('shuffle')"><Shuffle :size="17" />随机播放</button><button v-if="tracks.length" class="round-play" aria-label="播放全部" @click="emit('playTrack', tracks[0], 0)"><Play :size="22" fill="currentColor" /></button></div>
+        <div><button class="media-library-back" @click="emit('back')">返回</button><p class="eyebrow">{{ route.view === 'artist' ? '艺术家' : '文件夹' }}</p><h1>{{ route.view === 'artist' ? route.artist : folderSelectionMode ? `已选择 ${selectedFolderIds.length} 个文件夹` : route.name }}</h1><p>{{ tracks.length }} 首曲目<template v-if="route.view === 'folder'"> · {{ folders.length }} 个子文件夹</template></p></div>
+        <div class="page-heading__actions"><button v-if="route.view === 'folder' && folderSelectionMode" class="secondary-button" @click="emit('cancelFolderSelection')">退出选择</button><button class="secondary-button" @click="emit('shuffle')"><Shuffle :size="17" />随机播放</button><button v-if="tracks.length" class="round-play" aria-label="播放全部" @click="emit('playTrack', tracks[0], 0)"><Play :size="22" fill="currentColor" /></button></div>
       </section>
-      <section v-if="route.view === 'folder' && folders.length" class="content-section media-library-subfolders"><div class="section-heading"><div><p class="eyebrow">当前目录</p><h2>子文件夹</h2></div></div><div class="library-card-grid library-card-grid--folders"><button v-for="folder in folders" :key="`${folder.rootId}:${folder.pathId}`" class="folder-browser-card" @click="emit('folder', folder)"><span><Folder :size="25" /></span><strong>{{ folder.name }}</strong><small>{{ folder.trackCount }} 首曲目</small></button></div></section>
+      <section v-if="route.view === 'folder' && folders.length" class="content-section media-library-subfolders"><div class="section-heading"><div><p class="eyebrow">当前目录</p><h2>子文件夹</h2></div></div><div class="library-card-grid library-card-grid--folders"><button v-for="folder in folders" :key="folderId(folder)" class="folder-browser-card" :class="{ selected: isFolderSelected(folder), 'selection-mode': folderSelectionMode }" @click="openFolder(folder)" @contextmenu.prevent.stop="emit('folderMenu', folder, $event)"><span><Folder :size="25" /></span><strong>{{ folder.name }}</strong><small>{{ folder.trackCount }} 首曲目</small><label class="folder-browser-card__select" @click.stop><input type="checkbox" :checked="isFolderSelected(folder)" :aria-label="`选择文件夹 ${folder.name}`" @change="emit('folderSelection', folder, ($event.target as HTMLInputElement).checked)"></label></button></div></section>
       <TrackList v-if="tracks.length" :tracks="tracks" :current-track="currentTrack" :is-playing="isPlaying" @play="(track, index) => emit('playTrack', track, index)" @menu="(track, index, event) => emit('trackMenu', track, index, event)" @selection="emit('selection', $event)" />
       <div v-else class="collection-empty"><Library :size="30" /><strong>这里没有可显示的曲目</strong><span>返回上一级并选择其他艺术家或文件夹。</span></div>
     </template>

@@ -1,6 +1,6 @@
 import type { AlbumInfo, ArtistInfo, LibraryStats, PlaylistInfo, QueueItem, TrackInfo } from 'foo-webview-sdk'
 
-export type ViewId = 'home' | 'overview' | 'artists' | 'artist' | 'albums' | 'songs' | 'folders' | 'folder' | 'playlist' | 'album' | 'favourites' | 'radio' | 'search'
+export type ViewId = 'home' | 'overview' | 'artists' | 'artist' | 'albums' | 'songs' | 'folders' | 'folder' | 'playlist' | 'album' | 'favourites' | 'radio' | 'search' | 'ipod'
 export type NowPlayingTab = 'lyrics' | 'queue'
 export type DialogId = 'createPlaylist' | null
 export type LibraryFilterField = 'all' | 'title' | 'artist' | 'albumArtist' | 'album' | 'genre' | 'path'
@@ -49,6 +49,7 @@ export type ViewRoute =
   | { view: 'album'; albumName: string; albumArtist: string }
   | { view: 'playlist'; playlistIndex: number; playlistName: string }
   | { view: 'search'; query: string }
+  | { view: 'ipod' }
   | { view: 'radio'; nonce: number; snapshot?: DisplayTrack[] }
 
 export interface DisplayQueueItem extends QueueItem {
@@ -123,6 +124,7 @@ export interface PlayerUiState {
   muted: boolean
   playbackOrder: number
   nowPlayingOpen: boolean
+  isFullscreen: boolean
   nowPlayingTab: NowPlayingTab
   canGoBack: boolean
   canGoForward: boolean
