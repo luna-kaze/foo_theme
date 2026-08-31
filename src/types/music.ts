@@ -27,14 +27,6 @@ export interface DisplayTrack extends TrackInfo {
   lastPlayed?: string
 }
 
-export interface AirplaySessionUiState {
-  active: boolean
-  senderName: string
-  senderIp: string
-  codec: string
-  dacp: boolean
-}
-
 export interface LibraryFolderCard {
   rootId: string
   pathId: string

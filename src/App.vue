@@ -15,8 +15,8 @@ import TrackInspector from './components/TrackInspector.vue'
 import FileOperationDialog from './components/FileOperationDialog.vue'
 import TrackActionMenu from './components/TrackActionMenu.vue'
 import { useFoobar } from './composables/useFoobar'
-import fb, { type OutputDevice, type PlaylistInfo } from 'foo-webview-sdk'
-import type { AirplaySessionUiState, AlbumCard, DisplayTrack, LibraryFolderCard, TrackDetails, ViewId } from './types/music'
+import type { OutputDevice, PlaylistInfo } from 'foo-webview-sdk'
+import type { AlbumCard, DisplayTrack, LibraryFolderCard, TrackDetails, ViewId } from './types/music'
 import { menuIcons, showContextMenu, type ContextMenuItem } from './utils/contextMenu'
 import { isSameTrack, localFilePath, trackKey } from './utils/track'
 
@@ -30,12 +30,10 @@ const outputDevices = ref<OutputDevice[]>([])
 const outputLoading = ref(false)
 const connectionLabel = ref('foobar2000')
 const connectionTransitioning = ref(false)
-const airplaySession = reactive<AirplaySessionUiState>({ active: false, senderName: '', senderIp: '', codec: '', dacp: false })
 const immersiveFullscreenProgress = ref(0)
 const immersiveFullscreenTarget = ref(false)
 const immersiveShellStyle = computed(() => ({ '--immersive-fullscreen-progress': immersiveFullscreenProgress.value.toFixed(4) }))
 let airplayTimer: ReturnType<typeof setTimeout> | null = null
-let airplayMetadataRequest = 0
 let fullscreenSettleTimer: ReturnType<typeof setTimeout> | null = null
 let fullscreenWindowSettled = true
 const fullscreenSceneDelayMs = 260
@@ -113,72 +111,17 @@ const primaryRouteKey = computed(() => {
   return route.view
 })
 
-function isAirplayPath(path: string) {
-  return path.toLocaleLowerCase().startsWith('airplay://live/')
-}
-
-function clearAirplaySession() {
-  airplayMetadataRequest += 1
-  Object.assign(airplaySession, { active: false, senderName: '', senderIp: '', codec: '', dacp: false })
-}
-
-function settledAirplayLabel() {
-  return airplaySession.senderName || 'AirPlay'
-}
-
-async function refreshAirplaySession(path = state.currentTrack?.path ?? '') {
-  if (!isAirplayPath(path)) {
-    clearAirplaySession()
-    return
-  }
-  const request = ++airplayMetadataRequest
-  try {
-    const result = await fb.titleformat.evalFieldsBatch([path], {
-      senderName: '$meta(AIRPLAY_SENDER_NAME)',
-      senderIp: '$meta(AIRPLAY_SENDER_IP)',
-      codec: '$meta(AIRPLAY_CODEC)',
-      dacp: '$meta(AIRPLAY_DACP)',
-      active: '$meta(AIRPLAY_ACTIVE)',
-    })
-    if (request !== airplayMetadataRequest || state.currentTrack?.path !== path) return
-    const fields = result.results[0] as Record<string, unknown> | undefined
-    const value = (name: string) => typeof fields?.[name] === 'string' ? fields[name].trim() : ''
-    Object.assign(airplaySession, {
-      active: value('active') === '1' || isAirplayPath(path),
-      senderName: value('senderName'),
-      senderIp: value('senderIp'),
-      codec: value('codec'),
-      dacp: value('dacp') === '1',
-    })
-    if (!connectionTransitioning.value) connectionLabel.value = settledAirplayLabel()
-  } catch {
-    if (request !== airplayMetadataRequest || state.currentTrack?.path !== path) return
-    Object.assign(airplaySession, { active: true, senderName: '', senderIp: '', codec: '', dacp: false })
-    if (!connectionTransitioning.value) connectionLabel.value = 'AirPlay'
-  }
-}
-
 watch(() => state.currentTrack?.path ?? '', (path, previous) => {
-  const active = isAirplayPath(path)
-  const wasActive = isAirplayPath(previous)
-  if (active && path !== previous) {
-    Object.assign(airplaySession, { active: true, senderName: '', senderIp: '', codec: '', dacp: false })
-    void refreshAirplaySession(path)
-  }
-  if (!active) clearAirplaySession()
+  const active = path.toLocaleLowerCase().startsWith('airplay://live/')
+  const wasActive = previous.toLocaleLowerCase().startsWith('airplay://live/')
   if (active === wasActive) return
   if (airplayTimer) clearTimeout(airplayTimer)
   connectionTransitioning.value = true
   connectionLabel.value = active ? '正在连接 AirPlay…' : 'AirPlay 已断开'
   airplayTimer = setTimeout(() => {
-    if ((state.currentTrack?.path ?? '') !== path) return
     connectionTransitioning.value = false
-    connectionLabel.value = active ? settledAirplayLabel() : 'foobar2000'
+    connectionLabel.value = active ? 'AirPlay' : 'foobar2000'
   }, 1000)
-})
-
-watch(player.airplayMetadataRevision, () => {
-  if (isAirplayPath(state.currentTrack?.path ?? '')) void refreshAirplaySession()
 })
 
 watch(() => state.view, (view) => {
