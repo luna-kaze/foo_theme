@@ -23,6 +23,9 @@ export const menuIcons = {
   settings: icon('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z"/>'),
   info: icon('<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/>'),
   edit: icon('<path d="M4 20h4l11-11-4-4L4 16zM13.5 6.5l4 4"/>'),
+  convert: icon('<path d="M4 7h13M14 4l3 3-3 3M20 17H7M10 14l-3 3 3 3"/>'),
+  tag: icon('<path d="M4 5v6l9 9 7-7-9-9H5a1 1 0 0 0-1 1z"/><circle cx="8" cy="8" r="1"/>'),
+  device: icon('<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M10 5h4M11 19h2"/>'),
 } as const
 
 const contextMenuCss = `

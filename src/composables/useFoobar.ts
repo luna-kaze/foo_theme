@@ -2,6 +2,7 @@ import { computed, reactive } from 'vue'
 import fb, {
   type AlbumInfo,
   type ArtistInfo,
+  type MenuItem,
   type PlaybackTrackChangedPayload,
   type PlaylistInfo,
   type TrackInfo,
@@ -93,6 +94,7 @@ let noDragResizeTimer: ReturnType<typeof setTimeout> | null = null
 let playcountLibraryGeneration = -1
 const priorFavouriteRatings = new Map<string, number>()
 let desktopLyricsCommand: { guid: string; subGuid?: string } | null = null
+let ipodManagerCommand: { guid: string; subGuid?: string } | null = null
 let miniPlayerWindowId = ''
 const history: ViewRoute[] = [{ view: 'home' }]
 let historyIndex = 0
@@ -111,6 +113,14 @@ const playbackOrders = [
 const customColumnValues = new Map<string, string>()
 let exactAlbumArtwork = new Map<string, string>()
 let namedAlbumArtwork = new Map<string, string | null>()
+
+export type PluginId = 'converter' | 'freedb' | 'dop'
+export type PluginContextAction = { commandId: number; label: string }
+const pluginIntegrations = reactive<Record<PluginId, { installed: boolean; name: string; version: string }>>({
+  converter: { installed: false, name: 'Converter', version: '' },
+  freedb: { installed: false, name: 'freedb', version: '' },
+  dop: { installed: false, name: 'iPod Manager', version: '' },
+})
 
 const normalizeTrack = (track: TrackInfo | PlaybackTrackChangedPayload): DisplayTrack => {
   const fullPath = 'fullPath' in track ? track.fullPath : undefined
@@ -676,6 +686,7 @@ async function initialize() {
         loadLibrary(),
         loadPlaylists(),
         fb.dnd.getCapabilities(),
+        loadPluginIntegrations(),
       ])
       await loadLibraryStatus()
       if (generation !== lifecycleGeneration) return
@@ -1737,6 +1748,103 @@ async function setOutputDevice(outputId: string, deviceId: string, name: string)
   await runAction(() => fb.config.setOutputDevice(outputId, deviceId), `已切换到 ${name}`)
 }
 
+async function loadPluginIntegrations() {
+  if (!state.connected) return
+  const result = await runAction(() => fb.discovery.getComponents())
+  if (!result) return
+  const matches: Record<PluginId, RegExp> = {
+    converter: /foo_converter/i,
+    freedb: /foo_freedb2?/i,
+    dop: /foo_dop/i,
+  }
+  ;(Object.keys(matches) as PluginId[]).forEach((id) => {
+    const component = result.components?.find((item) => matches[id].test(`${item.filename} ${item.name}`))
+    pluginIntegrations[id].installed = Boolean(component)
+    if (component) {
+      pluginIntegrations[id].name = component.name || pluginIntegrations[id].name
+      pluginIntegrations[id].version = component.version || ''
+    }
+  })
+}
+
+function pluginForMenuItem(item: Extract<MenuItem, { type: 'command' }>): PluginId | null {
+  const normalized = [item.path, item.displayPath, item.label, item.displayLabel]
+    .join('\n')
+    .replaceAll('&', '')
+    .toLocaleLowerCase()
+  if (/(^|[\s/])(convert(?:er)?|转换)(?:\.{3}|…)?(?=$|[\s/])/m.test(normalized)) return 'converter'
+  if (normalized.includes('freedb')) return 'freedb'
+  if (/(^|[\s/])(ipod|iphone)(?=$|[\s/])/m.test(normalized)) return 'dop'
+  return null
+}
+
+function collectPluginActions(items: MenuItem[], output: Record<PluginId, PluginContextAction[]>) {
+  items.forEach((item) => {
+    if (item.type === 'submenu') {
+      collectPluginActions(item.children, output)
+      return
+    }
+    // Old and dynamic context commands can be executable by commandId without exposing a GUID.
+    if (item.type !== 'command' || item.commandId == null || item.enabled === false) return
+    const id = pluginForMenuItem(item)
+    if (id) output[id].push({ commandId: item.commandId, label: item.displayLabel || item.label })
+  })
+}
+
+async function getPluginContextActions(tracks: DisplayTrack[]) {
+  const output: Record<PluginId, PluginContextAction[]> = { converter: [], freedb: [], dop: [] }
+  if (!state.connected || !tracks.length) return output
+  const handles = tracks.map(playablePath).filter(Boolean)
+  if (!handles.length) return output
+  const result = await runAction(() => fb.menu.getContextMenu({ mode: 'handles', handles, withAvailability: true }))
+  if (!result?.items) return output
+  collectPluginActions(result.items, output)
+  ;(Object.keys(output) as PluginId[]).forEach((id) => {
+    if (output[id].length) pluginIntegrations[id].installed = true
+  })
+  return output
+}
+
+async function runPluginContextAction(action: PluginContextAction, tracks: DisplayTrack[]) {
+  if (!state.connected) return
+  const handles = tracks.map(playablePath).filter(Boolean)
+  if (!handles.length) {
+    notify('所选项目没有可供插件处理的音频文件。', 'error')
+    return
+  }
+  await runAction(() => fb.menu.runContextCommandById(action.commandId, { mode: 'handles', handles }))
+}
+
+async function findIpodManagerCommand() {
+  for (const query of ['iPod Manager', 'iPod']) {
+    const result = await fb.discovery.searchCommands(query, { scope: 'mainmenu', expandDynamic: true, includeHidden: true })
+    const command = result.results?.find((item) => {
+      const label = `${item.path ?? ''} ${item.name}`.toLocaleLowerCase()
+      return item.type === 'mainmenu' && item.executable !== false && label.includes('ipod')
+    })
+    if (command) return { guid: command.guid, subGuid: command.subGuid }
+  }
+  return null
+}
+
+async function openIpodManager() {
+  if (!state.connected) {
+    notify('iPod 管理器仅可在 foobar2000 中使用。', 'info')
+    return
+  }
+  if (!pluginIntegrations.dop.installed) {
+    notify('未检测到 foo_dop 组件。', 'error')
+    return
+  }
+  ipodManagerCommand ??= await findIpodManagerCommand()
+  if (!ipodManagerCommand) {
+    notify('未检测到 iPod 管理器主菜单命令。', 'error')
+    return
+  }
+  const result = await runAction(() => fb.discovery.executeMainMenuCommand(ipodManagerCommand!.guid, ipodManagerCommand!.subGuid))
+  if (!result) ipodManagerCommand = null
+}
+
 async function findDesktopLyricsCommand() {
   const queries = ['显示桌面歌词', '桌面歌词', 'Desktop Lyrics', '歌词']
   for (const query of queries) {
@@ -2367,6 +2475,7 @@ export function useFoobar() {
     state,
     filteredAlbums,
     libraryFilterOptions,
+    pluginIntegrations,
     initialize,
     dispose,
     setView,
@@ -2403,6 +2512,9 @@ export function useFoobar() {
     sortPlaylist,
     getOutputDevices,
     setOutputDevice,
+    getPluginContextActions,
+    runPluginContextAction,
+    openIpodManager,
     toggleDesktopLyrics,
     openMiniPlayer,
     startWindowDrag,

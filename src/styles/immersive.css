@@ -72,19 +72,34 @@
 .immersive-tool > span, .immersive-mode-switch button > span, .coverflow__arrow > span, .album-sleeve__hint, .vinyl-record__hint { position: absolute; bottom: -31px; left: 50%; width: max-content; padding: 5px 8px; color: rgba(255,255,255,.9); font-size: 10px; font-weight: 600; pointer-events: none; background: rgba(13,13,16,.88); border: 1px solid rgba(255,255,255,.08); border-radius: 6px; opacity: 0; transform: translate(-50%,-3px); transition: 140ms ease; white-space: nowrap; }
 .immersive-tool:hover > span, .immersive-mode-switch button:hover > span, .coverflow__arrow:hover > span, .album-sleeve.interactive:hover .album-sleeve__hint, .vinyl-record:hover .vinyl-record__hint { opacity: 1; transform: translate(-50%,0); }
 
-.immersive-standard { --sleeve-top: 50%; --sleeve-left: clamp(38px,5vw,78px); --sleeve-width: clamp(300px,33vw,520px); --sleeve-rest-transform: translateY(-50%); --record-top: 50%; --record-left: clamp(120px,12vw,195px); --record-width: clamp(370px,36vw,560px); position: relative; display: grid; grid-template-columns: minmax(560px,1.16fr) minmax(340px,.84fr); width: 100%; height: 100%; z-index: 2; transition: grid-template-columns 560ms cubic-bezier(.2,.78,.16,1); }
-.immersive-standard.lyrics-hidden { --sleeve-left: clamp(55px,8vw,125px); --sleeve-width: clamp(340px,38vw,610px); --sleeve-rest-transform: translateY(-52%) rotateY(3deg) rotateZ(-1.5deg); --record-left: clamp(360px,38vw,610px); --record-width: clamp(440px,44vw,700px); grid-template-columns: 1fr; }
+.immersive-standard { --sleeve-top: 50%; --sleeve-left: clamp(38px,5vw,78px); --sleeve-width: clamp(300px,33vw,520px); --sleeve-rest-transform: translateY(-50%); --sleeve-expanded-transform: translateY(-52%) rotateY(4deg) rotateZ(-1.5deg); --record-top: 50%; --record-left: clamp(120px,12vw,195px); --record-width: clamp(370px,36vw,560px); position: relative; display: grid; grid-template-columns: minmax(560px,1.16fr) minmax(340px,.84fr); width: 100%; height: 100%; z-index: 2; transition: grid-template-columns 560ms cubic-bezier(.2,.78,.16,1); }
+.immersive-standard.lyrics-hidden { --sleeve-left: clamp(55px,8vw,125px); --sleeve-width: clamp(340px,38vw,610px); --sleeve-rest-transform: translateY(-52%) rotateY(3deg) rotateZ(-1.5deg); --sleeve-expanded-transform: translate(24%,-52%) rotateY(0) rotateZ(0) scale(1.01); --record-left: clamp(360px,38vw,610px); --record-width: clamp(440px,44vw,700px); grid-template-columns: 1fr; }
 .vinyl-stage { position: relative; min-width: 0; overflow: visible; perspective: 1400px; }
 .album-sleeve { position: absolute; top: var(--sleeve-top); left: var(--sleeve-left); width: var(--sleeve-width); aspect-ratio: 1; cursor: default; border-radius: 3.5%; box-shadow: 0 30px 80px rgba(0,0,0,.5), 0 2px 0 rgba(255,255,255,.09) inset; transform: translateY(-50%); transform-origin: 58% 50%; transition: left 650ms cubic-bezier(.2,.78,.16,1), width 650ms cubic-bezier(.2,.78,.16,1), transform 650ms cubic-bezier(.2,.78,.16,1), box-shadow 650ms ease; z-index: 3; }
 .album-sleeve.interactive { cursor: pointer; }
 .album-sleeve .artwork-image { width: 100%; height: 100%; border-radius: inherit; }
 .album-sleeve::after { position: absolute; inset: 0; content: ""; pointer-events: none; background: linear-gradient(112deg,rgba(255,255,255,.13),transparent 25%,transparent 73%,rgba(0,0,0,.18)); border-radius: inherit; }
-.vinyl-stage.cover-forward .album-sleeve { transform: translateY(-52%) rotateY(4deg) rotateZ(-1.5deg); }
+.standard-cover-change-enter-active { animation: standard-cover-in 460ms cubic-bezier(.18,.82,.16,1) both; z-index: 5; }
+.standard-cover-change-leave-active { pointer-events: none; animation: standard-cover-out 360ms cubic-bezier(.45,0,.3,1) both; z-index: 4; }
+.standard-cover-change-leave-active.expanded { animation-name: standard-cover-out-expanded; animation-duration: 400ms; }
+@keyframes standard-cover-in {
+  from { transform: translate(-135%,-50%) rotateY(7deg) scale(.96); }
+  to { transform: var(--sleeve-rest-transform); }
+}
+@keyframes standard-cover-out {
+  from { transform: var(--sleeve-rest-transform); }
+  to { transform: translate(-135%,-50%) rotateY(-8deg) scale(.94); }
+}
+@keyframes standard-cover-out-expanded {
+  from { transform: var(--sleeve-expanded-transform); }
+  to { transform: translate(-135%,-50%) rotateY(-8deg) rotateZ(-1deg) scale(.94); }
+}
+.vinyl-stage.cover-forward .album-sleeve { transform: var(--sleeve-expanded-transform); }
 
 .record-zone { position: absolute; top: var(--record-top); left: var(--record-left); width: var(--record-width); aspect-ratio: 1; transform: translateY(-50%); z-index: 2; transition: left 650ms cubic-bezier(.2,.78,.16,1), width 650ms cubic-bezier(.2,.78,.16,1); }
 .immersive-standard.lyrics-hidden .album-sleeve { transform: translateY(-52%) rotateY(3deg) rotateZ(-1.5deg); }
 .immersive-standard.lyrics-hidden .immersive-track-copy { left: clamp(55px,8vw,125px); }
-.immersive-standard.lyrics-hidden .vinyl-stage.cover-forward .album-sleeve { transform: translate(24%,-52%) rotateY(0) rotateZ(0) scale(1.01); box-shadow: 0 38px 96px rgba(0,0,0,.58); }
+.immersive-standard.lyrics-hidden .vinyl-stage.cover-forward .album-sleeve { transform: var(--sleeve-expanded-transform); box-shadow: 0 38px 96px rgba(0,0,0,.58); }
 .vinyl-record { position: absolute; inset: 4%; display: grid; place-items: center; overflow: visible; color: white; background: radial-gradient(circle,transparent 0 8%,rgba(255,255,255,.06) 8.2%,transparent 8.5%), repeating-radial-gradient(circle,#101012 0 2px,#18181b 3px 4px,#0b0b0d 5px 7px); border: 1px solid rgba(255,255,255,.07); border-radius: 50%; box-shadow: 0 34px 85px rgba(0,0,0,.58), 0 0 0 2px rgba(0,0,0,.8) inset, 0 0 0 14px rgba(255,255,255,.015) inset; transition: filter 220ms ease; }
 .vinyl-record.spinning { animation: vinyl-spin 12s linear infinite; }
 .vinyl-record:hover { filter: brightness(1.08); }

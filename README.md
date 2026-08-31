@@ -53,6 +53,7 @@ npm run dev
 - 独立队列浮层、迷你播放器、F11 全屏
 - 输出设备枚举与切换、桌面歌词入口
 - AirPlay 连接状态指示
+- 插件扩展入口：转换（foo_converter）、获取专辑信息（foo_freedb）、发送到 iPod / iPod 管理器（foo_dop）
 
 ### 媒体管理
 
@@ -78,6 +79,9 @@ npm run dev
 | `foo_playcount` | 播放次数、首次/最后播放、添加时间、评分存储，支撑播放统计筛选与收藏 |
 | `foo_uie_eslyric` | 通过命令触发 ESLyric 桌面歌词 |
 | `foo_airplay` | 通过流路径识别 AirPlay 连接状态 |
+| `foo_converter` | 在曲目/专辑右键菜单中提供转换预设入口 |
+| `foo_freedb` | 在专辑右键菜单中获取专辑信息（freedb） |
+| `foo_dop` | 在曲目/专辑右键菜单中发送到 iPod，并在顶部菜单打开 iPod 管理器 |
 | `foo_out_wasapi` / `foo_out_wasapis` / `foo_out_asio` 等 | 通过通用输出设备接口枚举与切换 |
 | `foo_input_*` 系列解码器 | 经媒体库间接支持其音频格式 |
 

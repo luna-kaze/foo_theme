@@ -31,7 +31,7 @@ const emit = defineEmits<{
 }>()
 
 const mode = ref<'standard' | 'coverflow'>('standard')
-const modeTransition = ref<'packing-standard' | 'unpacking-standard' | 'packing-coverflow' | 'unpacking-coverflow' | 'handoff-standard' | 'handoff-coverflow' | null>(null)
+const modeTransition = ref<'retracting-standard' | 'packing-standard' | 'unpacking-standard' | 'packing-coverflow' | 'unpacking-coverflow' | 'handoff-standard' | 'handoff-coverflow' | null>(null)
 const coverForward = ref(false)
 const lyricsView = ref<HTMLElement | null>(null)
 const lyricRows = ref<Array<HTMLElement | null>>([])
@@ -45,9 +45,23 @@ const coverflowView = ref<HTMLElement | null>(null)
 const coverflowIndex = ref(0)
 const lyricsVisible = ref(true)
 const handoffCover = reactive({ visible: false, top: 0, left: 0, width: 0, height: 0 })
+type StandardCoverSnapshot = { key: string; artwork: string; album: string; expanded: boolean }
+const standardCover = ref<StandardCoverSnapshot>({ key: trackKey(props.track) || 'empty', artwork: props.artwork || props.track?.artworkUrl || '', album: props.track?.album || '当前专辑', expanded: false })
+const pendingStandardCover = ref<StandardCoverSnapshot | null>(null)
+const standardCoverVisible = ref(true)
 let lastCoverflowPointer = { index: -1, time: 0, x: 0, y: 0 }
 let resumeTimer: ReturnType<typeof setTimeout> | null = null
 let modeTimer: ReturnType<typeof setTimeout> | null = null
+let standardCoverTimer: ReturnType<typeof setTimeout> | null = null
+let standardCoverLeaveDeadline = 0
+let standardCoverGeneration = 0
+let standardCoverLastChangeAt = 0
+let standardCoverBurstCount = 0
+const standardCoverLeaveMs = 400
+const standardCoverGapMs = 140
+const standardCoverIdleMs = 500
+const standardCoverBurstIdleMs = 760
+const standardCoverBurstWindowMs = 900
 
 const activeLyric = computed(() => {
   if (!props.lyrics.some((line) => line.time >= 0)) return -1
@@ -180,6 +194,63 @@ function seekLyric(line: ParsedLyric) {
 function toggleCoverPosition() {
   if (lyricsVisible.value) return
   coverForward.value = !coverForward.value
+  if (standardCover.value.key === trackKey(props.track)) standardCover.value.expanded = coverForward.value
+}
+
+function finishStandardCoverChange() {
+  coverForward.value = false
+  standardCover.value.expanded = false
+}
+
+function currentStandardCover(): StandardCoverSnapshot {
+  return {
+    key: trackKey(props.track) || 'empty',
+    artwork: props.artwork || props.track?.artworkUrl || '',
+    album: props.track?.album || '当前专辑',
+    expanded: false,
+  }
+}
+
+function flushPendingStandardCover(generation: number) {
+  if (generation !== standardCoverGeneration || !pendingStandardCover.value) return
+  const now = performance.now()
+  const idle = standardCoverBurstCount >= 2 ? standardCoverBurstIdleMs : standardCoverIdleMs
+  const readyAt = Math.max(standardCoverLeaveDeadline + standardCoverGapMs, standardCoverLastChangeAt + idle)
+  if (now + 4 < readyAt) {
+    standardCoverTimer = setTimeout(() => flushPendingStandardCover(generation), readyAt - now)
+    return
+  }
+  standardCover.value = pendingStandardCover.value
+  pendingStandardCover.value = null
+  standardCoverVisible.value = true
+  standardCoverTimer = null
+  standardCoverBurstCount = 0
+}
+
+function scheduleStandardCoverChange() {
+  const nextCover = currentStandardCover()
+  const generation = ++standardCoverGeneration
+  if (mode.value !== 'standard' || !props.open) {
+    standardCover.value = nextCover
+    pendingStandardCover.value = null
+    standardCoverVisible.value = true
+    standardCoverBurstCount = 0
+    standardCoverLastChangeAt = 0
+    return
+  }
+  pendingStandardCover.value = nextCover
+  const now = performance.now()
+  standardCoverBurstCount = now - standardCoverLastChangeAt <= standardCoverBurstWindowMs ? standardCoverBurstCount + 1 : 1
+  standardCoverLastChangeAt = now
+  if (standardCoverVisible.value) {
+    standardCover.value.expanded = coverForward.value
+    standardCoverVisible.value = false
+    standardCoverLeaveDeadline = now + standardCoverLeaveMs
+  }
+  if (standardCoverTimer) clearTimeout(standardCoverTimer)
+  const idle = standardCoverBurstCount >= 2 ? standardCoverBurstIdleMs : standardCoverIdleMs
+  const showAt = Math.max(standardCoverLeaveDeadline + standardCoverGapMs, now + idle)
+  standardCoverTimer = setTimeout(() => flushPendingStandardCover(generation), Math.max(0, showAt - now))
 }
 
 function updateTonearm(event: PointerEvent) {
@@ -283,8 +354,12 @@ async function setMode(nextMode: 'standard' | 'coverflow') {
   if (mode.value === nextMode || modeTransition.value) return
   lastCoverflowPointer = { index: -1, time: 0, x: 0, y: 0 }
   cancelTonearm()
-  coverForward.value = false
   if (nextMode === 'coverflow') {
+    if (coverForward.value) {
+      modeTransition.value = 'retracting-standard'
+      coverForward.value = false
+      await waitForMode(680)
+    }
     modeTransition.value = 'packing-standard'
     await waitForMode(640)
     const packedSleeve = readRect(document.querySelector('.immersive-standard .album-sleeve')) ?? fallbackCenterRect()
@@ -301,6 +376,7 @@ async function setMode(nextMode: 'standard' | 'coverflow') {
     modeTransition.value = null
     return
   }
+  coverForward.value = false
   modeTransition.value = 'packing-coverflow'
   await waitForMode(640)
   const currentRect = readRect(document.querySelector('.coverflow-card.current')) ?? fallbackCenterRect()
@@ -316,6 +392,8 @@ async function setMode(nextMode: 'standard' | 'coverflow') {
   }
   else setHandoffRect(centerRect)
   coverflowIndex.value = currentCoverflowIndex.value
+  standardCover.value = currentStandardCover()
+  standardCoverVisible.value = true
   mode.value = 'standard'
   modeTransition.value = 'handoff-standard'
   await waitForPaint()
@@ -333,23 +411,38 @@ function onCoverflowWheel(event: WheelEvent) {
 
 watch(activeLyric, () => void nextTick(() => scrollToActive()))
 watch(() => trackKey(props.track), () => {
+  scheduleStandardCoverChange()
   lyricRows.value = []
   lastCoverflowPointer = { index: -1, time: 0, x: 0, y: 0 }
   coverForward.value = false
   cancelTonearm()
   resumeAutoFollow()
 })
+watch(() => props.artwork || props.track?.artworkUrl || '', (artwork) => {
+  const key = trackKey(props.track) || 'empty'
+  if (pendingStandardCover.value?.key === key) pendingStandardCover.value.artwork = artwork
+  if (standardCover.value.key === key) standardCover.value.artwork = artwork
+})
 watch(() => props.playbackTrackIndex, (index) => {
   if (index >= 0) coverflowIndex.value = index
 })
 watch(lyricsVisible, (visible) => {
-  if (visible) coverForward.value = false
+  if (visible) {
+    coverForward.value = false
+    standardCover.value.expanded = false
+  }
 })
 watch(() => [props.open, mode.value] as const, () => void nextTick(() => scrollToActive('auto')))
 watch(() => props.open, (open) => {
   if (open) return
   if (modeTimer) clearTimeout(modeTimer)
+  if (standardCoverTimer) clearTimeout(standardCoverTimer)
   modeTimer = null
+  standardCoverTimer = null
+  standardCoverGeneration += 1
+  standardCoverBurstCount = 0
+  standardCoverLastChangeAt = 0
+  pendingStandardCover.value = null
   modeTransition.value = null
   handoffCover.visible = false
 })
@@ -360,6 +453,7 @@ watch(() => coverflowItems.value.length, (length) => {
 onBeforeUnmount(() => {
   if (resumeTimer) clearTimeout(resumeTimer)
   if (modeTimer) clearTimeout(modeTimer)
+  if (standardCoverTimer) clearTimeout(standardCoverTimer)
   handoffCover.visible = false
   cancelTonearm()
 })
@@ -392,10 +486,12 @@ onBeforeUnmount(() => {
 
       <div v-if="mode === 'standard'" key="standard" class="immersive-standard" :class="{ 'lyrics-hidden': !lyricsVisible }">
         <section class="vinyl-stage" :class="{ 'cover-forward': coverForward }">
-          <div class="album-sleeve" :class="{ interactive: !lyricsVisible }" :role="lyricsVisible ? undefined : 'button'" :tabindex="lyricsVisible ? -1 : 0" :aria-label="lyricsVisible ? undefined : '切换封套位置'" @click="toggleCoverPosition" @keydown.enter="toggleCoverPosition">
-            <ArtworkImage :src="artwork || track?.artworkUrl" :alt="`${track?.album ?? '当前专辑'} 封面`" />
-            <span class="album-sleeve__hint">{{ coverForward ? '收回封套' : '展开封套' }}</span>
-          </div>
+          <Transition name="standard-cover-change" @after-enter="finishStandardCoverChange">
+            <div v-if="standardCoverVisible" :key="standardCover.key" class="album-sleeve" :class="{ interactive: !lyricsVisible, expanded: standardCover.expanded }" :role="lyricsVisible ? undefined : 'button'" :tabindex="lyricsVisible ? -1 : 0" :aria-label="lyricsVisible ? undefined : '切换封套位置'" @click="toggleCoverPosition" @keydown.enter="toggleCoverPosition">
+              <ArtworkImage :src="standardCover.artwork" :alt="`${standardCover.album} 封面`" />
+              <span class="album-sleeve__hint">{{ standardCover.expanded ? '收回封套' : '展开封套' }}</span>
+            </div>
+          </Transition>
 
           <div ref="recordZone" class="record-zone">
             <button class="vinyl-record" :class="{ spinning: isPlaying && !tonearmDragging }" :aria-label="isPlaying ? '暂停播放' : '继续播放'" @click="emit('toggle')">

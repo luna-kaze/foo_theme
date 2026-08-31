@@ -82,6 +82,14 @@ async function getAlbumSelectionTracks(albums: AlbumCard[]) {
   return [...unique.values()]
 }
 
+function sortAlbumTracks(tracks: DisplayTrack[]) {
+  return [...tracks].sort((left, right) =>
+    Number(left.discNumber || 1) - Number(right.discNumber || 1)
+    || Number(left.trackNumber || 0) - Number(right.trackNumber || 0)
+    || left.title.localeCompare(right.title),
+  )
+}
+
 async function openInspector(mode: 'properties' | 'edit', tracks: DisplayTrack[], album: AlbumCard | null = null) {
   const request = ++inspector.request
   inspector.open = true
@@ -301,6 +309,23 @@ function playlistSubmenu(prefix: string): ContextMenuItem[] {
   }))
 }
 
+function pluginSubmenu(prefix: string, actions: Array<{ label: string }>): ContextMenuItem[] {
+  return actions.map((action, index) => ({ id: `${prefix}:${index}`, label: action.label }))
+}
+
+function pluginMenuItem(prefix: string, label: string, actions: Array<{ label: string }>, installed: boolean, iconSvg: ContextMenuItem['iconSvg']): ContextMenuItem | null {
+  if (actions.length) return { id: prefix, label, iconSvg, submenu: pluginSubmenu(prefix, actions) }
+  if (installed) return { id: prefix, label: `${label}（当前项目不可用）`, iconSvg, enabled: false }
+  return null
+}
+
+async function runSelectedPluginAction(action: string, prefix: string, actions: Array<{ commandId: number; label: string }>, tracks: DisplayTrack[]) {
+  if (!action.startsWith(`${prefix}:`)) return false
+  const command = actions[Number(action.slice(prefix.length + 1))]
+  if (command) await player.runPluginContextAction(command, tracks)
+  return true
+}
+
 async function openPopup(items: ContextMenuItem[], event: MouseEvent) {
   try {
     return await showContextMenu(items, event)
@@ -315,6 +340,12 @@ async function openTrackMenu(track: DisplayTrack, index: number, event: MouseEve
   if (state.connected) {
     trackMenu.open = false
     try {
+      const pluginActions = await player.getPluginContextActions(targets)
+      const pluginItems: ContextMenuItem[] = []
+      const converterItem = pluginMenuItem('track:converter', '转换', pluginActions.converter, player.pluginIntegrations.converter.installed, menuIcons.convert)
+      const dopItem = pluginMenuItem('track:dop', '发送到 iPod', pluginActions.dop, player.pluginIntegrations.dop.installed, menuIcons.device)
+      if (converterItem) pluginItems.push(converterItem)
+      if (dopItem) pluginItems.push(dopItem)
       const items: ContextMenuItem[] = [
         { id: 'track:header', type: 'nowplaying', cover: track.artworkUrl, title: targets.length > 1 ? `已选择 ${targets.length} 首曲目` : track.title, subtitle: targets.length > 1 ? '批量操作' : `${track.artist} · ${track.album}` },
         { type: 'separator' },
@@ -324,6 +355,7 @@ async function openTrackMenu(track: DisplayTrack, index: number, event: MouseEve
         { type: 'separator' },
         { id: 'track:favourite', label: Number(track.rating ?? 0) === 5 ? '取消收藏' : '添加到收藏', checked: Number(track.rating ?? 0) === 5, iconSvg: menuIcons.heart },
         { id: 'track:playlist', label: targets.length > 1 ? `将 ${targets.length} 首曲目添加到播放列表` : '添加到播放列表', iconSvg: menuIcons.playlist, enabled: state.playlists.length > 0, submenu: playlistSubmenu('track:playlist') },
+        ...(pluginItems.length ? [{ type: 'separator' } as ContextMenuItem, ...pluginItems] : []),
         { type: 'separator' },
         { id: 'track:album', label: '前往专辑', iconSvg: menuIcons.album },
         { id: 'track:location', label: '显示文件位置', iconSvg: menuIcons.folder, enabled: Boolean(track.path) },
@@ -352,6 +384,8 @@ async function openTrackMenu(track: DisplayTrack, index: number, event: MouseEve
       if (action === 'track:delete-file') openFileDialog('delete', track)
       if (action === 'track:remove') await player.removePlaylistTrack(track, index)
       if (action.startsWith('track:playlist:')) await player.addTracksToPlaylist(targets, Number(action.split(':').at(-1)))
+      if (await runSelectedPluginAction(action, 'track:converter', pluginActions.converter, targets)) return
+      await runSelectedPluginAction(action, 'track:dop', pluginActions.dop, targets)
     } catch (error) {
       player.notify(error instanceof Error ? error.message : '无法打开右键菜单。', 'error')
     }
@@ -378,6 +412,16 @@ async function openAlbumMenu(album: AlbumCard, event: MouseEvent) {
     ? state.albums.filter((item) => selectedAlbumIds.value.includes(item.id))
     : [album]
   const multiple = targets.length > 1
+  const albumTracks = await getAlbumSelectionTracks(targets)
+  const freedbTracks = targets.length === 1 ? sortAlbumTracks(albumTracks) : []
+  const pluginActions = await player.getPluginContextActions(albumTracks)
+  const pluginItems: ContextMenuItem[] = []
+  const converterItem = pluginMenuItem('album:converter', '转换', pluginActions.converter, player.pluginIntegrations.converter.installed, menuIcons.convert)
+  const freedbItem = freedbTracks.length ? pluginMenuItem('album:freedb', '获取专辑信息', pluginActions.freedb, player.pluginIntegrations.freedb.installed, menuIcons.tag) : null
+  const dopItem = pluginMenuItem('album:dop', '发送到 iPod', pluginActions.dop, player.pluginIntegrations.dop.installed, menuIcons.device)
+  if (converterItem) pluginItems.push(converterItem)
+  if (freedbItem) pluginItems.push(freedbItem)
+  if (dopItem) pluginItems.push(dopItem)
   const action = await openPopup([
     { id: 'album:header', type: 'nowplaying', cover: album.artworkUrl, title: multiple ? `已选择 ${targets.length} 张专辑` : album.name, subtitle: multiple ? '批量专辑操作' : `${album.artist}${album.year ? ` · ${album.year}` : ''}` },
     { type: 'separator' },
@@ -388,6 +432,7 @@ async function openAlbumMenu(album: AlbumCard, event: MouseEvent) {
     { id: 'album:queue', label: multiple ? `将 ${targets.length} 张专辑添加到队列` : '将专辑添加到队列', iconSvg: menuIcons.queue },
     { type: 'separator' },
     { id: 'album:playlist', label: multiple ? `将 ${targets.length} 张专辑添加到播放列表` : '将专辑添加到播放列表', iconSvg: menuIcons.playlist, enabled: state.playlists.length > 0, submenu: playlistSubmenu('album:playlist') },
+    ...(pluginItems.length ? [{ type: 'separator' } as ContextMenuItem, ...pluginItems] : []),
     { type: 'separator' },
     { id: 'album:properties', label: '专辑属性', iconSvg: menuIcons.info },
   ], event)
@@ -402,15 +447,18 @@ async function openAlbumMenu(album: AlbumCard, event: MouseEvent) {
   if (action === 'album:play') await player.playAlbum(album)
   if (action === 'album:shuffle') await player.shuffleAlbum(album)
   if (action === 'album:queue') {
-    if (multiple) await player.addTracksToQueue(await getAlbumSelectionTracks(targets))
+    if (multiple) await player.addTracksToQueue(albumTracks)
     else await player.queueAlbum(album)
   }
-  if (action === 'album:properties') await openInspector('properties', multiple ? await getAlbumSelectionTracks(targets) : await player.getAlbumTracks(album), multiple ? null : album)
+  if (action === 'album:properties') await openInspector('properties', albumTracks, multiple ? null : album)
   if (action?.startsWith('album:playlist:')) {
     const playlistIndex = Number(action.split(':').at(-1))
     if (multiple) await player.addTracksToPlaylist(await getAlbumSelectionTracks(targets), playlistIndex)
     else await player.addAlbumToPlaylist(album, playlistIndex)
   }
+  if (action && await runSelectedPluginAction(action, 'album:converter', pluginActions.converter, albumTracks)) return
+  if (action && await runSelectedPluginAction(action, 'album:freedb', pluginActions.freedb, freedbTracks)) return
+  if (action) await runSelectedPluginAction(action, 'album:dop', pluginActions.dop, albumTracks)
 }
 
 async function openPlaylistMenu(playlist: PlaylistInfo, event: MouseEvent) {
@@ -557,6 +605,7 @@ function onDrop(event: DragEvent) {
         :connection-label="connectionLabel"
         :connection-transitioning="connectionTransitioning"
         :library-scanning="state.libraryStatus.scanning === true"
+        :ipod-available="player.pluginIntegrations.dop.installed"
         @search="player.setSearch"
         @submit-search="submitPrimarySearch"
         @clear-search="clearPrimarySearch"
@@ -571,6 +620,7 @@ function onDrop(event: DragEvent) {
         @select-output-device="selectOutputDevice"
         @desktop-lyrics="player.toggleDesktopLyrics"
         @mini-player="player.openMiniPlayer"
+        @ipod-manager="player.openIpodManager"
         @drag="player.startWindowDrag"
         @maximize="player.toggleWindowMaximize"
       />

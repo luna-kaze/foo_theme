@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import { ArrowLeft, AudioLines, Check, ChevronLeft, ChevronRight, Maximize, MoreHorizontal, PanelTopOpen, RefreshCw, Search, Settings, ScanSearch, Subtitles, X } from '@lucide/vue'
+import { ArrowLeft, AudioLines, Check, ChevronLeft, ChevronRight, Maximize, MoreHorizontal, PanelTopOpen, RefreshCw, Search, Settings, Smartphone, ScanSearch, Subtitles, X } from '@lucide/vue'
 import type { OutputDevice } from 'foo-webview-sdk'
 
 defineProps<{
@@ -13,6 +13,7 @@ defineProps<{
   connectionLabel: string
   connectionTransitioning: boolean
   libraryScanning: boolean
+  ipodAvailable: boolean
 }>()
 
 const emit = defineEmits<{
@@ -32,6 +33,7 @@ const emit = defineEmits<{
   miniPlayer: []
   drag: []
   maximize: []
+  ipodManager: []
 }>()
 
 const menuOpen = ref(false)
@@ -39,7 +41,7 @@ const outputOpen = ref(false)
 const root = ref<HTMLElement | null>(null)
 let dragCandidate: { pointerId: number; x: number; y: number } | null = null
 
-function run(action: 'refresh' | 'preferences' | 'fullscreen' | 'reload' | 'rescan' | 'desktopLyrics' | 'miniPlayer') {
+function run(action: 'refresh' | 'preferences' | 'fullscreen' | 'reload' | 'rescan' | 'desktopLyrics' | 'miniPlayer' | 'ipodManager') {
   if (action === 'refresh') emit('refresh')
   if (action === 'preferences') emit('preferences')
   if (action === 'fullscreen') emit('fullscreen')
@@ -47,6 +49,7 @@ function run(action: 'refresh' | 'preferences' | 'fullscreen' | 'reload' | 'resc
   if (action === 'rescan') emit('rescan')
   if (action === 'desktopLyrics') emit('desktopLyrics')
   if (action === 'miniPlayer') emit('miniPlayer')
+  if (action === 'ipodManager') emit('ipodManager')
   menuOpen.value = false
 }
 
@@ -148,6 +151,7 @@ onBeforeUnmount(() => {
           <button @click="run('preferences')"><Settings :size="16" /><span>首选项</span></button>
           <button @click="openOutputs"><AudioLines :size="16" /><span>输出设备</span></button>
           <button @click="run('desktopLyrics')"><Subtitles :size="16" /><span>桌面歌词</span></button>
+          <button v-if="ipodAvailable" @click="run('ipodManager')"><Smartphone :size="16" /><span>iPod 管理器</span></button>
           <button @click="run('miniPlayer')"><PanelTopOpen :size="16" /><span>迷你播放器</span></button>
           <button @click="run('fullscreen')"><Maximize :size="16" /><span>切换全屏</span></button>
           <button @click="run('reload')"><RefreshCw :size="16" /><span>重新加载界面</span></button>
