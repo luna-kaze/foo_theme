@@ -1114,9 +1114,17 @@ input[type="range"] {
   border-radius: 9px;
   box-shadow: 0 10px 24px rgba(0,0,0,.28);
 }
-.track-drag-fragment {
+.track-drag-fragments {
   position: fixed;
   z-index: 10001;
+  top: 0;
+  left: 0;
+  height: 73px;
+  pointer-events: none;
+  will-change: transform;
+}
+.track-drag-fragment {
+  position: absolute;
   top: 0;
   left: 0;
   display: flex;
@@ -1124,7 +1132,6 @@ input[type="range"] {
   gap: 11px;
   height: 57px;
   padding: 0 11px 0 87px;
-  pointer-events: none;
   color: #b9b6bc;
   background: linear-gradient(90deg, rgba(43,42,47,.94), rgba(28,28,32,.94));
   border: 1px solid rgba(255,255,255,.12);

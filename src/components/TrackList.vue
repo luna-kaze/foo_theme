@@ -40,8 +40,8 @@ const dragOffsetX = ref(0)
 const dragOffsetY = ref(0)
 const dropIndicator = ref({ left: 0, top: 0, width: 0, visible: false })
 const dragPreviewTrack = ref<DisplayTrack | null>(null)
-const draggedTracks = ref<DisplayTrack[]>([])
-const dragFragments = ref<Array<{ id: string; track: DisplayTrack; x: number; y: number; width: number; layer: number }>>([])
+const draggedTrackCount = ref(0)
+const dragFragments = ref<Array<{ id: string; track: DisplayTrack; offsetX: number; offsetY: number; width: number; layer: number }>>([])
 const mergePhase = ref(false)
 const mergedPreview = ref(false)
 const targetPlaylist = ref<{ index: number; name: string } | null>(null)
@@ -64,18 +64,17 @@ const playlistDropIndicatorStyle = computed(() => ({
   height: `${playlistDropIndicator.value.height}px`,
 }))
 let dragList: HTMLElement | null = null
+let dragSelection: ReadonlySet<number> | null = null
 let mergeFrame = 0
 let mergeTimer: ReturnType<typeof setTimeout> | null = null
 
-function fragmentStyle(fragment: { x: number; y: number; width: number; layer: number }) {
+function fragmentStyle(fragment: { offsetX: number; offsetY: number; width: number; layer: number }) {
   const visualLayer = Math.min(fragment.layer + 1, 2)
-  const targetX = Math.max(12, dragX.value - dragOffsetX.value) + visualLayer * 8
-  const targetY = dragY.value - dragOffsetY.value + visualLayer * 6
   return {
-    left: `${fragment.x}px`,
-    top: `${fragment.y}px`,
     width: `${fragment.width}px`,
-    transform: mergePhase.value ? `translate3d(${targetX - fragment.x}px, ${targetY - fragment.y}px, 0)` : 'translate3d(0, 0, 0)',
+    transform: mergePhase.value
+      ? `translate3d(${visualLayer * 8}px, ${visualLayer * 6}px, 0)`
+      : `translate3d(${fragment.offsetX}px, ${fragment.offsetY}px, 0)`,
   }
 }
 
@@ -153,7 +152,8 @@ function stopReorderDrag() {
   targetPlaylist.value = null
   targetIpod.value = false
   dragMovesTracks.value = false
-  draggedTracks.value = []
+  draggedTrackCount.value = 0
+  dragSelection = null
   dragFragments.value = []
   mergePhase.value = false
   mergedPreview.value = false
@@ -219,7 +219,9 @@ function finishReorderDrag() {
   const playlist = targetPlaylist.value
   const ipod = targetIpod.value
   const move = dragMovesTracks.value
-  const tracks = draggedTracks.value
+  const tracks = (ipod || (playlist && playlist.index !== props.playlistIndex)) && dragSelection
+    ? props.tracks.filter((_, index) => dragSelection?.has(index))
+    : []
   const moved = dragging.value && from >= 0 && to >= 0 && from !== to
   stopReorderDrag()
   if (ipod && tracks.length) {
@@ -246,9 +248,8 @@ function beginTrackDrag(index: number, event: PointerEvent) {
   dragIndex.value = index
   dragMovesTracks.value = event.shiftKey && Boolean(props.reorderable)
   dropIndex.value = index
-  draggedTracks.value = selected.value.has(index)
-    ? props.tracks.filter((_, trackIndex) => selected.value.has(trackIndex))
-    : [props.tracks[index]].filter((track): track is DisplayTrack => Boolean(track))
+  dragSelection = selected.value.has(index) ? selected.value : new Set([index])
+  draggedTrackCount.value = dragSelection.size
   dragPreviewTrack.value = props.tracks[index] ?? null
   dragX.value = event.clientX
   dragY.value = event.clientY
@@ -260,19 +261,27 @@ function beginTrackDrag(index: number, event: PointerEvent) {
     dragOffsetY.value = event.clientY - bounds.top
   }
   dragList = (event.currentTarget as Element).closest<HTMLElement>('.track-list')
-  const selectedIndexes = selected.value.has(index) ? [...selected.value] : [index]
-  dragFragments.value = selectedIndexes
-    .filter((trackIndex) => trackIndex !== index)
-    .sort((left, right) => Math.abs(left - index) - Math.abs(right - index) || left - right)
-    .map((trackIndex, layer) => {
-      const source = dragList?.querySelector<HTMLElement>(`.track-row[data-track-index="${trackIndex}"]`)
-      const sourceBounds = source?.getBoundingClientRect()
-      const track = props.tracks[trackIndex]
-      if (!sourceBounds || !track || sourceBounds.bottom <= 0 || sourceBounds.top >= window.innerHeight) return null
-      return { id: `${trackKey(track)}-${trackIndex}`, track, x: sourceBounds.left, y: sourceBounds.top, width: sourceBounds.width, layer }
-    })
-    .filter((fragment): fragment is NonNullable<typeof fragment> => Boolean(fragment))
-    .slice(0, 3)
+  dragFragments.value = []
+  if (bounds && dragList && draggedTrackCount.value <= 20) {
+    let leftOutside = index <= 0
+    let rightOutside = index >= props.tracks.length - 1
+    for (let distance = 1; dragFragments.value.length < 3 && (!leftOutside || !rightOutside); distance += 1) {
+      for (const trackIndex of [index - distance, index + distance]) {
+        if (trackIndex < 0) { leftOutside = true; continue }
+        if (trackIndex >= props.tracks.length) { rightOutside = true; continue }
+        const source = dragList.children.item(trackIndex + 1) as HTMLElement | null
+        const sourceBounds = source?.getBoundingClientRect()
+        if (!sourceBounds) continue
+        if (trackIndex < index && sourceBounds.bottom <= 0) leftOutside = true
+        if (trackIndex > index && sourceBounds.top >= window.innerHeight) rightOutside = true
+        if (sourceBounds.bottom <= 0 || sourceBounds.top >= window.innerHeight || !dragSelection.has(trackIndex)) continue
+        const track = props.tracks[trackIndex]
+        if (!track) continue
+        dragFragments.value.push({ id: `${trackKey(track)}-${trackIndex}`, track, offsetX: sourceBounds.left - bounds.left, offsetY: sourceBounds.top - bounds.top, width: sourceBounds.width, layer: dragFragments.value.length })
+        if (dragFragments.value.length === 3) break
+      }
+    }
+  }
   dragging.value = true
   updateReorderDrag(event)
   window.addEventListener('pointermove', updateReorderDrag)
@@ -345,10 +354,12 @@ function isCurrent(track: DisplayTrack, currentTrack: DisplayTrack | null) {
     <Teleport to="body">
       <div v-if="dropIndicator.visible" class="track-drop-indicator" :style="dropIndicatorStyle"><i /></div>
       <div v-if="playlistDropIndicator.visible" class="track-playlist-drop-target" :style="playlistDropIndicatorStyle" />
-      <div v-for="fragment in dragFragments" :key="fragment.id" class="track-drag-fragment" :style="fragmentStyle(fragment)"><ArtworkImage :src="fragment.track.artworkUrl" :alt="`${fragment.track.album} 封面`" /><span><strong>{{ fragment.track.title || '未命名曲目' }}</strong><small>{{ fragment.track.artist || '未知艺人' }}</small></span></div>
+      <div v-if="dragFragments.length" class="track-drag-fragments" :style="dragPreviewStyle">
+        <div v-for="fragment in dragFragments" :key="fragment.id" class="track-drag-fragment" :style="fragmentStyle(fragment)"><ArtworkImage :src="fragment.track.artworkUrl" :alt="`${fragment.track.album} 封面`" /><span><strong>{{ fragment.track.title || '未命名曲目' }}</strong><small>{{ fragment.track.artist || '未知艺人' }}</small></span></div>
+      </div>
       <Transition name="track-drag-preview">
         <div v-if="dragging && dragPreviewTrack" class="track-drag-preview-stack" :style="dragPreviewStyle">
-          <i v-for="layer in mergedPreview ? Math.min(draggedTracks.length - 1, 2) : 0" :key="layer" class="track-drag-preview-stack__layer" :style="{ '--layer': layer }" />
+          <i v-for="layer in mergedPreview ? Math.min(draggedTrackCount - 1, 2) : 0" :key="layer" class="track-drag-preview-stack__layer" :style="{ '--layer': layer }" />
           <div class="track-drag-preview" :class="{ 'is-playlist-target': targetPlaylist }">
             <span class="track-drag-preview__grip"><GripVertical :size="17" /></span>
             <span class="track-drag-preview__index">{{ dragIndex + 1 }}</span>
@@ -356,9 +367,9 @@ function isCurrent(track: DisplayTrack, currentTrack: DisplayTrack | null) {
             <span class="track-drag-preview__album">{{ dragPreviewTrack.album || '未知专辑' }}</span>
             <span class="track-drag-preview__year">{{ dragPreviewTrack.date?.slice(0, 4) || '—' }}</span>
             <span class="track-drag-preview__duration">{{ formatTime(dragPreviewTrack.duration) }}</span>
-            <span v-if="dragMovesTracks || draggedTracks.length > 1" class="track-drag-preview__badges">
+            <span v-if="dragMovesTracks || draggedTrackCount > 1" class="track-drag-preview__badges">
               <b v-if="dragMovesTracks" class="is-moving">移动中</b>
-              <b v-if="draggedTracks.length > 1">{{ draggedTracks.length }} 首曲目</b>
+              <b v-if="draggedTrackCount > 1">{{ draggedTrackCount }} 首曲目</b>
             </span>
           </div>
         </div>
