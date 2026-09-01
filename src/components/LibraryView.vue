@@ -47,6 +47,8 @@ const emit = defineEmits<{
   clearFilters: []
   reorder: [from: number, to: number, after: boolean]
   addToPlaylist: [tracks: DisplayTrack[], playlistIndex: number]
+  moveToPlaylist: [tracks: DisplayTrack[], sourcePlaylistIndex: number, destinationPlaylistIndex: number]
+  addToIpod: [tracks: DisplayTrack[]]
   albumSelection: [album: AlbumCard, selected: boolean]
   cancelAlbumSelection: []
 }>()
@@ -93,7 +95,8 @@ const emit = defineEmits<{
           @play="(track, index) => emit('playTrack', track, index)"
           @menu="(track, index, event) => emit('trackMenu', track, index, event)"
           @selection="emit('selection', $event)"
-          @add-to-playlist="(selected, playlistIndex) => emit('addToPlaylist', selected, playlistIndex)"
+           @add-to-playlist="(selected, playlistIndex) => emit('addToPlaylist', selected, playlistIndex)"
+           @add-to-ipod="emit('addToIpod', $event)"
         />
       </section>
     </template>
@@ -126,6 +129,7 @@ const emit = defineEmits<{
         @menu="(track, index, event) => emit('trackMenu', track, index, event)"
         @selection="emit('selection', $event)"
         @add-to-playlist="(selected, playlistIndex) => emit('addToPlaylist', selected, playlistIndex)"
+        @add-to-ipod="emit('addToIpod', $event)"
       />
     </template>
 
@@ -159,7 +163,9 @@ const emit = defineEmits<{
         @menu="(track, index, event) => emit('trackMenu', track, index, event)"
         @selection="emit('selection', $event)"
          @reorder="(from, to, after) => emit('reorder', from, to, after)"
-         @add-to-playlist="(selected, playlistIndex) => emit('addToPlaylist', selected, playlistIndex)"
+          @add-to-playlist="(selected, playlistIndex) => emit('addToPlaylist', selected, playlistIndex)"
+          @move-to-playlist="(selected, sourcePlaylistIndex, destinationPlaylistIndex) => emit('moveToPlaylist', selected, sourcePlaylistIndex, destinationPlaylistIndex)"
+          @add-to-ipod="emit('addToIpod', $event)"
       />
       <div v-else-if="view !== 'search' || !albums.length" class="collection-empty">
         <SearchX v-if="view === 'search'" :size="30" /><FileMusic v-else :size="30" />

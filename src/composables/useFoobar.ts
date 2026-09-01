@@ -1777,12 +1777,31 @@ async function addToPlaylist(track: DisplayTrack, playlistIndex: number) {
   await runAction(() => fb.playlist.add(playlistIndex, [playablePath(track)]), `已添加到“${playlist.name}”`)
 }
 
-async function addTracksToPlaylist(tracks: DisplayTrack[], playlistIndex: number) {
+  async function addTracksToPlaylist(tracks: DisplayTrack[], playlistIndex: number) {
   const playlist = state.playlists.find((item) => item.index === playlistIndex)
   if (!playlist || playlist.isLocked || playlist.isAutoplaylist || !tracks.length) return
   const result = await runAction(() => fb.playlist.add(playlistIndex, tracks.map(playablePath)))
-  if (result) notify(`已将 ${result.addedCount ?? tracks.length} 首曲目添加到“${playlist.name}”`, 'success')
-}
+    if (result) notify(`已将 ${result.addedCount ?? tracks.length} 首曲目添加到“${playlist.name}”`, 'success')
+  }
+
+  async function moveTracksToPlaylist(tracks: DisplayTrack[], sourcePlaylistIndex: number, destinationPlaylistIndex: number) {
+    const source = state.playlists.find((item) => item.index === sourcePlaylistIndex)
+    const destination = state.playlists.find((item) => item.index === destinationPlaylistIndex)
+    if (!source || !destination || sourcePlaylistIndex === destinationPlaylistIndex || source.isLocked || source.isAutoplaylist || destination.isLocked || destination.isAutoplaylist || !tracks.length) return
+    const indexes = (await Promise.all(tracks.map((track) => resolvePlaylistTrackIndex(sourcePlaylistIndex, track, track.sourceIndex))))
+      .filter((index): index is number => index != null)
+      .sort((a, b) => b - a)
+    if (indexes.length !== tracks.length) {
+      notify('播放列表已变化，请重新选择后再移动。', 'info')
+      return
+    }
+    const added = await runAction(() => fb.playlist.add(destinationPlaylistIndex, tracks.map(playablePath)))
+    if (!added) return
+    const removed = await runAction(() => fb.playlist.removeTracks(sourcePlaylistIndex, indexes))
+    if (!removed) return
+    notify(`已将 ${tracks.length} 首曲目移动至“${destination.name}”`, 'success')
+    if (state.route.view === 'playlist' && state.route.playlistIndex === sourcePlaylistIndex) await refreshActivePlaylist()
+  }
 
 async function playNext(track: DisplayTrack) {
   if (!state.connected) {
@@ -1892,15 +1911,29 @@ async function getPluginContextActions(tracks: DisplayTrack[]) {
   return output
 }
 
-async function runPluginContextAction(action: PluginContextAction, tracks: DisplayTrack[]) {
+  async function runPluginContextAction(action: PluginContextAction, tracks: DisplayTrack[]) {
   if (!state.connected) return
   const handles = tracks.map(playablePath).filter(Boolean)
   if (!handles.length) {
     notify('所选项目没有可供插件处理的音频文件。', 'error')
     return
   }
-  await runAction(() => fb.menu.runContextCommandById(action.commandId, { mode: 'handles', handles }))
-}
+    await runAction(() => fb.menu.runContextCommandById(action.commandId, { mode: 'handles', handles }))
+  }
+
+  async function sendTracksToIpod(tracks: DisplayTrack[]) {
+    if (!pluginIntegrations.dop.installed) {
+      notify('未检测到 foo_dop 组件。', 'error')
+      return
+    }
+    const actions = await getPluginContextActions(tracks)
+    const action = actions.dop.find((item) => /send\s+to\s+(?:an?\s+)?ipod|发送.*(?:到|至).*ipod/i.test(item.label))
+    if (!action) {
+      notify('当前 foo_dop 版本未提供“发送到 iPod”命令。', 'info')
+      return
+    }
+    await runPluginContextAction(action, tracks)
+  }
 
 function clearIpodCommands() {
   ipodCommandCache.clear()
@@ -2663,6 +2696,7 @@ export function useFoobar() {
     setOutputDevice,
     getPluginContextActions,
     runPluginContextAction,
+    sendTracksToIpod,
     runIpodMainAction,
     refreshIpodDeviceStatus,
     refreshIpodCommands,
@@ -2687,6 +2721,7 @@ export function useFoobar() {
     addTracksToQueue,
     addToActivePlaylist,
     addToPlaylist,
+    moveTracksToPlaylist,
     addTracksToPlaylist,
     playNext,
     removePlaylistTrack,

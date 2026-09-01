@@ -159,7 +159,7 @@ onBeforeUnmount(stopPlaylistDrag)
       </button>
       <template v-if="ipodAvailable">
         <p class="sidebar-nav__label">设备</p>
-        <button :class="{ active: view === 'ipod' }" @click="emit('navigate', 'ipod')">
+        <button data-ipod-drop-target :class="{ active: view === 'ipod' }" @click="emit('navigate', 'ipod')">
           <Smartphone :size="18" />
           <span>iPod</span>
         </button>

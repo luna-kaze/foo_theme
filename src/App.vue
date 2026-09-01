@@ -406,6 +406,12 @@ function playlistSubmenu(prefix: string): ContextMenuItem[] {
   }))
 }
 
+function movePlaylistSubmenu(sourcePlaylistIndex: number): ContextMenuItem[] {
+  return state.playlists
+    .filter((playlist) => playlist.index !== sourcePlaylistIndex)
+    .map((playlist) => ({ id: `track:move-playlist:${playlist.index}`, label: playlist.name, enabled: !playlist.isLocked && !playlist.isAutoplaylist }))
+}
+
 function pluginSubmenu(prefix: string, actions: Array<{ label: string }>): ContextMenuItem[] {
   return actions.map((action, index) => ({ id: `${prefix}:${index}`, label: action.label }))
 }
@@ -466,7 +472,7 @@ async function openTrackMenu(track: DisplayTrack, index: number, event: MouseEve
         { id: 'track:queue', label: targets.length > 1 ? `将 ${targets.length} 首曲目添加到队列` : '添加到队列', iconSvg: menuIcons.queue },
         { type: 'separator' },
         { id: 'track:favourite', label: Number(track.rating ?? 0) === 5 ? '取消收藏' : '添加到收藏', checked: Number(track.rating ?? 0) === 5, iconSvg: menuIcons.heart },
-        { id: 'track:playlist', label: targets.length > 1 ? `将 ${targets.length} 首曲目添加到播放列表` : '添加到播放列表', iconSvg: menuIcons.playlist, enabled: state.playlists.length > 0, submenu: playlistSubmenu('track:playlist') },
+       { id: 'track:playlist', label: targets.length > 1 ? `将 ${targets.length} 首曲目添加到播放列表` : '添加到播放列表', iconSvg: menuIcons.playlist, enabled: state.playlists.length > 0, submenu: playlistSubmenu('track:playlist') },
         ...(pluginItems.length ? [{ type: 'separator' } as ContextMenuItem, ...pluginItems] : []),
         { type: 'separator' },
         { id: 'track:album', label: '前往专辑', iconSvg: menuIcons.album },
@@ -478,8 +484,13 @@ async function openTrackMenu(track: DisplayTrack, index: number, event: MouseEve
         { id: 'track:move', label: '移动文件', iconSvg: menuIcons.folder, enabled: Boolean(localFilePath(track)) },
         { id: 'track:delete-file', label: '移动文件到回收站', iconSvg: menuIcons.remove, enabled: Boolean(localFilePath(track)) },
       ]
-      if (state.view === 'playlist' && index >= 0) {
-        items.push({ type: 'separator' }, { id: 'track:remove', label: `从“${state.browsingPlaylist?.name ?? state.activePlaylist?.name ?? '播放列表'}”移除`, iconSvg: menuIcons.remove })
+       if (state.view === 'playlist' && index >= 0) {
+         const sourcePlaylist = state.browsingPlaylist ?? state.activePlaylist
+         items.push(
+           { id: 'track:move-playlist', label: targets.length > 1 ? `将 ${targets.length} 首曲目移动到播放列表` : '移动到播放列表', iconSvg: menuIcons.playlist, enabled: Boolean(sourcePlaylist && !sourcePlaylist.isLocked && !sourcePlaylist.isAutoplaylist), submenu: sourcePlaylist ? movePlaylistSubmenu(sourcePlaylist.index) : [] },
+           { type: 'separator' },
+           { id: 'track:remove', label: `从“${sourcePlaylist?.name ?? '播放列表'}”移除`, iconSvg: menuIcons.remove },
+         )
       }
       const action = await openPopup(items, event)
       if (!action) return
@@ -494,8 +505,12 @@ async function openTrackMenu(track: DisplayTrack, index: number, event: MouseEve
       if (action === 'track:rename') openFileDialog('rename', track)
       if (action === 'track:move') await moveFile(track)
       if (action === 'track:delete-file') openFileDialog('delete', track)
-      if (action === 'track:remove') await player.removePlaylistTrack(track, index)
-      if (action.startsWith('track:playlist:')) await player.addTracksToPlaylist(targets, Number(action.split(':').at(-1)))
+       if (action === 'track:remove') await player.removePlaylistTrack(track, index)
+       if (action.startsWith('track:playlist:')) await player.addTracksToPlaylist(targets, Number(action.split(':').at(-1)))
+       if (action.startsWith('track:move-playlist:')) {
+         const source = state.browsingPlaylist ?? state.activePlaylist
+         if (source) await player.moveTracksToPlaylist(targets, source.index, Number(action.split(':').at(-1)))
+       }
       if (await runSelectedPluginAction(action, 'track:converter', pluginActions.converter, targets)) return
       await runSelectedPluginAction(action, 'track:dop', pluginActions.dop, targets)
     } catch (error) {
@@ -760,7 +775,7 @@ function onDrop(event: DragEvent) {
       @submit-search="submitPrimarySearch"
        @playlist-menu="openPlaylistMenu"
        @reorder-playlists="player.reorderPlaylists"
-      @create-playlist="state.dialog = 'createPlaylist'"
+       @create-playlist="state.dialog = 'createPlaylist'"
       @favourites="showFavourites"
     />
 
@@ -838,6 +853,7 @@ function onDrop(event: DragEvent) {
               @track-menu="openTrackMenu"
               @selection="selectedTracks = $event"
               @add-to-playlist="player.addTracksToPlaylist"
+              @add-to-ipod="player.sendTracksToIpod"
               @shuffle="player.shuffleCurrent"
             />
             <LibraryView
@@ -871,6 +887,8 @@ function onDrop(event: DragEvent) {
               @clear-search="clearPrimarySearch"
               @selection="selectedTracks = $event"
               @add-to-playlist="player.addTracksToPlaylist"
+              @move-to-playlist="player.moveTracksToPlaylist"
+              @add-to-ipod="player.sendTracksToIpod"
               @filter-facet-change="player.setLibraryFilterFacet"
               @filter-rule-add="player.addLibraryFilterRule"
               @filter-rule-update="player.updateLibraryFilterRule"
