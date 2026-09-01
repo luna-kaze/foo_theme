@@ -110,6 +110,40 @@ const coverflowItems = computed<CoverflowItem[]>(() => {
     key: `idle:${standardCover.value.key}`,
   }]
 })
+const visibleCoverflowItems = computed(() => {
+  const start = Math.max(0, coverflowIndex.value - 3)
+  const end = Math.min(coverflowItems.value.length, coverflowIndex.value + 4)
+  return coverflowItems.value.slice(start, end).map((item, offset) => ({ ...item, index: start + offset }))
+})
+const coverflowArtworkDecodeCache = new Map<string, Promise<void>>()
+
+function coverflowPreloadSources() {
+  if (!props.open) return []
+  const start = Math.max(0, coverflowIndex.value - 8)
+  const end = Math.min(coverflowItems.value.length, coverflowIndex.value + 9)
+  return coverflowItems.value.slice(start, end).map((item) => item.artwork).filter(Boolean)
+}
+
+function preloadCoverflowArtwork(sources: string[]) {
+  sources.forEach((source) => {
+    const cached = coverflowArtworkDecodeCache.get(source)
+    if (cached) {
+      coverflowArtworkDecodeCache.delete(source)
+      coverflowArtworkDecodeCache.set(source, cached)
+      return
+    }
+    const image = new Image()
+    image.decoding = 'async'
+    image.src = source
+    const decoded = image.decode().catch(() => undefined).then(() => { void image.naturalWidth })
+    coverflowArtworkDecodeCache.set(source, decoded)
+    while (coverflowArtworkDecodeCache.size > 34) {
+      const oldest = coverflowArtworkDecodeCache.keys().next().value
+      if (!oldest) break
+      coverflowArtworkDecodeCache.delete(oldest)
+    }
+  })
+}
 
 const selectedCoverflow = computed(() => coverflowItems.value[coverflowIndex.value] ?? null)
 const currentCoverflowIndex = computed(() => Math.max(0, props.playbackTrackIndex))
@@ -447,6 +481,7 @@ watch(lyricsVisible, (visible) => {
   }
 })
 watch(() => [props.open, mode.value] as const, () => void nextTick(() => scrollToActive('auto')))
+watch(coverflowPreloadSources, preloadCoverflowArtwork, { immediate: true })
 watch(() => props.open, (open) => {
   if (open) return
   if (modeTimer) clearTimeout(modeTimer)
@@ -465,6 +500,7 @@ watch(() => coverflowItems.value.length, (length) => {
 })
 
 onBeforeUnmount(() => {
+  coverflowArtworkDecodeCache.clear()
   if (resumeTimer) clearTimeout(resumeTimer)
   if (modeTimer) clearTimeout(modeTimer)
   if (standardCoverTimer) clearTimeout(standardCoverTimer)
@@ -562,13 +598,13 @@ onBeforeUnmount(() => {
       <section v-else key="coverflow" class="coverflow" @wheel.prevent="onCoverflowWheel">
         <div ref="coverflowView" class="coverflow__viewport" @pointerup.stop.prevent="handleCoverflowPointer">
           <button
-            v-for="(item, index) in coverflowItems"
+            v-for="item in visibleCoverflowItems"
             :key="item.key"
-            :data-cover-index="index"
+            :data-cover-index="item.index"
             class="coverflow-card"
-            :class="{ active: index === coverflowIndex, current: item.current || item.idle, idle: item.idle, far: Math.abs(index - coverflowIndex) > 3 }"
-            :style="{ '--cover-offset': index - coverflowIndex, '--cover-distance': Math.abs(index - coverflowIndex), '--cover-image': item.artwork ? `url(${item.artwork})` : 'none' }"
-            @keydown.enter.prevent="activateCoverflow(index)"
+            :class="{ active: item.index === coverflowIndex, current: item.current || item.idle, idle: item.idle }"
+            :style="{ '--cover-offset': item.index - coverflowIndex, '--cover-distance': Math.abs(item.index - coverflowIndex), '--cover-image': item.artwork ? `url(${item.artwork})` : 'none' }"
+            @keydown.enter.prevent="activateCoverflow(item.index)"
           >
             <span class="coverflow-card__sleeve">
               <span class="coverflow-card__face"><ArtworkImage :src="item.artwork" :alt="`${item.track?.album ?? standardCover.album} 封面`" /></span>
