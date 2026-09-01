@@ -1880,13 +1880,28 @@ async function addToPlaylist(track: DisplayTrack, playlistIndex: number) {
     const source = state.playlists.find((item) => item.index === sourcePlaylistIndex)
     const destination = state.playlists.find((item) => item.index === destinationPlaylistIndex)
     if (!source || !destination || sourcePlaylistIndex === destinationPlaylistIndex || source.isLocked || source.isAutoplaylist || destination.isLocked || destination.isAutoplaylist || !tracks.length) return
-    const indexes = (await Promise.all(tracks.map((track) => resolvePlaylistTrackIndex(sourcePlaylistIndex, track, track.sourceIndex))))
-      .filter((index): index is number => index != null)
-      .sort((a, b) => b - a)
+    const sourceTracks = await getAllPlaylistTracks(sourcePlaylistIndex)
+    const usedIndexes = new Set<number>()
+    const indexes: number[] = []
+    for (const track of tracks) {
+      const hintedIndex = track.sourceIndex
+      const hintedTrack = hintedIndex == null ? null : sourceTracks[hintedIndex]
+      const hasMatchingHint = hintedIndex != null && hintedTrack && trackKey(hintedTrack) === trackKey(track) && !usedIndexes.has(hintedIndex)
+      const resolvedIndex: number = hasMatchingHint
+        ? hintedIndex!
+        : sourceTracks.findIndex((item) => !usedIndexes.has(item.sourceIndex ?? -1) && isSameTrack(item, track))
+      if (resolvedIndex < 0) {
+        notify('播放列表已变化，请重新选择后再移动。', 'info')
+        return
+      }
+      usedIndexes.add(resolvedIndex)
+      indexes.push(resolvedIndex)
+    }
     if (indexes.length !== tracks.length) {
       notify('播放列表已变化，请重新选择后再移动。', 'info')
       return
     }
+    indexes.sort((a, b) => b - a)
     const added = await runAction(() => fb.playlist.add(destinationPlaylistIndex, tracks.map(playablePath)))
     if (!added) return
     const removed = await runAction(() => fb.playlist.removeTracks(sourcePlaylistIndex, indexes))

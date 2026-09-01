@@ -685,7 +685,7 @@ input[type="range"] {
 .alphabet-group__heading span { height: 1px; flex: 1; background: linear-gradient(90deg, rgba(255,255,255,.13), rgba(255,255,255,.025)); }
 .alphabet-index {
   position: fixed;
-  top: calc(var(--topbar-height) + 18px);
+  top: 50%;
   right: 3px;
   display: grid;
   align-content: start;
@@ -697,6 +697,7 @@ input[type="range"] {
   box-shadow: 0 12px 34px rgba(0,0,0,.2);
   backdrop-filter: blur(18px);
   z-index: 30;
+  transform: translateY(-50%);
   transition: background 150ms ease, border-color 150ms ease;
 }
 .alphabet-index button { display: grid; width: 21px; height: 17px; padding: 0; place-items: center; color: #8e8a91; font-size: 9px; font-weight: 700; line-height: 1; background: transparent; border-radius: 7px; }
