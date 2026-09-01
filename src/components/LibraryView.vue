@@ -40,7 +40,7 @@ const emit = defineEmits<{
   clearSearch: []
   albumMenu: [album: AlbumCard, event: MouseEvent]
   selection: [tracks: DisplayTrack[]]
-  filterFacetChange: [key: 'artist' | 'albumArtist' | 'genre' | 'folder' | 'playState', value: string]
+  filterFacetChange: [key: 'artist' | 'albumArtist' | 'folder' | 'rating' | 'favourite', value: string]
   filterRuleAdd: []
   filterRuleUpdate: [id: string, patch: Partial<Pick<LibraryFilterRule, 'field' | 'operator' | 'value'>>]
   filterRuleRemove: [id: string]

@@ -137,9 +137,9 @@ export interface PlayerUiState {
   libraryFilters: {
     artist: string
     albumArtist: string
-    genre: string
     folder: string
-    playState: 'all' | 'played' | 'unplayed' | 'recent'
+    rating: 'all' | 'unrated' | '1' | '2' | '3' | '4' | '5'
+    favourite: 'all' | 'favourite' | 'unfavourite'
     matchMode: LibraryFilterMatchMode
     rules: LibraryFilterRule[]
   }

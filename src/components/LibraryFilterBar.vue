@@ -4,9 +4,9 @@ import type { LibraryFilterOperator, LibraryFilterRule, LibraryFilterField, Play
 import { computed, ref } from 'vue'
 import ThemeSelect, { type ThemeSelectOption } from './ThemeSelect.vue'
 
-const props = defineProps<{ filters: PlayerUiState['libraryFilters']; options: { artists: string[]; albumArtists: string[]; genres: string[]; folders: string[] }; resultCount: number }>()
+const props = defineProps<{ filters: PlayerUiState['libraryFilters']; options: { artists: string[]; albumArtists: string[]; folders: string[] }; resultCount: number }>()
 const emit = defineEmits<{
-  facetChange: [key: 'artist' | 'albumArtist' | 'genre' | 'folder' | 'playState', value: string]
+  facetChange: [key: 'artist' | 'albumArtist' | 'folder' | 'rating' | 'favourite', value: string]
   ruleAdd: []
   ruleUpdate: [id: string, patch: Partial<Pick<LibraryFilterRule, 'field' | 'operator' | 'value'>>]
   ruleRemove: [id: string]
@@ -14,9 +14,9 @@ const emit = defineEmits<{
 }>()
 const expanded = ref(false)
 const primaryRule = computed(() => props.filters.rules[0])
-const activeCount = computed(() => props.filters.rules.filter((rule) => rule.value.trim()).length + [props.filters.artist, props.filters.albumArtist, props.filters.genre, props.filters.folder, props.filters.playState !== 'all'].filter(Boolean).length)
-const genreOptions = computed<ThemeSelectOption[]>(() => [{ value: '', label: '全部' }, ...props.options.genres.map((genre) => ({ value: genre, label: genre }))])
-const playStateOptions: ThemeSelectOption[] = [{ value: 'all', label: '全部' }, { value: 'played', label: '已播放' }, { value: 'unplayed', label: '未播放' }, { value: 'recent', label: '最近播放' }]
+const activeCount = computed(() => props.filters.rules.filter((rule) => rule.value.trim()).length + [props.filters.artist, props.filters.albumArtist, props.filters.folder, props.filters.rating !== 'all', props.filters.favourite !== 'all'].filter(Boolean).length)
+const ratingOptions: ThemeSelectOption[] = [{ value: 'all', label: '全部' }, { value: 'unrated', label: '未评分' }, ...[1, 2, 3, 4, 5].map((rating) => ({ value: String(rating), label: `${rating} 星` }))]
+const favouriteOptions: ThemeSelectOption[] = [{ value: 'all', label: '全部' }, { value: 'favourite', label: '已收藏' }, { value: 'unfavourite', label: '未收藏' }]
 const fieldOptions: ThemeSelectOption[] = [{ value: 'all', label: '所有字段' }, { value: 'title', label: '标题' }, { value: 'artist', label: '艺人' }, { value: 'albumArtist', label: '专辑艺人' }, { value: 'album', label: '专辑' }, { value: 'genre', label: '流派' }, { value: 'path', label: '路径' }]
 const operatorOptions: ThemeSelectOption[] = [{ value: 'contains', label: '包含' }, { value: 'equals', label: '等于' }, { value: 'startsWith', label: '开头为' }]
 
@@ -35,8 +35,8 @@ function updateOperator(rule: LibraryFilterRule, value: string) {
     <div class="song-tools__bar">
       <span class="song-tools__mark"><Filter :size="15" /></span>
       <label class="song-tools__search"><Search :size="14" /><input :value="primaryRule?.value" placeholder="在歌曲中筛选" @input="primaryRule && emit('ruleUpdate', primaryRule.id, { value: ($event.target as HTMLInputElement).value })" /></label>
-      <div class="song-tools__chip"><span>流派</span><ThemeSelect :model-value="filters.genre" :options="genreOptions" select-label="按流派筛选" @update:model-value="emit('facetChange', 'genre', $event)" /></div>
-      <div class="song-tools__chip"><span>播放</span><ThemeSelect :model-value="filters.playState" :options="playStateOptions" select-label="按播放统计筛选" @update:model-value="emit('facetChange', 'playState', $event)" /></div>
+      <div class="song-tools__chip"><span>评分</span><ThemeSelect :model-value="filters.rating" :options="ratingOptions" select-label="按评分筛选" @update:model-value="emit('facetChange', 'rating', $event)" /></div>
+      <div class="song-tools__chip"><span>收藏</span><ThemeSelect :model-value="filters.favourite" :options="favouriteOptions" select-label="按收藏状态筛选" @update:model-value="emit('facetChange', 'favourite', $event)" /></div>
       <button class="song-tools__expand" :class="{ active: expanded }" @click="expanded = !expanded"><SlidersHorizontal :size="14" /><span>字段</span><i v-if="activeCount">{{ activeCount }}</i><ChevronDown :size="13" /></button>
       <small>{{ resultCount }} 首</small>
       <button class="song-tools__reset" aria-label="重置筛选" title="重置筛选" @click="emit('clear')"><RotateCcw :size="14" /></button>

@@ -69,7 +69,7 @@ const state = reactive<PlayerUiState>({
   searchLoading: false,
   dndSupported: false,
   importing: false,
-  libraryFilters: { artist: '', albumArtist: '', genre: '', folder: '', playState: 'all', matchMode: 'all', rules: [{ id: 'primary', field: 'all', operator: 'contains', value: '' }] },
+  libraryFilters: { artist: '', albumArtist: '', folder: '', rating: 'all', favourite: 'all', matchMode: 'all', rules: [{ id: 'primary', field: 'all', operator: 'contains', value: '' }] },
   libraryStatus: { initialized: false, scanning: null, itemCount: 0 },
   customColumn: { label: '', pattern: '' },
 })
@@ -945,25 +945,25 @@ function filterLibraryTracks(tracks: DisplayTrack[]) {
   const filtered = tracks.filter((track) => {
     if (filters.artist && track.artist.toLocaleLowerCase() !== filters.artist.toLocaleLowerCase()) return false
     if (filters.albumArtist && (track.albumArtist || track.artist).toLocaleLowerCase() !== filters.albumArtist.toLocaleLowerCase()) return false
-    if (filters.genre && !String(track.genre || '').split(/[;,]/).some((value) => value.trim().toLocaleLowerCase() === filters.genre.toLocaleLowerCase())) return false
     if (filters.folder && !track.path.replaceAll('\\', '/').toLocaleLowerCase().startsWith(filters.folder.toLocaleLowerCase())) return false
-    if (filters.playState === 'played' && !track.playCount) return false
-    if (filters.playState === 'unplayed' && track.playCount) return false
+    const rating = Number(track.rating ?? 0)
+    if (filters.rating === 'unrated' && rating !== 0) return false
+    if (filters.rating !== 'all' && filters.rating !== 'unrated' && rating !== Number(filters.rating)) return false
+    if (filters.favourite === 'favourite' && rating !== 5) return false
+    if (filters.favourite === 'unfavourite' && rating === 5) return false
     if (!activeRules.length) return true
     return filters.matchMode === 'all'
       ? activeRules.every((rule) => matchesLibraryRule(track, rule))
       : activeRules.some((rule) => matchesLibraryRule(track, rule))
   })
-  return filters.playState === 'recent'
-    ? filtered.filter((track) => track.lastPlayed).sort((a, b) => String(b.lastPlayed).localeCompare(String(a.lastPlayed)))
-    : filtered
+  return filtered
 }
 
 async function refreshLibraryFilters() {
   if (state.route.view === 'songs') await navigate(state.route, 'none')
 }
 
-async function setLibraryFilterFacet(key: 'artist' | 'albumArtist' | 'genre' | 'folder' | 'playState', value: string) {
+async function setLibraryFilterFacet(key: 'artist' | 'albumArtist' | 'folder' | 'rating' | 'favourite', value: string) {
   Object.assign(state.libraryFilters, { [key]: value })
   await refreshLibraryFilters()
 }
@@ -991,7 +991,7 @@ async function setLibraryFilterMatchMode(mode: LibraryFilterMatchMode) {
 }
 
 async function clearLibraryFilters() {
-  Object.assign(state.libraryFilters, { artist: '', albumArtist: '', genre: '', folder: '', playState: 'all', matchMode: 'all', rules: [{ id: 'primary', field: 'all', operator: 'contains', value: '' }] })
+  Object.assign(state.libraryFilters, { artist: '', albumArtist: '', folder: '', rating: 'all', favourite: 'all', matchMode: 'all', rules: [{ id: 'primary', field: 'all', operator: 'contains', value: '' }] })
   await refreshLibraryFilters()
 }
 
