@@ -177,6 +177,7 @@ onBeforeUnmount(stopPlaylistDrag)
           :key="playlist.index"
           class="playlist-nav__item"
           :data-playlist-index="playlist.index"
+          :data-playlist-name="playlist.name"
           :class="{ active: view === 'playlist' && activePlaylist?.index === playlist.index }"
           @click="selectPlaylist(playlist.index, $event)"
           @contextmenu.prevent.stop="emit('playlistMenu', playlist, $event)"

@@ -837,6 +837,7 @@ function onDrop(event: DragEvent) {
               @play-track="handlePlayTrack"
               @track-menu="openTrackMenu"
               @selection="selectedTracks = $event"
+              @add-to-playlist="player.addTracksToPlaylist"
               @shuffle="player.shuffleCurrent"
             />
             <LibraryView
@@ -869,6 +870,7 @@ function onDrop(event: DragEvent) {
               @open-folder="player.openFolder"
               @clear-search="clearPrimarySearch"
               @selection="selectedTracks = $event"
+              @add-to-playlist="player.addTracksToPlaylist"
               @filter-facet-change="player.setLibraryFilterFacet"
               @filter-rule-add="player.addLibraryFilterRule"
               @filter-rule-update="player.updateLibraryFilterRule"
