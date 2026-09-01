@@ -41,6 +41,7 @@ const dragOffsetY = ref(0)
 const dropIndicator = ref({ left: 0, top: 0, width: 0, visible: false })
 const dragPreviewTrack = ref<DisplayTrack | null>(null)
 const draggedTrackCount = ref(0)
+const draggedIndexes = ref(new Set<number>())
 const dragFragments = ref<Array<{ id: string; track: DisplayTrack; offsetX: number; offsetY: number; width: number; layer: number }>>([])
 const mergePhase = ref(false)
 const mergedPreview = ref(false)
@@ -64,7 +65,6 @@ const playlistDropIndicatorStyle = computed(() => ({
   height: `${playlistDropIndicator.value.height}px`,
 }))
 let dragList: HTMLElement | null = null
-let dragSelection: ReadonlySet<number> | null = null
 let mergeFrame = 0
 let mergeTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -153,7 +153,7 @@ function stopReorderDrag() {
   targetIpod.value = false
   dragMovesTracks.value = false
   draggedTrackCount.value = 0
-  dragSelection = null
+  draggedIndexes.value = new Set()
   dragFragments.value = []
   mergePhase.value = false
   mergedPreview.value = false
@@ -219,8 +219,8 @@ function finishReorderDrag() {
   const playlist = targetPlaylist.value
   const ipod = targetIpod.value
   const move = dragMovesTracks.value
-  const tracks = (ipod || (playlist && playlist.index !== props.playlistIndex)) && dragSelection
-    ? props.tracks.filter((_, index) => dragSelection?.has(index))
+  const tracks = (ipod || (playlist && playlist.index !== props.playlistIndex))
+    ? props.tracks.filter((_, index) => draggedIndexes.value.has(index))
     : []
   const moved = dragging.value && from >= 0 && to >= 0 && from !== to
   stopReorderDrag()
@@ -248,8 +248,8 @@ function beginTrackDrag(index: number, event: PointerEvent) {
   dragIndex.value = index
   dragMovesTracks.value = event.shiftKey && Boolean(props.reorderable)
   dropIndex.value = index
-  dragSelection = selected.value.has(index) ? selected.value : new Set([index])
-  draggedTrackCount.value = dragSelection.size
+  draggedIndexes.value = selected.value.has(index) ? new Set(selected.value) : new Set([index])
+  draggedTrackCount.value = draggedIndexes.value.size
   dragPreviewTrack.value = props.tracks[index] ?? null
   dragX.value = event.clientX
   dragY.value = event.clientY
@@ -265,8 +265,12 @@ function beginTrackDrag(index: number, event: PointerEvent) {
   if (bounds && dragList) {
     let leftOutside = index <= 0
     let rightOutside = index >= props.tracks.length - 1
-    for (let distance = 1; dragFragments.value.length < 3 && (!leftOutside || !rightOutside); distance += 1) {
-      for (const trackIndex of [index - distance, index + distance]) {
+    let aboveCount = 0
+    let belowCount = 0
+    for (let distance = 1; (aboveCount < 5 && !leftOutside) || (belowCount < 5 && !rightOutside); distance += 1) {
+      for (const [trackIndex, direction] of [[index - distance, 'above'], [index + distance, 'below']] as const) {
+        if (direction === 'above' && aboveCount >= 5) continue
+        if (direction === 'below' && belowCount >= 5) continue
         if (trackIndex < 0) { leftOutside = true; continue }
         if (trackIndex >= props.tracks.length) { rightOutside = true; continue }
         const source = dragList.children.item(trackIndex + 1) as HTMLElement | null
@@ -274,11 +278,12 @@ function beginTrackDrag(index: number, event: PointerEvent) {
         if (!sourceBounds) continue
         if (trackIndex < index && sourceBounds.bottom <= 0) leftOutside = true
         if (trackIndex > index && sourceBounds.top >= window.innerHeight) rightOutside = true
-        if (sourceBounds.bottom <= 0 || sourceBounds.top >= window.innerHeight || !dragSelection.has(trackIndex)) continue
+        if (sourceBounds.bottom <= 0 || sourceBounds.top >= window.innerHeight || !draggedIndexes.value.has(trackIndex)) continue
         const track = props.tracks[trackIndex]
         if (!track) continue
         dragFragments.value.push({ id: `${trackKey(track)}-${trackIndex}`, track, offsetX: sourceBounds.left - bounds.left, offsetY: sourceBounds.top - bounds.top, width: sourceBounds.width, layer: dragFragments.value.length })
-        if (dragFragments.value.length === 3) break
+        if (direction === 'above') aboveCount += 1
+        else belowCount += 1
       }
     }
   }
@@ -321,7 +326,7 @@ function isCurrent(track: DisplayTrack, currentTrack: DisplayTrack | null) {
       v-for="(track, index) in tracks"
       :key="`${trackKey(track)}-${index}`"
        class="track-row"
-       :class="{ current: isCurrent(track, currentTrack), selected: selected.has(index), 'drag-source': dragging && dragIndex === index }"
+        :class="{ current: isCurrent(track, currentTrack), selected: selected.has(index), 'drag-source': dragging && dragIndex === index, 'dragged-item': dragging && draggedIndexes.has(index) }"
        :data-reorder-index="reorderable ? index : undefined"
        :data-track-index="index"
       role="button"

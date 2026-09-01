@@ -1092,6 +1092,8 @@ input[type="range"] {
 .track-row:hover .track-row__drag-handle { display: block; }
 .track-row__drag-handle:active { cursor: grabbing; }
 .track-row.drag-source { background: rgba(255,255,255,.045); outline: 1px solid rgba(255,255,255,.08); outline-offset: -1px; }
+.track-row.dragged-item { opacity: .42; filter: saturate(.55) brightness(.72); transition: opacity 120ms ease, filter 120ms ease; }
+.track-row.drag-source { opacity: .56; }
 
 .track-drag-preview-stack {
   position: fixed;
