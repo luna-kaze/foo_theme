@@ -852,6 +852,7 @@ function onDrop(event: DragEvent) {
               :loading="state.loading || state.searchLoading"
               :folder-selection-mode="folderSelectionMode"
               :selected-folder-ids="selectedFolderIds"
+              :alphabet-index-view="state.alphabetIndexView"
               @navigate="navigatePrimary"
               @artist="player.selectArtist"
               @artist-menu="openArtistMenu"
@@ -859,6 +860,7 @@ function onDrop(event: DragEvent) {
               @folder-menu="openFolderMenu"
               @folder-selection="setFolderSelection"
               @cancel-folder-selection="cancelFolderSelection"
+              @alphabet-index-view="player.setAlphabetIndexView"
               @back="goBackPrimary"
               @open-album="openPrimaryAlbum"
               @album-menu="openAlbumMenu"
@@ -887,6 +889,7 @@ function onDrop(event: DragEvent) {
               :custom-column="state.customColumn"
               :album-selection-mode="albumSelectionMode"
               :selected-album-ids="selectedAlbumIds"
+              :alphabet-index-view="state.alphabetIndexView"
               @navigate="navigatePrimary"
               @back="goBackPrimary"
               @open-album="openPrimaryAlbum"
@@ -910,6 +913,7 @@ function onDrop(event: DragEvent) {
               @reorder="player.reorderPlaylistTrack"
               @album-selection="setAlbumSelection"
               @cancel-album-selection="cancelAlbumSelection"
+              @alphabet-index-view="player.setAlphabetIndexView"
             />
           </div>
         </Transition>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Album, Clock3, Folder, HardDrive, Library, Music2, Play, Shuffle, Users } from '@lucide/vue'
+import { Album, Clock3, Folder, Grid3X3, HardDrive, Library, ListTree, Music2, Play, Shuffle, Users } from '@lucide/vue'
 import type { ArtistInfo, LibraryStats } from 'foo-webview-sdk'
 import type { AlbumCard, ArtistCard, DisplayTrack, LibraryFolderCard, ViewId, ViewRoute } from '../types/music'
 import AlbumGrid from './AlbumGrid.vue'
@@ -20,6 +20,7 @@ const props = defineProps<{
   loading: boolean
   folderSelectionMode: boolean
   selectedFolderIds: string[]
+  alphabetIndexView: boolean
 }>()
 
 const emit = defineEmits<{
@@ -39,6 +40,7 @@ const emit = defineEmits<{
   selection: [tracks: DisplayTrack[]]
   shuffle: []
   back: []
+  alphabetIndexView: [enabled: boolean]
 }>()
 
 function formatDuration(seconds: number) {
@@ -103,8 +105,8 @@ function openFolder(folder: LibraryFolderCard) {
     </template>
 
     <template v-else-if="route.view === 'artists'">
-      <section class="page-heading"><p class="eyebrow">媒体库</p><h1>艺术家</h1><p>共 {{ artists.length }} 位艺术家，点按卡片查看其全部曲目。</p></section>
-      <div class="alphabet-browser">
+      <section class="page-heading page-heading--row"><div><p class="eyebrow">媒体库</p><h1>艺术家</h1><p>共 {{ artists.length }} 位艺术家，点按卡片查看其全部曲目。</p></div><button class="secondary-button view-mode-toggle" :class="{ active: alphabetIndexView }" @click="emit('alphabetIndexView', !alphabetIndexView)"><ListTree v-if="alphabetIndexView" :size="16" /><Grid3X3 v-else :size="16" />{{ alphabetIndexView ? '索引视图' : '网格视图' }}</button></section>
+      <div v-if="alphabetIndexView" class="alphabet-browser">
         <div class="alphabet-browser__groups">
           <section v-for="group in artistGroups" :key="group.letter" :ref="(element) => registerArtistGroup(group.letter, element)" class="alphabet-group">
             <header class="alphabet-group__heading"><strong>{{ group.letter }}</strong><span /></header>
@@ -118,6 +120,12 @@ function openFolder(folder: LibraryFolderCard) {
         </div>
         <AlphabetIndexRail :available="artistLetters" :active="activeArtistLetter" @select="jumpToArtistLetter" />
       </div>
+      <section v-else class="library-card-grid">
+        <button v-for="artist in artists" :key="artist.name" class="artist-browser-card" @click="emit('artist', artist.name)" @contextmenu.prevent.stop="emit('artistMenu', artist, $event)">
+          <span class="artist-browser-card__art" :style="artistArtwork[artist.name] ? { backgroundImage: `url(${artistArtwork[artist.name]})` } : {}"><i v-if="!artistArtwork[artist.name]">{{ artist.name.slice(0, 1).toLocaleUpperCase() }}</i></span>
+          <strong>{{ artist.name }}</strong><small>{{ artist.trackCount }} 首曲目 · {{ artist.albumCount }} 张专辑</small>
+        </button>
+      </section>
     </template>
 
     <template v-else-if="route.view === 'folders'">

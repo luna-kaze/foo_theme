@@ -70,6 +70,7 @@ const state = reactive<PlayerUiState>({
   searchLoading: false,
   dndSupported: false,
   importing: false,
+  alphabetIndexView: false,
   libraryFilters: { artist: '', albumArtist: '', folder: '', rating: 'all', favourite: 'all', matchMode: 'all', rules: [{ id: 'primary', field: 'all', operator: 'contains', value: '' }] },
   libraryStatus: { initialized: false, scanning: null, itemCount: 0 },
   customColumn: { label: '', pattern: '' },
@@ -101,6 +102,7 @@ let miniPlayerWindowId = ''
 const history: ViewRoute[] = [{ view: 'home' }]
 let historyIndex = 0
 const ownershipConfigKey = 'foo-theme.owned-playlists.v1'
+const preferencesConfigKey = 'foo-theme.preferences.v1'
 const runtimeParams = new URLSearchParams(window.location.search)
 const parentWindowId = runtimeParams.get('mainWindowId') ?? ''
 const playbackOrders = [
@@ -786,7 +788,7 @@ async function initialize() {
       state.connected = fb.isAvailable()
       if (!state.connected) throw new Error('foobar2000 宿主桥接不可用。')
       bindEvents()
-      await syncNoDragRegion()
+      await Promise.all([syncNoDragRegion(), loadThemePreferences()])
       await recoverMiniPlayerWindow()
       window.addEventListener('resize', scheduleNoDragRegion)
       const [library, playlists, capabilities, , windowState] = await Promise.allSettled([
@@ -1304,6 +1306,23 @@ async function getOwnerId() {
     ownerIdPromise = null
     throw error
   }
+}
+
+async function loadThemePreferences() {
+  try {
+    const result = await fb.config.get(preferencesConfigKey)
+    const value = result.value as { alphabetIndexView?: unknown } | null
+    state.alphabetIndexView = Boolean(value?.alphabetIndexView)
+  } catch {
+    // The default continuous grid remains usable when preference storage is unavailable.
+  }
+}
+
+async function setAlphabetIndexView(enabled: boolean) {
+  state.alphabetIndexView = enabled
+  if (!state.connected) return
+  const saved = await runAction(() => fb.config.set(preferencesConfigKey, { alphabetIndexView: enabled }))
+  if (!saved) state.alphabetIndexView = !enabled
 }
 
 async function ensureOwnedPlaybackPlaylist() {
@@ -2837,6 +2856,7 @@ export function useFoobar() {
     showFolderInExplorer,
     openTrackAlbum,
     toggleFavourite,
+    setAlphabetIndexView,
     getTrackDetails,
     writeTrackMetadata,
     setTrackRating,

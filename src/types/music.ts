@@ -140,6 +140,7 @@ export interface PlayerUiState {
   searchLoading: boolean
   dndSupported: boolean
   importing: boolean
+  alphabetIndexView: boolean
   libraryFilters: {
     artist: string
     albumArtist: string

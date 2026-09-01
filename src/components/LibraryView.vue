@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ArrowLeft, ArrowRight, FileMusic, FolderOpen, Play, Radio, SearchX, Shuffle } from '@lucide/vue'
+import { ArrowLeft, ArrowRight, FileMusic, FolderOpen, Grid3X3, ListTree, Play, Radio, SearchX, Shuffle } from '@lucide/vue'
 import type { AlbumCard, DisplayTrack, LibraryFilterRule, ViewId } from '../types/music'
 import type { PlaylistInfo } from 'foo-webview-sdk'
 import AlbumGrid from './AlbumGrid.vue'
@@ -28,6 +28,7 @@ const props = defineProps<{
   customColumn: PlayerUiState['customColumn']
   albumSelectionMode: boolean
   selectedAlbumIds: string[]
+  alphabetIndexView: boolean
 }>()
 
 const albumGroups = useAlphabetGroups(() => props.albums, (album) => album.name, (album) => album.sortName ?? '')
@@ -58,6 +59,7 @@ const emit = defineEmits<{
   addToIpod: [tracks: DisplayTrack[]]
   albumSelection: [album: AlbumCard, selected: boolean]
   cancelAlbumSelection: []
+  alphabetIndexView: [enabled: boolean]
 }>()
 </script>
 
@@ -109,8 +111,8 @@ const emit = defineEmits<{
     </template>
 
     <template v-else-if="view === 'albums'">
-      <section class="page-heading page-heading--row"><div><p class="eyebrow">音乐库</p><h1>{{ albumSelectionMode ? `已选择 ${selectedAlbumIds.length} 张专辑` : '专辑' }}</h1><p>收藏中共有 {{ albums.length }} 张专辑</p></div><button v-if="albumSelectionMode" class="secondary-button" @click="emit('cancelAlbumSelection')">退出选择</button></section>
-      <div v-if="albums.length" class="alphabet-browser">
+      <section class="page-heading page-heading--row"><div><p class="eyebrow">音乐库</p><h1>{{ albumSelectionMode ? `已选择 ${selectedAlbumIds.length} 张专辑` : '专辑' }}</h1><p>收藏中共有 {{ albums.length }} 张专辑</p></div><div class="page-heading__actions"><button class="secondary-button view-mode-toggle" :class="{ active: alphabetIndexView }" @click="emit('alphabetIndexView', !alphabetIndexView)"><ListTree v-if="alphabetIndexView" :size="16" /><Grid3X3 v-else :size="16" />{{ alphabetIndexView ? '索引视图' : '网格视图' }}</button><button v-if="albumSelectionMode" class="secondary-button" @click="emit('cancelAlbumSelection')">退出选择</button></div></section>
+      <div v-if="albums.length && alphabetIndexView" class="alphabet-browser">
         <div class="alphabet-browser__groups">
           <section v-for="group in albumGroups" :key="group.letter" :ref="(element) => registerAlbumGroup(group.letter, element)" class="alphabet-group">
             <header class="alphabet-group__heading"><strong>{{ group.letter }}</strong><span /></header>
@@ -119,6 +121,7 @@ const emit = defineEmits<{
         </div>
         <AlphabetIndexRail :available="albumLetters" :active="activeAlbumLetter" @select="jumpToAlbumLetter" />
       </div>
+      <AlbumGrid v-else-if="albums.length" :albums="albums" :selection-mode="albumSelectionMode" :selected-ids="selectedAlbumIds" @open="emit('openAlbum', $event)" @menu="(album, event) => emit('albumMenu', album, event)" @selection="(album, selected) => emit('albumSelection', album, selected)" />
       <div v-else class="collection-empty"><FileMusic :size="30" /><strong>没有找到专辑</strong><span>打开本地音乐，或在 foobar2000 首选项中更新监视文件夹。</span><div><button class="primary-button" @click="emit('openFiles')">打开文件</button><button class="secondary-button" @click="emit('openFolder')">打开文件夹</button></div></div>
     </template>
 
