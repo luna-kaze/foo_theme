@@ -192,6 +192,10 @@ function updateReorderDrag(event: PointerEvent) {
   targetPlaylist.value = null
   targetIpod.value = false
   playlistDropIndicator.value.visible = false
+  if (draggedTrackCount.value > 1) {
+    dropIndicator.value.visible = false
+    return
+  }
   if (!dragList) return
   const previewTop = event.clientY - dragOffsetY.value
   const rows = [...dragList.querySelectorAll<HTMLElement>('.track-row[data-reorder-index]')]
