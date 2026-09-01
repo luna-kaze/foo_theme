@@ -219,6 +219,7 @@ function finishReorderDrag() {
   const playlist = targetPlaylist.value
   const ipod = targetIpod.value
   const move = dragMovesTracks.value
+  const trackCount = draggedTrackCount.value
   const tracks = (ipod || (playlist && playlist.index !== props.playlistIndex))
     ? props.tracks.filter((_, index) => draggedIndexes.value.has(index))
     : []
@@ -236,6 +237,7 @@ function finishReorderDrag() {
     return
   }
   if (!props.reorderable) return
+  if (trackCount > 1) return
   if (!moved) return
   suppressClick = true
   window.setTimeout(() => { suppressClick = false }, 0)
