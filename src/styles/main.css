@@ -707,7 +707,7 @@ input[type="range"] {
 .view-mode-toggle.active { color: #ffe8e5; background: rgba(231,99,97,.16); border-color: rgba(231,99,97,.34); }
 .sidebar-section__title > div { display: flex; gap: 2px; }
 .sidebar-section__title button.active { color: #ffe8e5; background: rgba(231,99,97,.16); }
-.sidebar-playlist-filter { display: flex; align-items: center; gap: 7px; min-height: 34px; padding: 0 7px; margin: -3px 0 7px; color: #99969d; background: rgba(255,255,255,.045); border: 1px solid rgba(255,255,255,.13); border-radius: 8px; }
+.sidebar-playlist-filter { display: flex; align-items: center; gap: 7px; min-height: 34px; padding: 0 7px; margin: -3px 0 7px; color: #8d8991; background: rgba(13,13,16,.66); border: 1px solid rgba(185,177,185,.12); border-radius: 8px; box-shadow: inset 0 1px rgba(255,255,255,.025); }
 .sidebar-playlist-filter input { min-width: 0; flex: 1; height: 31px; color: var(--text); font-size: 11px; background: transparent; border: 0; outline: 0; }
 .sidebar-playlist-filter input::placeholder { color: var(--faint); }
 .sidebar-playlist-filter button { display: grid; flex: 0 0 24px; width: 24px; height: 24px; padding: 0; place-items: center; color: #aaa7ae; border-radius: 6px; }

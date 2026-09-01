@@ -1641,6 +1641,15 @@ async function reorderPlaylists(order: number[]) {
   if (result) await loadPlaylists()
 }
 
+async function movePlaylistToTop(playlistIndex: number) {
+  const order = state.playlists.map((playlist) => playlist.index)
+  const position = order.indexOf(playlistIndex)
+  if (position <= 0) return
+  order.splice(position, 1)
+  order.unshift(playlistIndex)
+  await reorderPlaylists(order)
+}
+
 async function sortPlaylist(playlistIndex: number, pattern: string, descending = false) {
   const playlist = state.playlists.find((item) => item.index === playlistIndex)
   if (!playlist || playlist.isLocked || playlist.isAutoplaylist) return
@@ -2839,6 +2848,7 @@ export function useFoobar() {
     undoPlaylistChange,
     reorderPlaylistTrack,
     reorderPlaylists,
+    movePlaylistToTop,
     sortPlaylist,
     getOutputDevices,
     setOutputDevice,

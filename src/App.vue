@@ -686,6 +686,7 @@ async function openPlaylistMenu(playlist: PlaylistInfo, event: MouseEvent) {
     { id: 'playlist:open', label: '打开播放列表', iconSvg: menuIcons.album },
     { id: 'playlist:play', label: '从头播放', iconSvg: menuIcons.play, enabled: playlist.trackCount > 0 },
     { id: 'playlist:shuffle', label: '随机播放', iconSvg: menuIcons.shuffle, enabled: playlist.trackCount > 0 },
+    { id: 'playlist:move-top', label: '移到最上方', iconSvg: menuIcons.move, enabled: state.playlists.at(0)?.index !== playlist.index },
     { type: 'separator' },
     { id: 'playlist:duplicate', label: '复制播放列表', iconSvg: menuIcons.copy },
     { id: 'playlist:undo', label: '撤销上次更改', iconSvg: menuIcons.refresh, enabled: writable },
@@ -699,6 +700,7 @@ async function openPlaylistMenu(playlist: PlaylistInfo, event: MouseEvent) {
   if (action === 'playlist:open') await player.selectActivePlaylist(playlist.index)
   if (action === 'playlist:play') await player.playPlaylist(playlist.index)
   if (action === 'playlist:shuffle') await player.playPlaylist(playlist.index, true)
+  if (action === 'playlist:move-top') await player.movePlaylistToTop(playlist.index)
   if (action === 'playlist:duplicate') await player.duplicatePlaylist(playlist.index)
   if (action === 'playlist:undo') await player.undoPlaylistChange(playlist.index)
   if (action === 'playlist:sort-title') await player.sortPlaylist(playlist.index, '%title%')
