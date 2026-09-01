@@ -27,7 +27,7 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <main class="mini-player">
+  <main class="mini-player" @contextmenu.prevent>
     <div class="mini-player__backdrop" :style="artwork ? { backgroundImage: `url(${artwork})` } : {}" />
     <div class="mini-player__drag" @pointerdown.left="emit('drag')" />
     <ArtworkImage :src="artwork || track?.artworkUrl" :alt="`${track?.album ?? '当前曲目'} 封面`" />

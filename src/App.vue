@@ -15,7 +15,7 @@ import TrackInspector from './components/TrackInspector.vue'
 import FileOperationDialog from './components/FileOperationDialog.vue'
 import TrackActionMenu from './components/TrackActionMenu.vue'
 import { useFoobar } from './composables/useFoobar'
-import fb, { type OutputDevice, type PlaylistInfo } from 'foo-webview-sdk'
+import fb, { type ArtistInfo, type OutputDevice, type PlaylistInfo } from 'foo-webview-sdk'
 import type { AlbumCard, DisplayTrack, LibraryFolderCard, TrackDetails, ViewId } from './types/music'
 import { menuIcons, showContextMenu, type ContextMenuItem } from './utils/contextMenu'
 import { isSameTrack, localFilePath, playablePath, trackKey } from './utils/track'
@@ -574,6 +574,27 @@ async function openAlbumMenu(album: AlbumCard, event: MouseEvent) {
   if (action) await runSelectedPluginAction(action, 'album:dop', pluginActions.dop, albumTracks)
 }
 
+async function openArtistMenu(artist: ArtistInfo, event: MouseEvent) {
+  const tracks = await player.getArtistTracks(artist.name)
+  const cover = await loadMenuCover(tracks[0])
+  const action = await openPopup([
+    { id: 'artist:header', type: 'nowplaying', cover, title: artist.name, subtitle: `${artist.trackCount} 首曲目 · ${artist.albumCount} 张专辑` },
+    { type: 'separator' },
+    { id: 'artist:open', label: '打开艺术家', iconSvg: menuIcons.album },
+    { id: 'artist:play', label: '播放全部曲目', iconSvg: menuIcons.play, enabled: tracks.length > 0 },
+    { id: 'artist:shuffle', label: '随机播放', iconSvg: menuIcons.shuffle, enabled: tracks.length > 0 },
+    { id: 'artist:queue', label: '添加到队列', iconSvg: menuIcons.queue, enabled: tracks.length > 0 },
+    { type: 'separator' },
+    { id: 'artist:playlist', label: '添加到播放列表', iconSvg: menuIcons.playlist, enabled: tracks.length > 0 && state.playlists.length > 0, submenu: playlistSubmenu('artist:playlist') },
+  ], event)
+  if (!action) return
+  if (action === 'artist:open') await player.selectArtist(artist.name)
+  if (action === 'artist:play') await player.playTrackCollection(tracks)
+  if (action === 'artist:shuffle') await player.playTrackCollection(tracks, true)
+  if (action === 'artist:queue') await player.addTracksToQueue(tracks)
+  if (action.startsWith('artist:playlist:')) await player.addTracksToPlaylist(tracks, Number(action.split(':').at(-1)))
+}
+
 async function openFolderMenu(folder: LibraryFolderCard, event: MouseEvent) {
   event.preventDefault()
   if (folderSelectionMode.value && !selectedFolderIds.value.includes(folderId(folder))) setFolderSelection(folder, true)
@@ -670,22 +691,6 @@ async function openQueueMenu(index: number, event: MouseEvent) {
   if (action === 'queue:clear') await player.clearQueue()
 }
 
-async function openAppMenu(event: MouseEvent) {
-  if (event.defaultPrevented || !state.connected) return
-  event.preventDefault()
-  const action = await openPopup([
-    { id: 'app:search', label: '搜索音乐库', iconSvg: menuIcons.search },
-    { type: 'separator' },
-    { id: 'app:refresh', label: '刷新音乐库', iconSvg: menuIcons.refresh },
-    { id: 'app:rescan', label: '重新扫描音乐库', iconSvg: menuIcons.refresh },
-    { id: 'app:preferences', label: '首选项', iconSvg: menuIcons.settings },
-  ], event)
-  if (action === 'app:search') document.querySelector<HTMLInputElement>('.topbar-search input')?.focus()
-  if (action === 'app:refresh') await player.refreshLibrary()
-  if (action === 'app:rescan') await player.rescanLibrary()
-  if (action === 'app:preferences') await player.showPreferences()
-}
-
 async function runTrackAction(action: () => Promise<unknown>) {
   trackMenu.open = false
   await action()
@@ -742,7 +747,7 @@ function onDrop(event: DragEvent) {
     @drag="player.startWindowDrag"
     @close="player.closeWindow"
   />
-  <div v-else class="app-shell" :class="{ 'immersive-fullscreen-active': immersiveFullscreenTarget }" :style="immersiveShellStyle" @contextmenu="openAppMenu">
+  <div v-else class="app-shell" :class="{ 'immersive-fullscreen-active': immersiveFullscreenTarget }" :style="immersiveShellStyle" @contextmenu.prevent>
     <AppSidebar
       :view="state.view"
       :playlists="state.playlists"
@@ -753,7 +758,8 @@ function onDrop(event: DragEvent) {
       @playlist="selectPrimaryPlaylist"
       @search="player.setSearch"
       @submit-search="submitPrimarySearch"
-      @playlist-menu="openPlaylistMenu"
+       @playlist-menu="openPlaylistMenu"
+       @reorder-playlists="player.reorderPlaylists"
       @create-playlist="state.dialog = 'createPlaylist'"
       @favourites="showFavourites"
     />
@@ -820,6 +826,7 @@ function onDrop(event: DragEvent) {
               :selected-folder-ids="selectedFolderIds"
               @navigate="navigatePrimary"
               @artist="player.selectArtist"
+              @artist-menu="openArtistMenu"
               @folder="player.selectLibraryFolder"
               @folder-menu="openFolderMenu"
               @folder-selection="setFolderSelection"

@@ -1164,6 +1164,12 @@ async function selectArtist(artist: string, pushHistory = true) {
   await navigate({ view: 'artist', artist }, pushHistory ? 'push' : 'none')
 }
 
+async function getArtistTracks(artist: string) {
+  if (!state.connected) return state.tracks.filter((track) => track.artist === artist || track.albumArtist === artist)
+  const result = await runAction(() => fb.library.getArtistTracks(artist, 100000))
+  return result ? attachArtwork(result.items.map(normalizeTrack)) : []
+}
+
 async function selectLibraryFolder(folder: LibraryFolderCard, pushHistory = true) {
   await navigate({ view: 'folder', rootId: folder.rootId, pathId: folder.pathId, name: folder.name }, pushHistory ? 'push' : 'none')
 }
@@ -1492,7 +1498,7 @@ async function undoPlaylistChange(playlistIndex: number) {
   }
 }
 
-async function reorderPlaylistTrack(from: number, to: number) {
+async function reorderPlaylistTrack(from: number, to: number, after = false) {
   const route = state.route
   if (route.view !== 'playlist' || from === to) return
   const playlist = state.playlists.find((item) => item.index === route.playlistIndex)
@@ -1504,8 +1510,36 @@ async function reorderPlaylistTrack(from: number, to: number) {
   const targetTrack = state.visibleTracks[to]
   const target = targetTrack ? await resolvePlaylistTrackIndex(route.playlistIndex, targetTrack, targetTrack.sourceIndex) : to
   if (target == null) return
-  const result = await runAction(() => fb.playlist.moveTracks(route.playlistIndex, [resolved], target - resolved), '已调整播放列表顺序')
+  const delta = target > resolved
+    ? target - resolved - (after ? 0 : 1)
+    : target - resolved + (after ? 1 : 0)
+  if (!delta) return
+  const result = await runAction(() => fb.playlist.moveTracks(route.playlistIndex, [resolved], delta), '已调整播放列表顺序')
   if (result) await refreshActivePlaylist()
+}
+
+async function reorderPlaylists(order: number[]) {
+  const currentOrder = state.playlists.map((playlist) => playlist.index)
+  if (order.length !== currentOrder.length || new Set(order).size !== order.length || order.some((index) => !currentOrder.includes(index))) return
+  if (order.every((index, position) => index === currentOrder[position])) return
+  const [allPlaylists, ownerId] = await Promise.all([fb.playlist.getAll(), getOwnerId()])
+  const internalName = `正在播放 [foo-theme:${ownerId}]`
+  const visiblePlaylists = allPlaylists.filter((playlist) => playlist.name !== internalName && playlist.name !== '[WebView Queue]')
+  if (visiblePlaylists.length !== order.length || visiblePlaylists.some((playlist) => !order.includes(playlist.index))) {
+    notify('播放列表已变化，请重新拖动排序。', 'info')
+    await loadPlaylists()
+    return
+  }
+  const oldPositionByIndex = new Map(allPlaylists.map((playlist, position) => [playlist.index, position]))
+  let nextVisible = 0
+  const merged = allPlaylists.map((playlist) => {
+    if (playlist.name === internalName || playlist.name === '[WebView Queue]') return playlist.index
+    return order[nextVisible++]
+  })
+  const newOrder = merged.map((index) => oldPositionByIndex.get(index))
+  if (newOrder.some((position) => position == null)) return
+  const result = await runAction(() => fb.playlist.reorderPlaylists(newOrder as number[]), '已调整播放列表顺序')
+  if (result) await loadPlaylists()
 }
 
 async function sortPlaylist(playlistIndex: number, pattern: string, descending = false) {
@@ -2605,6 +2639,7 @@ export function useFoobar() {
     selectActivePlaylist,
     selectAlbum,
     selectArtist,
+    getArtistTracks,
     selectLibraryFolder,
     loadFavourites,
     loadRadio,
@@ -2622,6 +2657,7 @@ export function useFoobar() {
     removePlaylist,
     undoPlaylistChange,
     reorderPlaylistTrack,
+    reorderPlaylists,
     sortPlaylist,
     getOutputDevices,
     setOutputDevice,

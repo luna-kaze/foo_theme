@@ -23,6 +23,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   navigate: [view: ViewId]
   artist: [name: string]
+  artistMenu: [artist: ArtistInfo, event: MouseEvent]
   folder: [folder: LibraryFolderCard]
   folderMenu: [folder: LibraryFolderCard, event: MouseEvent]
   folderSelection: [folder: LibraryFolderCard, selected: boolean]
@@ -97,7 +98,7 @@ function openFolder(folder: LibraryFolderCard) {
     <template v-else-if="route.view === 'artists'">
       <section class="page-heading"><p class="eyebrow">媒体库</p><h1>艺术家</h1><p>共 {{ artists.length }} 位艺术家，点按卡片查看其全部曲目。</p></section>
       <section class="library-card-grid">
-        <button v-for="artist in artists" :key="artist.name" class="artist-browser-card" @click="emit('artist', artist.name)">
+        <button v-for="artist in artists" :key="artist.name" class="artist-browser-card" @click="emit('artist', artist.name)" @contextmenu.prevent.stop="emit('artistMenu', artist, $event)">
           <span class="artist-browser-card__art" :style="artistArtwork[artist.name] ? { backgroundImage: `url(${artistArtwork[artist.name]})` } : {}"><i v-if="!artistArtwork[artist.name]">{{ artist.name.slice(0, 1).toLocaleUpperCase() }}</i></span>
           <strong>{{ artist.name }}</strong><small>{{ artist.trackCount }} 首曲目 · {{ artist.albumCount }} 张专辑</small>
         </button>

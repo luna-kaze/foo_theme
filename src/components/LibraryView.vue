@@ -45,7 +45,7 @@ const emit = defineEmits<{
   filterRuleUpdate: [id: string, patch: Partial<Pick<LibraryFilterRule, 'field' | 'operator' | 'value'>>]
   filterRuleRemove: [id: string]
   clearFilters: []
-  reorder: [from: number, to: number]
+  reorder: [from: number, to: number, after: boolean]
   albumSelection: [album: AlbumCard, selected: boolean]
   cancelAlbumSelection: []
 }>()
@@ -154,7 +154,7 @@ const emit = defineEmits<{
         @play="(track, index) => emit('playTrack', track, index)"
         @menu="(track, index, event) => emit('trackMenu', track, index, event)"
         @selection="emit('selection', $event)"
-        @reorder="(from, to) => emit('reorder', from, to)"
+         @reorder="(from, to, after) => emit('reorder', from, to, after)"
       />
       <div v-else-if="view !== 'search' || !albums.length" class="collection-empty">
         <SearchX v-if="view === 'search'" :size="30" /><FileMusic v-else :size="30" />
