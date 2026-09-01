@@ -262,7 +262,7 @@ function beginTrackDrag(index: number, event: PointerEvent) {
   }
   dragList = (event.currentTarget as Element).closest<HTMLElement>('.track-list')
   dragFragments.value = []
-  if (bounds && dragList && draggedTrackCount.value <= 20) {
+  if (bounds && dragList) {
     let leftOutside = index <= 0
     let rightOutside = index >= props.tracks.length - 1
     for (let distance = 1; dragFragments.value.length < 3 && (!leftOutside || !rightOutside); distance += 1) {
