@@ -194,7 +194,7 @@ onBeforeUnmount(stopPlaylistDrag)
         <span>播放列表</span>
         <div><button :class="{ active: playlistFilterOpen }" :aria-label="playlistFilterOpen ? '关闭播放列表筛选' : '筛选播放列表'" @click="playlistFilterOpen = !playlistFilterOpen; if (!playlistFilterOpen) playlistFilter = ''"><Filter :size="14" /></button><button aria-label="新建播放列表" @click="emit('createPlaylist')"><Plus :size="15" /></button></div>
       </div>
-      <div v-if="playlistFilterOpen" class="sidebar-playlist-filter"><Search :size="14" /><input v-model="playlistFilter" type="search" placeholder="筛选播放列表" aria-label="筛选播放列表名称" autofocus /><button v-if="playlistFilter" aria-label="清除筛选" @click="playlistFilter = ''"><X :size="14" /></button></div>
+      <div v-if="playlistFilterOpen" class="sidebar-playlist-filter"><Search :size="14" /><input v-model="playlistFilter" type="text" placeholder="筛选播放列表" aria-label="筛选播放列表名称" autofocus /><button v-if="playlistFilter" aria-label="清除筛选" @click="playlistFilter = ''"><X :size="14" /></button></div>
       <nav class="playlist-nav" aria-label="播放列表">
         <button
           v-for="playlist in filteredPlaylists"

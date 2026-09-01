@@ -28,6 +28,7 @@ const emit = defineEmits<{
 
 const selected = ref(new Set<number>())
 let anchorIndex = -1
+let wheelSelectionIndex = -1
 const dragIndex = ref(-1)
 const dropIndex = ref(-1)
 let suppressClick = false
@@ -100,6 +101,7 @@ function toggleAllSelection(event: Event) {
 }
 
 function selectRow(track: DisplayTrack, index: number, event: MouseEvent) {
+  wheelSelectionIndex = -1
   if (suppressClick) {
     event.preventDefault()
     return
@@ -121,6 +123,35 @@ function selectRow(track: DisplayTrack, index: number, event: MouseEvent) {
   }
   selected.value = new Set([index])
   anchorIndex = index
+  publishSelection()
+}
+
+function selectWithWheel(event: WheelEvent) {
+  if (!event.ctrlKey && !event.metaKey) {
+    wheelSelectionIndex = -1
+    return
+  }
+  const row = (event.target as Element).closest<HTMLElement>('.track-row[data-track-index]')
+  const hoveredIndex = Number(row?.dataset.trackIndex)
+  if (!Number.isInteger(hoveredIndex) || hoveredIndex < 0) return
+  event.preventDefault()
+  if (wheelSelectionIndex < 0) {
+    wheelSelectionIndex = hoveredIndex
+    const next = new Set(selected.value)
+    next.add(hoveredIndex)
+    selected.value = next
+    anchorIndex = hoveredIndex
+    publishSelection()
+  }
+  const delta = event.deltaY || event.deltaX
+  if (!delta) return
+  const direction = delta > 0 ? 1 : -1
+  const nextIndex = Math.min(props.tracks.length - 1, Math.max(0, wheelSelectionIndex + direction))
+  if (nextIndex === wheelSelectionIndex) return
+  wheelSelectionIndex = nextIndex
+  const next = new Set(selected.value)
+  next.add(nextIndex)
+  selected.value = next
   publishSelection()
 }
 
@@ -324,7 +355,7 @@ function isCurrent(track: DisplayTrack, currentTrack: DisplayTrack | null) {
 </script>
 
 <template>
-  <div class="track-list" :class="{ compact, reorderable, 'has-custom-column': customColumnLabel }" tabindex="-1" @keydown="selectAll">
+  <div class="track-list" :class="{ compact, reorderable, 'has-custom-column': customColumnLabel }" tabindex="-1" @keydown="selectAll" @wheel="selectWithWheel">
     <div class="track-list__header">
       <span class="track-select"><input type="checkbox" aria-label="选择全部曲目" :checked="tracks.length > 0 && selected.size === tracks.length" :indeterminate="selected.size > 0 && selected.size < tracks.length" @click.stop @change="toggleAllSelection" /></span><span>#</span><span>标题</span><span>专辑</span><span>年份</span><span v-if="customColumnLabel">{{ customColumnLabel }}</span><span>时长</span><span />
     </div>
