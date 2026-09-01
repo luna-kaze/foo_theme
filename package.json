@@ -12,7 +12,10 @@
   "dependencies": {
     "@lucide/vue": "^1.34.0",
     "foo-webview-sdk": "^1.12.0",
-    "vue": "^3.5.18"
+    "hangul-romanize": "^0.3.2",
+    "pinyin-pro": "^3.29.3",
+    "vue": "^3.5.18",
+    "wanakana": "^5.3.1"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.1",

@@ -10,6 +10,7 @@ import fb, {
 import { mockAlbums, mockLyrics, mockPlaylists, mockQueue, mockTracks } from '../data/mock'
 import type {
   AlbumCard,
+  ArtistCard,
   DisplayQueueItem,
   DisplayTrack,
   LibraryFilterField,
@@ -376,6 +377,57 @@ async function loadAlbumArtwork(albums: AlbumCard[]) {
   }
 }
 
+type LibrarySortFields = { artistSort: string; albumArtistSort: string; albumSort: string }
+
+async function loadLibrarySortFields(paths: string[]) {
+  const fields = new Map<string, LibrarySortFields>()
+  for (let start = 0; start < paths.length; start += 500) {
+    const batch = paths.slice(start, start + 500)
+    try {
+      const result = await fb.titleformat.evalFieldsBatch(batch, {
+        artistSort: '$if2($meta(artistsort),$meta(artist sort))',
+        albumArtistSort: '$if2($meta(albumartistsort),$meta(album artist sort))',
+        albumSort: '$if2($meta(albumsort),$meta(album sort))',
+      })
+      result.results.forEach((item, index) => {
+        if (!item.success || !batch[index]) return
+        fields.set(batch[index], {
+          artistSort: typeof item.artistSort === 'string' ? item.artistSort : '',
+          albumArtistSort: typeof item.albumArtistSort === 'string' ? item.albumArtistSort : '',
+          albumSort: typeof item.albumSort === 'string' ? item.albumSort : '',
+        })
+      })
+    } catch {
+      // Sort metadata is optional; automatic romanization remains available.
+    }
+  }
+  return fields
+}
+
+async function attachAlbumSortNames(albums: AlbumCard[]) {
+  const paths = [...new Set(albums.map((album) => album.firstTrackPath).filter((path): path is string => Boolean(path)))]
+  if (!paths.length) return
+  const fields = await loadLibrarySortFields(paths)
+  albums.forEach((album) => { album.sortName = album.firstTrackPath ? fields.get(album.firstTrackPath)?.albumSort || '' : '' })
+}
+
+async function attachArtistSortNames(artists: ArtistCard[]) {
+  const sources = new Map<string, { path: string; albumArtist: boolean }>()
+  state.tracks.forEach((track) => {
+    const path = playablePath(track)
+    if (track.artist && !sources.has(track.artist)) sources.set(track.artist, { path, albumArtist: false })
+    if (track.albumArtist && !sources.has(track.albumArtist)) sources.set(track.albumArtist, { path, albumArtist: true })
+  })
+  const paths = [...new Set([...sources.values()].map(({ path }) => path))]
+  if (!paths.length) return
+  const fields = await loadLibrarySortFields(paths)
+  artists.forEach((artist) => {
+    const source = sources.get(artist.name)
+    const sortFields = source ? fields.get(source.path) : null
+    artist.sortName = source?.albumArtist ? sortFields?.albumArtistSort || sortFields?.artistSort || '' : sortFields?.artistSort || sortFields?.albumArtistSort || ''
+  })
+}
+
 async function loadLibrary() {
   const generation = ++libraryGeneration
   const [albumResult, recentResult, trackResult] = await Promise.allSettled([
@@ -392,7 +444,7 @@ async function loadLibrary() {
     id: albumKey(album),
     artworkUrl: album.coverDataUrl ?? '',
   }))
-  await loadAlbumArtwork(albums)
+  await Promise.all([loadAlbumArtwork(albums), attachAlbumSortNames(albums)])
   if (generation !== libraryGeneration) return
   state.albums = albums
   rebuildAlbumArtworkIndex(albums)
@@ -898,12 +950,16 @@ async function loadLibraryArtists() {
       current.duration += Number(track.duration || 0)
       artists.set(name, current)
     })
-    state.artists = [...artists].map(([name, value]): ArtistInfo => ({ name, trackCount: value.tracks, albumCount: value.albums.size, duration: value.duration }))
+    const artistCards: ArtistCard[] = [...artists].map(([name, value]): ArtistInfo => ({ name, trackCount: value.tracks, albumCount: value.albums.size, duration: value.duration }))
+    await attachArtistSortNames(artistCards)
+    state.artists = artistCards
     return
   }
   const result = await fb.library.getArtists(100000)
   if (!result.success) throw new Error(result.error || '无法加载艺术家。')
-  state.artists = result.items
+  const artistCards: ArtistCard[] = result.items
+  await attachArtistSortNames(artistCards)
+  state.artists = artistCards
 }
 
 async function loadLibraryRoots() {

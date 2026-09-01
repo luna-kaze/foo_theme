@@ -2,14 +2,16 @@
 import { computed } from 'vue'
 import { Album, Clock3, Folder, HardDrive, Library, Music2, Play, Shuffle, Users } from '@lucide/vue'
 import type { ArtistInfo, LibraryStats } from 'foo-webview-sdk'
-import type { AlbumCard, DisplayTrack, LibraryFolderCard, ViewId, ViewRoute } from '../types/music'
+import type { AlbumCard, ArtistCard, DisplayTrack, LibraryFolderCard, ViewId, ViewRoute } from '../types/music'
 import AlbumGrid from './AlbumGrid.vue'
+import AlphabetIndexRail from './AlphabetIndexRail.vue'
 import TrackList from './TrackList.vue'
+import { useAlphabetGroups, useAlphabetNavigation } from '../utils/alphabetIndex'
 
 const props = defineProps<{
   route: ViewRoute
   stats: LibraryStats
-  artists: ArtistInfo[]
+  artists: ArtistCard[]
   folders: LibraryFolderCard[]
   albums: AlbumCard[]
   tracks: DisplayTrack[]
@@ -59,6 +61,9 @@ const artistArtwork = computed(() => {
   })
   return artwork
 })
+const artistGroups = useAlphabetGroups(() => props.artists, (artist) => artist.name, (artist) => artist.sortName ?? '')
+const artistLetters = computed(() => artistGroups.value.map((group) => group.letter))
+const { activeLetter: activeArtistLetter, registerGroup: registerArtistGroup, jumpToLetter: jumpToArtistLetter } = useAlphabetNavigation()
 
 function folderId(folder: LibraryFolderCard) {
   return `${folder.rootId}\u0000${folder.pathId}`
@@ -99,12 +104,20 @@ function openFolder(folder: LibraryFolderCard) {
 
     <template v-else-if="route.view === 'artists'">
       <section class="page-heading"><p class="eyebrow">媒体库</p><h1>艺术家</h1><p>共 {{ artists.length }} 位艺术家，点按卡片查看其全部曲目。</p></section>
-      <section class="library-card-grid">
-        <button v-for="artist in artists" :key="artist.name" class="artist-browser-card" @click="emit('artist', artist.name)" @contextmenu.prevent.stop="emit('artistMenu', artist, $event)">
-          <span class="artist-browser-card__art" :style="artistArtwork[artist.name] ? { backgroundImage: `url(${artistArtwork[artist.name]})` } : {}"><i v-if="!artistArtwork[artist.name]">{{ artist.name.slice(0, 1).toLocaleUpperCase() }}</i></span>
-          <strong>{{ artist.name }}</strong><small>{{ artist.trackCount }} 首曲目 · {{ artist.albumCount }} 张专辑</small>
-        </button>
-      </section>
+      <div class="alphabet-browser">
+        <div class="alphabet-browser__groups">
+          <section v-for="group in artistGroups" :key="group.letter" :ref="(element) => registerArtistGroup(group.letter, element)" class="alphabet-group">
+            <header class="alphabet-group__heading"><strong>{{ group.letter }}</strong><span /></header>
+            <div class="library-card-grid">
+              <button v-for="artist in group.items" :key="artist.name" class="artist-browser-card" @click="emit('artist', artist.name)" @contextmenu.prevent.stop="emit('artistMenu', artist, $event)">
+                <span class="artist-browser-card__art" :style="artistArtwork[artist.name] ? { backgroundImage: `url(${artistArtwork[artist.name]})` } : {}"><i v-if="!artistArtwork[artist.name]">{{ artist.name.slice(0, 1).toLocaleUpperCase() }}</i></span>
+                <strong>{{ artist.name }}</strong><small>{{ artist.trackCount }} 首曲目 · {{ artist.albumCount }} 张专辑</small>
+              </button>
+            </div>
+          </section>
+        </div>
+        <AlphabetIndexRail :available="artistLetters" :active="activeArtistLetter" @select="jumpToArtistLetter" />
+      </div>
     </template>
 
     <template v-else-if="route.view === 'folders'">

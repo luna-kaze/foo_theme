@@ -16,6 +16,11 @@ export interface LibraryFilterRule {
 export interface AlbumCard extends AlbumInfo {
   id: string
   artworkUrl: string
+  sortName?: string
+}
+
+export interface ArtistCard extends ArtistInfo {
+  sortName?: string
 }
 
 export interface DisplayTrack extends TrackInfo {
@@ -97,7 +102,7 @@ export interface PlayerUiState {
   route: ViewRoute
   search: string
   albums: AlbumCard[]
-  artists: ArtistInfo[]
+  artists: ArtistCard[]
   libraryFolders: LibraryFolderCard[]
   libraryStats: LibraryStats
   tracks: DisplayTrack[]
