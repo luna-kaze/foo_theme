@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Album, BarChart3, Folder, GripVertical, Heart, Home, ListMusic, Music2, Plus, Search, Smartphone, Users } from '@lucide/vue'
+import { Album, BarChart3, Filter, Folder, GripVertical, Heart, Home, ListMusic, Music2, Plus, Search, Smartphone, Users, X } from '@lucide/vue'
 import { computed, onBeforeUnmount, ref } from 'vue'
 import type { PlaylistInfo } from 'foo-webview-sdk'
 import type { ViewId } from '../types/music'
@@ -34,6 +34,13 @@ const dropIndex = ref(-1)
 const dropAfter = ref(false)
 const dropIndicator = ref({ left: 0, top: 0, width: 0, visible: false })
 const ipodDropTarget = ref(false)
+const playlistFilterOpen = ref(false)
+const playlistFilter = ref('')
+const filteredPlaylists = computed(() => {
+  const terms = playlistFilter.value.toLocaleLowerCase().split(/\s+/).filter(Boolean)
+  if (!terms.length) return props.playlists
+  return props.playlists.filter((playlist) => terms.every((term) => playlist.name.toLocaleLowerCase().includes(term)))
+})
 const previewStyle = computed(() => ({
   width: '260px',
   transform: `translate3d(${Math.max(10, dragX.value - dragOffsetX.value)}px, ${dragY.value - dragOffsetY.value}px, 0)`,
@@ -106,6 +113,7 @@ function finishPlaylistDrag() {
 }
 
 function beginPlaylistDrag(playlist: PlaylistInfo, event: PointerEvent) {
+  if (playlistFilter.value.trim()) return
   if (event.button !== 0) return
   event.preventDefault()
   draggingPlaylist.value = playlist
@@ -184,11 +192,12 @@ onBeforeUnmount(stopPlaylistDrag)
     <div class="sidebar-section">
       <div class="sidebar-section__title">
         <span>播放列表</span>
-        <button aria-label="新建播放列表" @click="emit('createPlaylist')"><Plus :size="15" /></button>
+        <div><button :class="{ active: playlistFilterOpen }" :aria-label="playlistFilterOpen ? '关闭播放列表筛选' : '筛选播放列表'" @click="playlistFilterOpen = !playlistFilterOpen; if (!playlistFilterOpen) playlistFilter = ''"><Filter :size="14" /></button><button aria-label="新建播放列表" @click="emit('createPlaylist')"><Plus :size="15" /></button></div>
       </div>
+      <div v-if="playlistFilterOpen" class="sidebar-playlist-filter"><Search :size="14" /><input v-model="playlistFilter" type="search" placeholder="筛选播放列表" aria-label="筛选播放列表名称" autofocus /><button v-if="playlistFilter" aria-label="清除筛选" @click="playlistFilter = ''"><X :size="14" /></button></div>
       <nav class="playlist-nav" aria-label="播放列表">
         <button
-          v-for="playlist in playlists"
+          v-for="playlist in filteredPlaylists"
           :key="playlist.index"
           class="playlist-nav__item"
           :data-playlist-index="playlist.index"
@@ -199,8 +208,9 @@ onBeforeUnmount(stopPlaylistDrag)
         >
           <ListMusic :size="16" />
           <span>{{ playlist.name }}</span>
-          <GripVertical class="playlist-nav__drag-handle" :size="15" aria-label="拖动排序" @pointerdown.stop="beginPlaylistDrag(playlist, $event)" />
+          <GripVertical v-if="!playlistFilter" class="playlist-nav__drag-handle" :size="15" aria-label="拖动排序" @pointerdown.stop="beginPlaylistDrag(playlist, $event)" />
         </button>
+        <p v-if="playlistFilter && !filteredPlaylists.length" class="sidebar-playlist-filter__empty">没有匹配的播放列表</p>
       </nav>
     </div>
 
