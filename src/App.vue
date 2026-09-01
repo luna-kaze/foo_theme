@@ -822,7 +822,7 @@ function onDrop(event: DragEvent) {
         @drag="player.startWindowDrag"
         @maximize="player.toggleWindowMaximize"
       />
-      <div class="workspace-scroll">
+      <div class="workspace-scroll" :class="{ 'workspace-scroll--index-rail': state.alphabetIndexView && ['albums', 'artists'].includes(state.view) }">
         <Transition name="route-page" mode="out-in">
           <div :key="primaryRouteKey" class="route-page">
             <IpodManagerView

@@ -473,6 +473,8 @@ input[type="range"] {
   overflow-x: hidden;
   overflow-y: auto;
 }
+.workspace-scroll--index-rail { scrollbar-width: none; }
+.workspace-scroll--index-rail::-webkit-scrollbar { display: none; }
 
 .route-page { min-height: 100%; }
 .route-page-enter-active { transition: transform 180ms cubic-bezier(.2,.78,.16,1); }
@@ -684,7 +686,7 @@ input[type="range"] {
 .alphabet-index {
   position: fixed;
   top: calc(var(--topbar-height) + 18px);
-  right: -1px;
+  right: 3px;
   display: grid;
   align-content: start;
   justify-items: center;
@@ -695,11 +697,8 @@ input[type="range"] {
   box-shadow: 0 12px 34px rgba(0,0,0,.2);
   backdrop-filter: blur(18px);
   z-index: 30;
-  transform: translateX(22px);
-  transition: transform 180ms cubic-bezier(.2,.78,.16,1), background 150ms ease;
+  transition: background 150ms ease, border-color 150ms ease;
 }
-.alphabet-index:hover,
-.alphabet-index:focus-within { transform: translateX(0); }
 .alphabet-index button { display: grid; width: 21px; height: 17px; padding: 0; place-items: center; color: #8e8a91; font-size: 9px; font-weight: 700; line-height: 1; background: transparent; border-radius: 7px; }
 .alphabet-index button:hover:not(:disabled) { color: white; background: rgba(255,255,255,.09); }
 .alphabet-index button.active { color: #fff; background: var(--accent); box-shadow: 0 3px 10px rgba(231,99,97,.3); }
