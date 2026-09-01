@@ -484,7 +484,7 @@ async function openTrackMenu(track: DisplayTrack, index: number, event: MouseEve
         { id: 'track:next', label: '下一首播放', iconSvg: menuIcons.next },
         { id: 'track:queue', label: targets.length > 1 ? `将 ${targets.length} 首曲目添加到队列` : '添加到队列', iconSvg: menuIcons.queue },
         { type: 'separator' },
-        { id: 'track:favourite', label: Number(track.rating ?? 0) === 5 ? '取消收藏' : '添加到收藏', checked: Number(track.rating ?? 0) === 5, iconSvg: menuIcons.heart },
+        { id: 'track:favourite', label: track.isFavourite ? '取消收藏' : '添加到收藏', checked: track.isFavourite, iconSvg: menuIcons.heart },
         { id: 'track:playlist', label: targets.length > 1 ? `将 ${targets.length} 首曲目添加到播放列表` : '添加到播放列表', iconSvg: menuIcons.playlist, enabled: state.playlists.length > 0, submenu: playlistSubmenu('track:playlist') },
         ...(sourcePlaylist ? [{ id: 'track:move-playlist', label: targets.length > 1 ? `将 ${targets.length} 首曲目移动到播放列表` : '移动到播放列表', iconSvg: menuIcons.move, enabled: !sourcePlaylist.isLocked && !sourcePlaylist.isAutoplaylist, submenu: movePlaylistSubmenu(sourcePlaylist.index) } as ContextMenuItem] : []),
         ...(pluginItems.length ? [{ type: 'separator' } as ContextMenuItem, ...pluginItems] : []),

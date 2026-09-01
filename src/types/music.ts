@@ -25,6 +25,7 @@ export interface DisplayTrack extends TrackInfo {
   customValue?: string
   playCount?: number
   lastPlayed?: string
+  isFavourite?: boolean
 }
 
 export interface LibraryFolderCard {

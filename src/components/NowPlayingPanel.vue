@@ -497,8 +497,8 @@ onBeforeUnmount(() => {
           <button v-if="mode === 'standard'" class="immersive-tool" :aria-label="lyricsVisible ? '隐藏歌词' : '显示歌词'" @click="lyricsVisible = !lyricsVisible">
             <EyeOff v-if="lyricsVisible" :size="18" /><Eye v-else :size="18" /><span>{{ lyricsVisible ? '隐藏歌词' : '显示歌词' }}</span>
           </button>
-          <button class="immersive-tool" :aria-label="Number(track?.rating ?? 0) === 5 ? '取消收藏' : '收藏当前歌曲'" @click="track && emit('favourite', track)">
-            <Heart :size="18" :fill="Number(track?.rating ?? 0) === 5 ? 'currentColor' : 'none'" /><span>{{ Number(track?.rating ?? 0) === 5 ? '取消收藏' : '收藏' }}</span>
+          <button class="immersive-tool" :aria-label="track?.isFavourite ? '取消收藏' : '收藏当前歌曲'" @click="track && emit('favourite', track)">
+            <Heart :size="18" :fill="track?.isFavourite ? 'currentColor' : 'none'" /><span>{{ track?.isFavourite ? '取消收藏' : '收藏' }}</span>
           </button>
         </div>
       </header>

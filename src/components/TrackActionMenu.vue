@@ -52,7 +52,7 @@ const emit = defineEmits<{
         <button @click="emit('queue')"><ListEnd :size="16" /><span>添加到队列</span></button>
       </div>
       <div class="track-action-menu__group">
-        <button @click="emit('favourite')"><Heart :size="16" :fill="Number(track.rating ?? 0) === 5 ? 'currentColor' : 'none'" /><span>{{ Number(track.rating ?? 0) === 5 ? '取消收藏' : '添加到收藏' }}</span></button>
+        <button @click="emit('favourite')"><Heart :size="16" :fill="track.isFavourite ? 'currentColor' : 'none'" /><span>{{ track.isFavourite ? '取消收藏' : '添加到收藏' }}</span></button>
         <button :disabled="!playlists.length" @click="playlistsOpen = !playlistsOpen"><ListPlus :size="16" /><span>添加到播放列表</span><ChevronRight :size="15" :class="{ rotated: playlistsOpen }" /></button>
         <div v-if="playlistsOpen" class="track-action-menu__playlists">
           <button v-for="playlist in playlists" :key="playlist.index" :disabled="playlist.isLocked || playlist.isAutoplaylist" @click="emit('playlist', playlist.index)">

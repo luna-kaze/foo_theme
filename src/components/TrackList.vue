@@ -358,7 +358,7 @@ function isCurrent(track: DisplayTrack, currentTrack: DisplayTrack | null) {
       <span v-if="customColumnLabel" class="track-row__custom">{{ track.customValue || '—' }}</span>
       <span class="track-row__duration">{{ formatTime(track.duration) }}</span>
       <span class="track-row__more">
-        <Heart v-if="Number(track.rating ?? 0) === 5" :size="13" fill="currentColor" class="track-row__favourite" />
+        <Heart v-if="track.isFavourite" :size="13" fill="currentColor" class="track-row__favourite" />
         <button aria-label="曲目操作" @keydown.stop @click.stop="openMenu(track, index, $event)"><MoreHorizontal :size="17" /></button>
       </span>
     </div>

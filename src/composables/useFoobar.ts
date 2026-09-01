@@ -93,7 +93,8 @@ let ownerIdPromise: Promise<string> | null = null
 let libraryStatusTimer: ReturnType<typeof setTimeout> | null = null
 let noDragResizeTimer: ReturnType<typeof setTimeout> | null = null
 let playcountLibraryGeneration = -1
-const priorFavouriteRatings = new Map<string, number>()
+let favouritePlaylistIndex: number | null = null
+const favouriteTrackKeys = new Set<string>()
 let desktopLyricsCommand: { guid: string; subGuid?: string } | null = null
 let miniPlayerWindowId = ''
 const history: ViewRoute[] = [{ view: 'home' }]
@@ -259,8 +260,24 @@ function attachArtwork(tracks: DisplayTrack[]): DisplayTrack[] {
   return tracks.map((track) => {
     const artworkUrl = exactAlbumArtwork.get(albumKey({ name: track.album, artist: track.albumArtist || track.artist }))
       ?? namedAlbumArtwork.get(track.album.trim().toLocaleLowerCase())
-    return artworkUrl ? { ...track, artworkUrl } : track
+    return { ...track, ...(artworkUrl ? { artworkUrl } : {}), isFavourite: favouriteTrackKeys.has(trackKey(track)) }
   })
+}
+
+function syncFavouriteFlags() {
+  const sync = (track: DisplayTrack) => { track.isFavourite = favouriteTrackKeys.has(trackKey(track)) }
+  for (const collection of [state.tracks, state.recentTracks, state.viewTracks, state.visibleTracks, state.queue, state.playbackTracks]) collection.forEach(sync)
+  if (state.currentTrack) sync(state.currentTrack)
+}
+
+async function refreshFavouriteTrackKeys() {
+  const previous = new Set(favouriteTrackKeys)
+  favouriteTrackKeys.clear()
+  if (favouritePlaylistIndex != null) {
+    const tracks = await getAllPlaylistTracks(favouritePlaylistIndex)
+    tracks.forEach((track) => favouriteTrackKeys.add(trackKey(track)))
+  }
+  if (previous.size !== favouriteTrackKeys.size || [...previous].some((key) => !favouriteTrackKeys.has(key))) syncFavouriteFlags()
 }
 
 function patchTrackCopies(track: DisplayTrack, patch: Partial<DisplayTrack>) {
@@ -388,13 +405,16 @@ async function loadPlaylists() {
   const [allPlaylists, active, ownerId] = await Promise.all([fb.playlist.getAll(), fb.playlist.getActive(), getOwnerId()])
   if (generation !== playlistGeneration) return
   const internalName = `正在播放 [foo-theme:${ownerId}]`
-  const playlists = allPlaylists.filter((playlist) => playlist.name !== internalName && playlist.name !== '[WebView Queue]')
+  const favouriteName = `收藏 [foo-theme:${ownerId}]`
+  favouritePlaylistIndex = allPlaylists.find((playlist) => playlist.name === favouriteName)?.index ?? null
+  const playlists = allPlaylists.filter((playlist) => playlist.name !== internalName && playlist.name !== favouriteName && playlist.name !== '[WebView Queue]')
   state.playlists = playlists
   state.activePlaylist = active && playlists.some((playlist) => playlist.index === active.index) ? active : null
   const route = state.route
   if (route.view === 'playlist') {
     state.browsingPlaylist = playlists.find((item) => item.index === route.playlistIndex) ?? null
   }
+  await refreshFavouriteTrackKeys()
 }
 
 async function loadQueue() {
@@ -534,7 +554,11 @@ function bindEvents() {
   const onPlaylistItemsChanged = (event: { playlist: number }) => {
     if (state.route.view === 'playlist' && state.route.playlistIndex === event.playlist) refreshSafely(refreshActivePlaylist)
     if (state.playingPlaylistIndex === event.playlist) refreshSafely(loadPlaybackSequence)
-    refreshSafely(loadPlaylists)
+    const refreshFavouriteView = event.playlist === favouritePlaylistIndex && (state.route.view === 'favourites' || (state.route.view === 'songs' && state.libraryFilters.favourite !== 'all'))
+    refreshSafely(async () => {
+      await loadPlaylists()
+      if (refreshFavouriteView) await navigate(state.route, 'none')
+    })
     refreshSafely(loadQueue)
   }
   const reloadPlaylistStructure = async () => {
@@ -839,15 +863,8 @@ async function materializeRoute(route: ViewRoute): Promise<DisplayTrack[]> {
   }
   if (route.view === 'search') return loadSearchTracks(route.query)
   if (route.view === 'favourites') {
-    if (!state.connected) return state.tracks.filter((track) => Number(track.rating ?? 0) === 5)
-    const tracks: DisplayTrack[] = []
-    for (let offset = 0; ; offset += 1000) {
-      const result = await fb.library.search('rating IS 5', 1000, { offset })
-      if (result.success === false) throw new Error(result.error || '无法加载收藏。')
-      tracks.push(...result.tracks.map(normalizeTrack))
-      if (!result.hasMore || !result.tracks.length) break
-    }
-    return tracks
+    if (favouritePlaylistIndex == null) return []
+    return getAllPlaylistTracks(favouritePlaylistIndex)
   }
   if (route.snapshot) return route.snapshot
   if (!state.connected) return [...state.tracks].sort(() => Math.random() - 0.5).slice(0, 30)
@@ -949,8 +966,8 @@ function filterLibraryTracks(tracks: DisplayTrack[]) {
     const rating = Number(track.rating ?? 0)
     if (filters.rating === 'unrated' && rating !== 0) return false
     if (filters.rating !== 'all' && filters.rating !== 'unrated' && rating !== Number(filters.rating)) return false
-    if (filters.favourite === 'favourite' && rating !== 5) return false
-    if (filters.favourite === 'unfavourite' && rating === 5) return false
+    if (filters.favourite === 'favourite' && !track.isFavourite) return false
+    if (filters.favourite === 'unfavourite' && track.isFavourite) return false
     if (!activeRules.length) return true
     return filters.matchMode === 'all'
       ? activeRules.every((rule) => matchesLibraryRule(track, rule))
@@ -2283,18 +2300,41 @@ async function importDroppedPaths() {
   await importPaths(paths)
 }
 
-async function toggleFavourite(track: DisplayTrack) {
-  const currentRating = Number(track.rating ?? 0)
-  const key = trackKey(track)
-  if (currentRating !== 5) priorFavouriteRatings.set(key, currentRating)
-  const nextRating = currentRating === 5 ? priorFavouriteRatings.get(key) ?? 0 : 5
-  if (state.connected) {
-    const result = await runAction(() => fb.rating.set(playablePath(track), nextRating, { cueIndex: trackSubsong(track) }))
-    if (!result) return
+async function ensureFavouritePlaylist() {
+  if (favouritePlaylistIndex != null) return favouritePlaylistIndex
+  const ownerId = await getOwnerId()
+  const name = `收藏 [foo-theme:${ownerId}]`
+  const existing = (await fb.playlist.getAll()).find((playlist) => playlist.name === name)
+  if (existing) {
+    favouritePlaylistIndex = existing.index
+    return existing.index
   }
-  patchTrackCopies(track, { rating: nextRating })
-  notify(nextRating ? '已添加到收藏' : '已取消收藏', 'success')
-  if (state.view === 'favourites' && !nextRating) {
+  const created = await runAction(() => fb.playlist.create(name))
+  if (!created) return null
+  favouritePlaylistIndex = created.index
+  await loadPlaylists()
+  return created.index
+}
+
+async function toggleFavourite(track: DisplayTrack) {
+  const key = trackKey(track)
+  if (!state.connected) {
+    if (favouriteTrackKeys.has(key)) favouriteTrackKeys.delete(key)
+    else favouriteTrackKeys.add(key)
+    syncFavouriteFlags()
+    notify(favouriteTrackKeys.has(key) ? '已添加到收藏' : '已取消收藏', 'success')
+    return
+  }
+  const playlistIndex = await ensureFavouritePlaylist()
+  if (playlistIndex == null) return
+  if (favouriteTrackKeys.has(key)) {
+    const tracks = await getAllPlaylistTracks(playlistIndex)
+    const indexes = tracks.filter((item) => trackKey(item) === key).map((item) => item.sourceIndex).filter((index): index is number => index != null)
+    if (!indexes.length || !await runAction(() => fb.playlist.removeTracks(playlistIndex, indexes))) return
+  } else if (!await runAction(() => fb.playlist.add(playlistIndex, [playablePath(track)]))) return
+  await refreshFavouriteTrackKeys()
+  notify(favouriteTrackKeys.has(key) ? '已添加到收藏' : '已取消收藏', 'success')
+  if (state.view === 'favourites' && !favouriteTrackKeys.has(key)) {
     state.viewTracks = state.viewTracks.filter((item) => trackKey(item) !== key)
     state.visibleTracks = state.viewTracks.slice()
   }
