@@ -458,10 +458,9 @@ async function loadPlaylists() {
   const generation = ++playlistGeneration
   const [allPlaylists, active, ownerId] = await Promise.all([fb.playlist.getAll(), fb.playlist.getActive(), getOwnerId()])
   if (generation !== playlistGeneration) return
-  const internalName = `正在播放 [foo-theme:${ownerId}]`
   const favouriteName = `收藏 [foo-theme:${ownerId}]`
   favouritePlaylistIndex = allPlaylists.find((playlist) => playlist.name === favouriteName)?.index ?? null
-  const playlists = allPlaylists.filter((playlist) => playlist.name !== internalName && playlist.name !== favouriteName && playlist.name !== '[WebView Queue]')
+  const playlists = allPlaylists.filter((playlist) => !isThemeInternalPlaylist(playlist, ownerId))
   state.playlists = playlists
   state.activePlaylist = active && playlists.some((playlist) => playlist.index === active.index) ? active : null
   const route = state.route
@@ -469,6 +468,12 @@ async function loadPlaylists() {
     state.browsingPlaylist = playlists.find((item) => item.index === route.playlistIndex) ?? null
   }
   await refreshFavouriteTrackKeys()
+}
+
+function isThemeInternalPlaylist(playlist: PlaylistInfo, ownerId: string) {
+  return playlist.name === `正在播放 [foo-theme:${ownerId}]`
+    || playlist.name === `收藏 [foo-theme:${ownerId}]`
+    || playlist.name === '[WebView Queue]'
 }
 
 async function loadQueue() {
@@ -1615,8 +1620,7 @@ async function reorderPlaylists(order: number[]) {
   if (order.length !== currentOrder.length || new Set(order).size !== order.length || order.some((index) => !currentOrder.includes(index))) return
   if (order.every((index, position) => index === currentOrder[position])) return
   const [allPlaylists, ownerId] = await Promise.all([fb.playlist.getAll(), getOwnerId()])
-  const internalName = `正在播放 [foo-theme:${ownerId}]`
-  const visiblePlaylists = allPlaylists.filter((playlist) => playlist.name !== internalName && playlist.name !== '[WebView Queue]')
+  const visiblePlaylists = allPlaylists.filter((playlist) => !isThemeInternalPlaylist(playlist, ownerId))
   if (visiblePlaylists.length !== order.length || visiblePlaylists.some((playlist) => !order.includes(playlist.index))) {
     notify('播放列表已变化，请重新拖动排序。', 'info')
     await loadPlaylists()
@@ -1625,7 +1629,7 @@ async function reorderPlaylists(order: number[]) {
   const oldPositionByIndex = new Map(allPlaylists.map((playlist, position) => [playlist.index, position]))
   let nextVisible = 0
   const merged = allPlaylists.map((playlist) => {
-    if (playlist.name === internalName || playlist.name === '[WebView Queue]') return playlist.index
+    if (isThemeInternalPlaylist(playlist, ownerId)) return playlist.index
     return order[nextVisible++]
   })
   const newOrder = merged.map((index) => oldPositionByIndex.get(index))
