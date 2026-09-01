@@ -263,6 +263,7 @@ function beginTrackDrag(index: number, event: PointerEvent) {
   const selectedIndexes = selected.value.has(index) ? [...selected.value] : [index]
   dragFragments.value = selectedIndexes
     .filter((trackIndex) => trackIndex !== index)
+    .sort((left, right) => Math.abs(left - index) - Math.abs(right - index) || left - right)
     .map((trackIndex, layer) => {
       const source = dragList?.querySelector<HTMLElement>(`.track-row[data-track-index="${trackIndex}"]`)
       const sourceBounds = source?.getBoundingClientRect()
@@ -356,7 +357,7 @@ function isCurrent(track: DisplayTrack, currentTrack: DisplayTrack | null) {
             <span class="track-drag-preview__year">{{ dragPreviewTrack.date?.slice(0, 4) || '—' }}</span>
             <span class="track-drag-preview__duration">{{ formatTime(dragPreviewTrack.duration) }}</span>
             <span v-if="dragMovesTracks || draggedTracks.length > 1" class="track-drag-preview__badges">
-              <b v-if="dragMovesTracks">移动中</b>
+              <b v-if="dragMovesTracks" class="is-moving">移动中</b>
               <b v-if="draggedTracks.length > 1">{{ draggedTracks.length }} 首曲目</b>
             </span>
           </div>

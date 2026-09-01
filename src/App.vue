@@ -47,6 +47,7 @@ const folderSelectionMode = ref(false)
 const selectedFolderIds = ref<string[]>([])
 const inspector = reactive({ open: false, mode: 'properties' as 'properties' | 'edit', tracks: [] as DisplayTrack[], album: null as AlbumCard | null, details: [] as TrackDetails[], loading: false, busy: false, request: 0 })
 const fileDialog = reactive({ open: false, mode: 'rename' as 'rename' | 'move' | 'delete', track: null as DisplayTrack | null, target: '', busy: false })
+const ipodPlaylistConfirmation = ref<PlaylistInfo | null>(null)
 
 function animateImmersiveFullscreen(time: number) {
   const target = immersiveFullscreenTarget.value ? 1 : 0
@@ -396,6 +397,17 @@ async function loadOutputDevices() {
 async function selectOutputDevice(device: OutputDevice) {
   await player.setOutputDevice(device.outputId, device.deviceId, device.name)
   await loadOutputDevices()
+}
+
+function requestPlaylistIpodTransfer(playlistIndex: number) {
+  ipodPlaylistConfirmation.value = state.playlists.find((playlist) => playlist.index === playlistIndex) ?? null
+}
+
+async function confirmPlaylistIpodTransfer() {
+  const playlist = ipodPlaylistConfirmation.value
+  if (!playlist) return
+  ipodPlaylistConfirmation.value = null
+  await player.sendPlaylistToIpod(playlist.index)
 }
 
 function playlistSubmenu(prefix: string): ContextMenuItem[] {
@@ -775,7 +787,7 @@ function onDrop(event: DragEvent) {
       @submit-search="submitPrimarySearch"
        @playlist-menu="openPlaylistMenu"
        @reorder-playlists="player.reorderPlaylists"
-       @send-playlist-to-ipod="player.sendPlaylistToIpod"
+       @send-playlist-to-ipod="requestPlaylistIpodTransfer"
        @create-playlist="state.dialog = 'createPlaylist'"
       @favourites="showFavourites"
     />
@@ -1011,6 +1023,15 @@ function onDrop(event: DragEvent) {
     />
 
     <FileOperationDialog v-if="fileDialog.open && fileDialog.track" :track="fileDialog.track" :mode="fileDialog.mode" :target="fileDialog.target" :busy="fileDialog.busy" @close="fileDialog.open = false" @rename="renameFile" @move="confirmMoveFile" @delete="deleteFile" />
+
+    <div v-if="ipodPlaylistConfirmation" class="modal-backdrop" @click.self="ipodPlaylistConfirmation = null">
+      <section class="create-playlist-dialog ipod-transfer-confirmation" role="dialog" aria-modal="true" aria-labelledby="ipod-transfer-title">
+        <header><span><Info :size="20" /></span><div><strong id="ipod-transfer-title">发送曲目到 iPod</strong><small>{{ ipodPlaylistConfirmation.name }}</small></div></header>
+        <p>将此播放列表中的全部曲目发送到已连接的 iPod。</p>
+        <p>不会创建或同步同名 iPod 播放列表，也不会修改原播放列表和本地文件。</p>
+        <footer><button class="secondary-button" @click="ipodPlaylistConfirmation = null">取消</button><button class="primary-button" @click="confirmPlaylistIpodTransfer">发送全部曲目</button></footer>
+      </section>
+    </div>
 
     <Transition name="drop-overlay">
       <div v-if="dragState.active" class="drop-overlay">
