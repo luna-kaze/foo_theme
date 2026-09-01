@@ -28,7 +28,9 @@ const emit = defineEmits<{
 
 const selected = ref(new Set<number>())
 let anchorIndex = -1
-let wheelSelectionIndex = -1
+let wheelSelectionStart = -1
+let wheelSelectionFrame = 0
+let wheelSelectionPoint = { x: 0, y: 0 }
 const dragIndex = ref(-1)
 const dropIndex = ref(-1)
 let suppressClick = false
@@ -101,7 +103,7 @@ function toggleAllSelection(event: Event) {
 }
 
 function selectRow(track: DisplayTrack, index: number, event: MouseEvent) {
-  wheelSelectionIndex = -1
+  resetWheelSelection()
   if (suppressClick) {
     event.preventDefault()
     return
@@ -128,31 +130,41 @@ function selectRow(track: DisplayTrack, index: number, event: MouseEvent) {
 
 function selectWithWheel(event: WheelEvent) {
   if (!event.ctrlKey && !event.metaKey) {
-    wheelSelectionIndex = -1
+    resetWheelSelection()
     return
   }
-  const row = (event.target as Element).closest<HTMLElement>('.track-row[data-track-index]')
-  const hoveredIndex = Number(row?.dataset.trackIndex)
+  const hoveredIndex = trackIndexAt(event.clientX, event.clientY)
   if (!Number.isInteger(hoveredIndex) || hoveredIndex < 0) return
   event.preventDefault()
-  if (wheelSelectionIndex < 0) {
-    wheelSelectionIndex = hoveredIndex
+  if (wheelSelectionStart < 0) wheelSelectionStart = hoveredIndex
+  wheelSelectionPoint = { x: event.clientX, y: event.clientY }
+  const multiplier = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? globalThis.innerHeight : 1
+  document.querySelector<HTMLElement>('.workspace-scroll')?.scrollBy({ top: event.deltaY * multiplier, left: event.deltaX * multiplier })
+  if (wheelSelectionFrame) return
+  wheelSelectionFrame = requestAnimationFrame(() => {
+    wheelSelectionFrame = 0
+    const start = wheelSelectionStart
+    const end = trackIndexAt(wheelSelectionPoint.x, wheelSelectionPoint.y)
+    wheelSelectionStart = -1
+    if (start < 0 || end < 0) return
     const next = new Set(selected.value)
-    next.add(hoveredIndex)
+    for (let index = Math.min(start, end); index <= Math.max(start, end); index += 1) next.add(index)
     selected.value = next
-    anchorIndex = hoveredIndex
+    anchorIndex = end
     publishSelection()
-  }
-  const delta = event.deltaY || event.deltaX
-  if (!delta) return
-  const direction = delta > 0 ? 1 : -1
-  const nextIndex = Math.min(props.tracks.length - 1, Math.max(0, wheelSelectionIndex + direction))
-  if (nextIndex === wheelSelectionIndex) return
-  wheelSelectionIndex = nextIndex
-  const next = new Set(selected.value)
-  next.add(nextIndex)
-  selected.value = next
-  publishSelection()
+  })
+}
+
+function trackIndexAt(x: number, y: number) {
+  const row = document.elementFromPoint(x, y)?.closest<HTMLElement>('.track-row[data-track-index]')
+  const index = Number(row?.dataset.trackIndex)
+  return Number.isInteger(index) ? index : -1
+}
+
+function resetWheelSelection() {
+  wheelSelectionStart = -1
+  if (wheelSelectionFrame) cancelAnimationFrame(wheelSelectionFrame)
+  wheelSelectionFrame = 0
 }
 
 function openMenu(track: DisplayTrack, index: number, event: MouseEvent) {
@@ -347,7 +359,10 @@ watch(() => props.tracks, () => {
   publishSelection()
 })
 
-onBeforeUnmount(stopReorderDrag)
+onBeforeUnmount(() => {
+  resetWheelSelection()
+  stopReorderDrag()
+})
 
 function isCurrent(track: DisplayTrack, currentTrack: DisplayTrack | null) {
   return isSameTrack(track, currentTrack)

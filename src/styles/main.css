@@ -707,10 +707,11 @@ input[type="range"] {
 .view-mode-toggle.active { color: #ffe8e5; background: rgba(231,99,97,.16); border-color: rgba(231,99,97,.34); }
 .sidebar-section__title > div { display: flex; gap: 2px; }
 .sidebar-section__title button.active { color: #ffe8e5; background: rgba(231,99,97,.16); }
-.sidebar-playlist-filter { display: flex; align-items: center; gap: 7px; min-height: 33px; padding: 0 8px; margin: -3px 0 7px; color: var(--faint); background: rgba(255,255,255,.035); border: 1px solid var(--line); border-radius: 8px; }
+.sidebar-playlist-filter { display: flex; align-items: center; gap: 7px; min-height: 34px; padding: 0 7px; margin: -3px 0 7px; color: #99969d; background: rgba(255,255,255,.045); border: 1px solid rgba(255,255,255,.13); border-radius: 8px; }
 .sidebar-playlist-filter input { min-width: 0; flex: 1; height: 31px; color: var(--text); font-size: 11px; background: transparent; border: 0; outline: 0; }
 .sidebar-playlist-filter input::placeholder { color: var(--faint); }
-.sidebar-playlist-filter button { display: grid; width: 21px; height: 21px; place-items: center; color: var(--muted); border-radius: 5px; }
+.sidebar-playlist-filter button { display: grid; flex: 0 0 24px; width: 24px; height: 24px; padding: 0; place-items: center; color: #aaa7ae; border-radius: 6px; }
+.sidebar-playlist-filter button svg { display: block; }
 .sidebar-playlist-filter button:hover { color: white; background: var(--hover); }
 .sidebar-playlist-filter__empty { padding: 11px 8px; margin: 0; color: var(--faint); font-size: 10px; text-align: center; }
 
