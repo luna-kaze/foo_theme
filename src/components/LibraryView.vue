@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { ArrowLeft, ArrowRight, FileMusic, FolderOpen, Grid3X3, ListTree, Play, Radio, SearchX, Shuffle } from '@lucide/vue'
+import { computed, ref, watch } from 'vue'
+import { ArrowLeft, ArrowRight, FileMusic, Filter, FolderOpen, Grid3X3, ListTree, Play, Radio, Search, SearchX, Shuffle, X } from '@lucide/vue'
 import type { AlbumCard, ArtistCard, DisplayTrack, LibraryFilterRule, ViewId } from '../types/music'
 import type { PlaylistInfo } from 'foo-webview-sdk'
 import AlbumGrid from './AlbumGrid.vue'
@@ -36,6 +36,23 @@ const albumGroups = useAlphabetGroups(() => props.albums, (album) => album.name,
 const albumLetters = computed(() => albumGroups.value.map((group) => group.letter))
 const { activeLetter: activeAlbumLetter, registerGroup: registerAlbumGroup, jumpToLetter: jumpToAlbumLetter } = useAlphabetNavigation()
 const searchArtistArtwork = computed(() => Object.fromEntries(props.albums.filter((album) => album.artworkUrl).map((album) => [album.artist, album.artworkUrl])))
+const playlistFilterOpen = ref(false)
+const playlistFilterQuery = ref('')
+const playlistDisplayTracks = computed(() => {
+  if (props.view !== 'playlist' || !playlistFilterQuery.value.trim()) return props.tracks
+  const terms = playlistFilterQuery.value.toLocaleLowerCase().split(/\s+/).filter(Boolean)
+  return props.tracks.filter((track) => terms.every((term) => [track.title, track.artist, track.album, track.albumArtist ?? ''].some((field) => field.toLocaleLowerCase().includes(term))))
+})
+
+function togglePlaylistFilter() {
+  playlistFilterOpen.value = !playlistFilterOpen.value
+  if (!playlistFilterOpen.value) playlistFilterQuery.value = ''
+}
+
+watch(() => [props.view, props.activePlaylist?.index] as const, () => {
+  playlistFilterOpen.value = false
+  playlistFilterQuery.value = ''
+})
 
 const emit = defineEmits<{
   navigate: [view: ViewId]
@@ -160,14 +177,20 @@ const emit = defineEmits<{
         <div>
           <p class="eyebrow">{{ view === 'playlist' ? '播放列表' : view === 'radio' ? '发现' : view === 'search' ? '搜索' : '音乐库' }}</p>
           <h1>{{ view === 'playlist' ? activePlaylist?.name ?? '播放列表' : view === 'favourites' ? '收藏' : view === 'radio' ? '音乐库电台' : view === 'search' ? `“${search}”的搜索结果` : '歌曲' }}</h1>
-          <p>{{ tracks.length }} 首曲目</p>
+          <p>{{ view === 'playlist' && playlistFilterQuery ? `${playlistDisplayTracks.length} / ${tracks.length} 首曲目` : `${tracks.length} 首曲目` }}</p>
         </div>
         <div class="page-heading__actions">
           <button v-if="view === 'radio'" class="secondary-button" @click="emit('navigate', 'radio')"><Radio :size="17" /> 换一批</button>
+          <button v-if="view === 'playlist'" class="secondary-button playlist-filter-toggle" :class="{ active: playlistFilterOpen }" :aria-label="playlistFilterOpen ? '关闭曲目筛选' : '筛选曲目'" @click="togglePlaylistFilter"><Filter :size="17" /><span>筛选</span></button>
           <button v-else-if="tracks.length && view !== 'search'" class="secondary-button" @click="emit('shuffle')"><Shuffle :size="17" /> 随机播放</button>
           <button v-if="tracks.length" class="round-play" aria-label="播放全部" @click="emit('playTrack', tracks[0], 0)"><Play :size="22" fill="currentColor" /></button>
         </div>
       </section>
+      <div v-if="view === 'playlist' && playlistFilterOpen" class="playlist-filter-bar">
+        <Search :size="17" />
+        <input v-model="playlistFilterQuery" type="search" placeholder="筛选标题、艺术家或专辑" aria-label="筛选播放列表曲目" autofocus />
+        <button v-if="playlistFilterQuery" aria-label="清除筛选" @click="playlistFilterQuery = ''"><X :size="16" /></button>
+      </div>
       <LibraryFilterBar v-if="view === 'songs'" :filters="libraryFilters" :options="filterOptions" :result-count="tracks.length" @facet-change="(key, value) => emit('filterFacetChange', key, value)" @rule-add="emit('filterRuleAdd')" @rule-update="(id, patch) => emit('filterRuleUpdate', id, patch)" @rule-remove="emit('filterRuleRemove', $event)" @clear="emit('clearFilters')" />
       <section v-if="view === 'search' && albums.length" class="content-section search-albums">
         <div class="section-heading"><div><p class="eyebrow">专辑</p><h2>匹配的专辑</h2></div><span>{{ albums.length }}</span></div>
@@ -183,11 +206,11 @@ const emit = defineEmits<{
         </div>
       </section>
       <TrackList
-        v-if="tracks.length"
-        :tracks="tracks"
+        v-if="playlistDisplayTracks.length"
+        :tracks="playlistDisplayTracks"
         :current-track="currentTrack"
         :is-playing="isPlaying"
-        :reorderable="view === 'playlist' && !activePlaylist?.isLocked && !activePlaylist?.isAutoplaylist"
+        :reorderable="view === 'playlist' && !playlistFilterQuery && !activePlaylist?.isLocked && !activePlaylist?.isAutoplaylist"
         :playlist-index="view === 'playlist' ? activePlaylist?.index : undefined"
         :custom-column-label="customColumn.label"
         @play="(track, index) => emit('playTrack', track, index)"
@@ -197,7 +220,8 @@ const emit = defineEmits<{
           @add-to-playlist="(selected, playlistIndex) => emit('addToPlaylist', selected, playlistIndex)"
           @move-to-playlist="(selected, sourcePlaylistIndex, destinationPlaylistIndex) => emit('moveToPlaylist', selected, sourcePlaylistIndex, destinationPlaylistIndex)"
           @add-to-ipod="emit('addToIpod', $event)"
-      />
+       />
+      <div v-else-if="view === 'playlist' && playlistFilterQuery" class="playlist-filter-empty"><SearchX :size="24" /><strong>没有匹配的曲目</strong><span>尝试其他标题、艺术家或专辑关键词。</span></div>
       <div v-else-if="view !== 'search' || (!albums.length && !searchArtists.length)" class="collection-empty">
         <SearchX v-if="view === 'search'" :size="30" /><FileMusic v-else :size="30" />
         <strong>{{ view === 'search' ? '没有匹配的音乐' : view === 'favourites' ? '还没有收藏曲目' : view === 'playlist' ? '这个播放列表是空的' : '没有可显示的音乐' }}</strong>

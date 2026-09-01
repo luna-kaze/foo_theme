@@ -705,6 +705,15 @@ input[type="range"] {
 .alphabet-index button.active { color: #fff; background: var(--accent); box-shadow: 0 3px 10px rgba(231,99,97,.3); }
 .alphabet-index button:disabled { cursor: default; opacity: .22; }
 .view-mode-toggle.active { color: #ffe8e5; background: rgba(231,99,97,.16); border-color: rgba(231,99,97,.34); }
+.playlist-filter-toggle.active { color: #ffe8e5; background: rgba(231,99,97,.16); border-color: rgba(231,99,97,.34); }
+.playlist-filter-bar { display: flex; align-items: center; gap: 10px; min-height: 42px; padding: 0 12px; margin: -10px 0 18px; color: var(--faint); background: rgba(255,255,255,.035); border: 1px solid var(--line); border-radius: 11px; box-shadow: inset 2px 0 rgba(231,99,97,.5); }
+.playlist-filter-bar input { min-width: 0; flex: 1; height: 40px; color: var(--text); background: transparent; border: 0; outline: 0; }
+.playlist-filter-bar input::placeholder { color: var(--faint); }
+.playlist-filter-bar button { display: grid; width: 27px; height: 27px; place-items: center; color: var(--muted); border-radius: 7px; }
+.playlist-filter-bar button:hover { color: white; background: var(--hover); }
+.playlist-filter-empty { display: grid; min-height: 190px; place-items: center; align-content: center; gap: 8px; color: var(--faint); text-align: center; border: 1px dashed rgba(255,255,255,.1); border-radius: 13px; }
+.playlist-filter-empty strong { color: var(--muted); font-size: 13px; }
+.playlist-filter-empty span { font-size: 11px; }
 
 .library-loading {
   display: flex;
