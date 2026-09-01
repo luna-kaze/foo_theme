@@ -920,7 +920,10 @@ async function materializeRoute(route: ViewRoute): Promise<DisplayTrack[]> {
     }))
     return result.files.map(normalizeTrack)
   }
-  if (route.view === 'search') return loadSearchTracks(route.query)
+  if (route.view === 'search') {
+    await loadLibraryArtists()
+    return loadSearchTracks(route.query)
+  }
   if (route.view === 'favourites') {
     if (favouritePlaylistIndex == null) return []
     return getAllPlaylistTracks(favouritePlaylistIndex)

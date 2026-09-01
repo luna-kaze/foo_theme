@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { ArrowLeft, ArrowRight, FileMusic, FolderOpen, Grid3X3, ListTree, Play, Radio, SearchX, Shuffle } from '@lucide/vue'
-import type { AlbumCard, DisplayTrack, LibraryFilterRule, ViewId } from '../types/music'
+import type { AlbumCard, ArtistCard, DisplayTrack, LibraryFilterRule, ViewId } from '../types/music'
 import type { PlaylistInfo } from 'foo-webview-sdk'
 import AlbumGrid from './AlbumGrid.vue'
 import ArtworkImage from './ArtworkImage.vue'
@@ -28,12 +28,14 @@ const props = defineProps<{
   customColumn: PlayerUiState['customColumn']
   albumSelectionMode: boolean
   selectedAlbumIds: string[]
+  searchArtists: ArtistCard[]
   alphabetIndexView: boolean
 }>()
 
 const albumGroups = useAlphabetGroups(() => props.albums, (album) => album.name, (album) => album.sortName ?? '')
 const albumLetters = computed(() => albumGroups.value.map((group) => group.letter))
 const { activeLetter: activeAlbumLetter, registerGroup: registerAlbumGroup, jumpToLetter: jumpToAlbumLetter } = useAlphabetNavigation()
+const searchArtistArtwork = computed(() => Object.fromEntries(props.albums.filter((album) => album.artworkUrl).map((album) => [album.artist, album.artworkUrl])))
 
 const emit = defineEmits<{
   navigate: [view: ViewId]
@@ -47,6 +49,8 @@ const emit = defineEmits<{
   openFolder: []
   clearSearch: []
   albumMenu: [album: AlbumCard, event: MouseEvent]
+  artist: [name: string]
+  artistMenu: [artist: ArtistCard, event: MouseEvent]
   selection: [tracks: DisplayTrack[]]
   filterFacetChange: [key: 'artist' | 'albumArtist' | 'folder' | 'rating' | 'favourite', value: string]
   filterRuleAdd: []
@@ -169,6 +173,15 @@ const emit = defineEmits<{
         <div class="section-heading"><div><p class="eyebrow">专辑</p><h2>匹配的专辑</h2></div><span>{{ albums.length }}</span></div>
         <AlbumGrid :albums="albums" :limit="6" @open="emit('openAlbum', $event)" @menu="(album, event) => emit('albumMenu', album, event)" />
       </section>
+      <section v-if="view === 'search' && searchArtists.length" class="content-section search-artists">
+        <div class="section-heading"><div><p class="eyebrow">艺术家</p><h2>匹配的艺术家</h2></div><span>{{ searchArtists.length }}</span></div>
+        <div class="library-card-grid search-artists__grid">
+          <button v-for="artist in searchArtists" :key="artist.name" class="artist-browser-card" @click="emit('artist', artist.name)" @contextmenu.prevent.stop="emit('artistMenu', artist, $event)">
+            <span class="artist-browser-card__art" :style="searchArtistArtwork[artist.name] ? { backgroundImage: `url(${searchArtistArtwork[artist.name]})` } : {}"><i v-if="!searchArtistArtwork[artist.name]">{{ artist.name.slice(0, 1).toLocaleUpperCase() }}</i></span>
+            <strong>{{ artist.name }}</strong><small>{{ artist.trackCount }} 首曲目 · {{ artist.albumCount }} 张专辑</small>
+          </button>
+        </div>
+      </section>
       <TrackList
         v-if="tracks.length"
         :tracks="tracks"
@@ -185,7 +198,7 @@ const emit = defineEmits<{
           @move-to-playlist="(selected, sourcePlaylistIndex, destinationPlaylistIndex) => emit('moveToPlaylist', selected, sourcePlaylistIndex, destinationPlaylistIndex)"
           @add-to-ipod="emit('addToIpod', $event)"
       />
-      <div v-else-if="view !== 'search' || !albums.length" class="collection-empty">
+      <div v-else-if="view !== 'search' || (!albums.length && !searchArtists.length)" class="collection-empty">
         <SearchX v-if="view === 'search'" :size="30" /><FileMusic v-else :size="30" />
         <strong>{{ view === 'search' ? '没有匹配的音乐' : view === 'favourites' ? '还没有收藏曲目' : view === 'playlist' ? '这个播放列表是空的' : '没有可显示的音乐' }}</strong>
         <span>{{ view === 'search' ? '请减少关键词，或按标题、艺人、专辑和流派搜索。' : view === 'favourites' ? '在任意曲目的操作菜单中点按收藏，即可保存在这里。' : '打开文件或文件夹后，曲目会显示在“已打开的音乐”播放列表中。' }}</span>

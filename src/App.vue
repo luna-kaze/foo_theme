@@ -16,7 +16,7 @@ import FileOperationDialog from './components/FileOperationDialog.vue'
 import TrackActionMenu from './components/TrackActionMenu.vue'
 import { useFoobar } from './composables/useFoobar'
 import fb, { type ArtistInfo, type OutputDevice, type PlaylistInfo } from 'foo-webview-sdk'
-import type { AlbumCard, DisplayTrack, LibraryFolderCard, TrackDetails, ViewId } from './types/music'
+import type { AlbumCard, ArtistCard, DisplayTrack, LibraryFolderCard, TrackDetails, ViewId } from './types/music'
 import { menuIcons, showContextMenu, type ContextMenuItem } from './utils/contextMenu'
 import { isSameTrack, localFilePath, playablePath, trackKey } from './utils/track'
 
@@ -110,6 +110,14 @@ const primaryRouteKey = computed(() => {
   if (route.view === 'search') return `search:${route.query}`
   if (route.view === 'radio') return `radio:${route.nonce}`
   return route.view
+})
+
+const searchArtists = computed<ArtistCard[]>(() => {
+  const route = state.route
+  if (route.view !== 'search') return []
+  const terms = route.query.toLocaleLowerCase().split(/\s+/).filter(Boolean)
+  if (!terms.length) return []
+  return state.artists.filter((artist) => terms.every((term) => artist.name.toLocaleLowerCase().includes(term)))
 })
 
 watch(() => state.currentTrack?.path ?? '', (path, previous) => {
@@ -889,6 +897,7 @@ function onDrop(event: DragEvent) {
               :custom-column="state.customColumn"
               :album-selection-mode="albumSelectionMode"
               :selected-album-ids="selectedAlbumIds"
+              :search-artists="searchArtists"
               :alphabet-index-view="state.alphabetIndexView"
               @navigate="navigatePrimary"
               @back="goBackPrimary"
@@ -898,6 +907,8 @@ function onDrop(event: DragEvent) {
               @shuffle="player.shuffleCurrent"
               @track-menu="openTrackMenu"
               @album-menu="openAlbumMenu"
+              @artist="player.selectArtist"
+              @artist-menu="openArtistMenu"
               @open-files="player.openFiles"
               @open-folder="player.openFolder"
               @clear-search="clearPrimarySearch"
