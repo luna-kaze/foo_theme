@@ -464,6 +464,7 @@ async function openTrackMenu(track: DisplayTrack, index: number, event: MouseEve
       const dopItem = pluginMenuItem('track:dop', 'iPod', pluginActions.dop, player.pluginIntegrations.dop.installed, menuIcons.device)
       if (converterItem) pluginItems.push(converterItem)
       if (dopItem) pluginItems.push(dopItem)
+      const sourcePlaylist = state.view === 'playlist' && index >= 0 ? state.browsingPlaylist ?? state.activePlaylist : null
       const items: ContextMenuItem[] = [
         { id: 'track:header', type: 'nowplaying', cover, title: targets.length > 1 ? `已选择 ${targets.length} 首曲目` : track.title, subtitle: targets.length > 1 ? '批量操作' : `${track.artist} · ${track.album}` },
         { type: 'separator' },
@@ -472,7 +473,8 @@ async function openTrackMenu(track: DisplayTrack, index: number, event: MouseEve
         { id: 'track:queue', label: targets.length > 1 ? `将 ${targets.length} 首曲目添加到队列` : '添加到队列', iconSvg: menuIcons.queue },
         { type: 'separator' },
         { id: 'track:favourite', label: Number(track.rating ?? 0) === 5 ? '取消收藏' : '添加到收藏', checked: Number(track.rating ?? 0) === 5, iconSvg: menuIcons.heart },
-       { id: 'track:playlist', label: targets.length > 1 ? `将 ${targets.length} 首曲目添加到播放列表` : '添加到播放列表', iconSvg: menuIcons.playlist, enabled: state.playlists.length > 0, submenu: playlistSubmenu('track:playlist') },
+        { id: 'track:playlist', label: targets.length > 1 ? `将 ${targets.length} 首曲目添加到播放列表` : '添加到播放列表', iconSvg: menuIcons.playlist, enabled: state.playlists.length > 0, submenu: playlistSubmenu('track:playlist') },
+        ...(sourcePlaylist ? [{ id: 'track:move-playlist', label: targets.length > 1 ? `将 ${targets.length} 首曲目移动到播放列表` : '移动到播放列表', iconSvg: menuIcons.move, enabled: !sourcePlaylist.isLocked && !sourcePlaylist.isAutoplaylist, submenu: movePlaylistSubmenu(sourcePlaylist.index) } as ContextMenuItem] : []),
         ...(pluginItems.length ? [{ type: 'separator' } as ContextMenuItem, ...pluginItems] : []),
         { type: 'separator' },
         { id: 'track:album', label: '前往专辑', iconSvg: menuIcons.album },
@@ -484,10 +486,8 @@ async function openTrackMenu(track: DisplayTrack, index: number, event: MouseEve
         { id: 'track:move', label: '移动文件', iconSvg: menuIcons.folder, enabled: Boolean(localFilePath(track)) },
         { id: 'track:delete-file', label: '移动文件到回收站', iconSvg: menuIcons.remove, enabled: Boolean(localFilePath(track)) },
       ]
-       if (state.view === 'playlist' && index >= 0) {
-         const sourcePlaylist = state.browsingPlaylist ?? state.activePlaylist
+       if (sourcePlaylist) {
          items.push(
-           { id: 'track:move-playlist', label: targets.length > 1 ? `将 ${targets.length} 首曲目移动到播放列表` : '移动到播放列表', iconSvg: menuIcons.playlist, enabled: Boolean(sourcePlaylist && !sourcePlaylist.isLocked && !sourcePlaylist.isAutoplaylist), submenu: sourcePlaylist ? movePlaylistSubmenu(sourcePlaylist.index) : [] },
            { type: 'separator' },
            { id: 'track:remove', label: `从“${sourcePlaylist?.name ?? '播放列表'}”移除`, iconSvg: menuIcons.remove },
          )
@@ -775,6 +775,7 @@ function onDrop(event: DragEvent) {
       @submit-search="submitPrimarySearch"
        @playlist-menu="openPlaylistMenu"
        @reorder-playlists="player.reorderPlaylists"
+       @send-playlist-to-ipod="player.sendPlaylistToIpod"
        @create-playlist="state.dialog = 'createPlaylist'"
       @favourites="showFavourites"
     />

@@ -1935,6 +1935,17 @@ async function getPluginContextActions(tracks: DisplayTrack[]) {
     await runPluginContextAction(action, tracks)
   }
 
+  async function sendPlaylistToIpod(playlistIndex: number) {
+    const playlist = state.playlists.find((item) => item.index === playlistIndex)
+    if (!playlist) return
+    const tracks = await getAllPlaylistTracks(playlistIndex)
+    if (!tracks.length) {
+      notify(`“${playlist.name}”中没有可发送的曲目。`, 'info')
+      return
+    }
+    await sendTracksToIpod(tracks)
+  }
+
 function clearIpodCommands() {
   ipodCommandCache.clear()
   ;(Object.keys(ipodCommands) as IpodMainAction[]).forEach((action) => { ipodCommands[action] = false })
@@ -2697,6 +2708,7 @@ export function useFoobar() {
     getPluginContextActions,
     runPluginContextAction,
     sendTracksToIpod,
+    sendPlaylistToIpod,
     runIpodMainAction,
     refreshIpodDeviceStatus,
     refreshIpodCommands,

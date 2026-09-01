@@ -355,10 +355,10 @@ function isCurrent(track: DisplayTrack, currentTrack: DisplayTrack | null) {
             <span class="track-drag-preview__album">{{ dragPreviewTrack.album || '未知专辑' }}</span>
             <span class="track-drag-preview__year">{{ dragPreviewTrack.date?.slice(0, 4) || '—' }}</span>
             <span class="track-drag-preview__duration">{{ formatTime(dragPreviewTrack.duration) }}</span>
-            <b v-if="draggedTracks.length > 1" class="track-drag-preview__count">{{ draggedTracks.length }} 首曲目</b>
-            <b v-if="dragMovesTracks" class="track-drag-preview__mode">移动中</b>
-            <b v-if="targetIpod" class="track-drag-preview__target">添加至 iPod</b>
-            <b v-else-if="targetPlaylist" class="track-drag-preview__target">{{ dragMovesTracks ? '移动至' : '添加至' }} {{ targetPlaylist.name }}</b>
+            <span v-if="dragMovesTracks || draggedTracks.length > 1" class="track-drag-preview__badges">
+              <b v-if="dragMovesTracks">移动中</b>
+              <b v-if="draggedTracks.length > 1">{{ draggedTracks.length }} 首曲目</b>
+            </span>
           </div>
         </div>
       </Transition>

@@ -22,6 +22,7 @@ const emit = defineEmits<{
   favourites: []
   playlistMenu: [playlist: PlaylistInfo, event: MouseEvent]
   reorderPlaylists: [order: number[]]
+  sendPlaylistToIpod: [playlistIndex: number]
 }>()
 
 const draggingPlaylist = ref<PlaylistInfo | null>(null)
@@ -32,6 +33,7 @@ const dragOffsetY = ref(0)
 const dropIndex = ref(-1)
 const dropAfter = ref(false)
 const dropIndicator = ref({ left: 0, top: 0, width: 0, visible: false })
+const ipodDropTarget = ref(false)
 const previewStyle = computed(() => ({
   width: '260px',
   transform: `translate3d(${Math.max(10, dragX.value - dragOffsetX.value)}px, ${dragY.value - dragOffsetY.value}px, 0)`,
@@ -49,6 +51,7 @@ function stopPlaylistDrag() {
   window.removeEventListener('pointerup', finishPlaylistDrag)
   draggingPlaylist.value = null
   dropIndicator.value.visible = false
+  ipodDropTarget.value = false
   playlistNav = null
 }
 
@@ -56,6 +59,13 @@ function updatePlaylistDrag(event: PointerEvent) {
   event.preventDefault()
   dragX.value = event.clientX
   dragY.value = event.clientY
+  const ipodTarget = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-ipod-drop-target]')
+  if (ipodTarget) {
+    ipodDropTarget.value = true
+    dropIndicator.value.visible = false
+    return
+  }
+  ipodDropTarget.value = false
   if (!playlistNav) return
   const previewTop = event.clientY - dragOffsetY.value
   const rows = [...playlistNav.querySelectorAll<HTMLElement>('.playlist-nav__item[data-playlist-index]')]
@@ -74,7 +84,12 @@ function finishPlaylistDrag() {
   const dragged = draggingPlaylist.value
   const targetIndex = dropIndex.value
   const after = dropAfter.value
+  const targetIpod = ipodDropTarget.value
   stopPlaylistDrag()
+  if (dragged && targetIpod) {
+    emit('sendPlaylistToIpod', dragged.index)
+    return
+  }
   if (!dragged || targetIndex < 0) return
   const order = props.playlists.map((playlist) => playlist.index)
   const from = order.indexOf(dragged.index)
@@ -159,7 +174,7 @@ onBeforeUnmount(stopPlaylistDrag)
       </button>
       <template v-if="ipodAvailable">
         <p class="sidebar-nav__label">设备</p>
-        <button data-ipod-drop-target :class="{ active: view === 'ipod' }" @click="emit('navigate', 'ipod')">
+        <button data-ipod-drop-target :class="{ active: view === 'ipod', 'is-playlist-drag-target': ipodDropTarget }" @click="emit('navigate', 'ipod')">
           <Smartphone :size="18" />
           <span>iPod</span>
         </button>

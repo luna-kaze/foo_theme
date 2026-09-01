@@ -13,6 +13,7 @@ export const menuIcons = {
   queue: icon('<path d="M4 6h10M4 12h10M4 18h7"/><path d="M18 15v6M15 18h6"/>'),
   heart: icon('<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8l1.1 1.1L12 21l7.7-7.5 1.1-1.1a5.5 5.5 0 0 0 0-7.8z"/>'),
   playlist: icon('<path d="M4 6h12M4 12h9M4 18h7"/><path d="M18 13v8M14 17h8"/>'),
+  move: icon('<path d="M4 7h11M12 4l3 3-3 3M20 17H9M12 14l-3 3 3 3"/>'),
   album: icon('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2"/>'),
   folder: icon('<path d="M3 6h7l2 2h9v11H3z"/>'),
   shuffle: icon('<path d="M3 6h3c5 0 7 12 12 12h3"/><path d="M18 15l3 3-3 3M3 18h3c2.5 0 4.2-3 5.8-6M15 6h6M18 3l3 3-3 3"/>'),
