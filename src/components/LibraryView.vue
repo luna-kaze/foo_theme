@@ -30,6 +30,7 @@ const props = defineProps<{
   selectedAlbumIds: string[]
   searchArtists: ArtistCard[]
   alphabetIndexView: boolean
+  dragActive?: boolean
 }>()
 
 const albumGroups = useAlphabetGroups(() => props.albums, (album) => album.name, (album) => album.sortName ?? '')
@@ -187,11 +188,11 @@ const emit = defineEmits<{
         </div>
       </section>
       <TrackList
-        v-if="tracks.length"
+        v-if="tracks.length || dragActive"
         :tracks="tracks"
         :current-track="currentTrack"
         :is-playing="isPlaying"
-        :reorderable="view === 'playlist' && !activePlaylist?.isLocked && !activePlaylist?.isAutoplaylist"
+         :reorderable="view === 'playlist' && !activePlaylist?.isLocked && !activePlaylist?.isAutoplaylist"
         :playlist-index="view === 'playlist' ? activePlaylist?.index : undefined"
         :custom-column-label="customColumn.label"
         @play="(track, index) => emit('playTrack', track, index)"
@@ -206,7 +207,7 @@ const emit = defineEmits<{
           @drag-state="emit('dragState', $event)"
           @add-to-ipod="emit('addToIpod', $event)"
        />
-      <div v-else-if="view !== 'search' || (!albums.length && !searchArtists.length)" class="collection-empty">
+      <div v-else-if="!dragActive && (view !== 'search' || (!albums.length && !searchArtists.length))" class="collection-empty">
         <SearchX v-if="view === 'search'" :size="30" /><FileMusic v-else :size="30" />
         <strong>{{ view === 'search' ? '没有匹配的音乐' : view === 'favourites' ? '还没有收藏曲目' : view === 'playlist' ? '这个播放列表是空的' : '没有可显示的音乐' }}</strong>
         <span>{{ view === 'search' ? '请减少关键词，或按标题、艺人、专辑和流派搜索。' : view === 'favourites' ? '在任意曲目的操作菜单中点按收藏，即可保存在这里。' : '打开文件或文件夹后，曲目会显示在“已打开的音乐”播放列表中。' }}</span>

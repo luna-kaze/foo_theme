@@ -895,6 +895,7 @@ function onDrop(event: DragEvent) {
               :folder-selection-mode="folderSelectionMode"
               :selected-folder-ids="selectedFolderIds"
               :alphabet-index-view="state.alphabetIndexView"
+              :drag-active="trackDragRouteKey !== null"
               @navigate="navigatePrimary"
               @artist="player.selectArtist"
               @artist-menu="openArtistMenu"

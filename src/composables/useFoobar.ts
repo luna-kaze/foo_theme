@@ -2006,7 +2006,7 @@ async function addToPlaylist(track: DisplayTrack, playlistIndex: number) {
     const destination = state.playlists.find((item) => item.index === destinationPlaylistIndex)
     if (!source || !destination || sourcePlaylistIndex === destinationPlaylistIndex || source.isLocked || source.isAutoplaylist || destination.isLocked || destination.isAutoplaylist || !tracks.length) return
     const destinationTracks = await getAllPlaylistTracks(destinationPlaylistIndex)
-    if (targetIndex < 0 || targetIndex >= destinationTracks.length) return
+    if (targetIndex < 0 || targetIndex > destinationTracks.length) return
     const added = await runAction(() => fb.playlist.add(destinationPlaylistIndex, tracks.map(playablePath)))
     const addedCount = Number(added?.addedCount ?? 0)
     if (!added || addedCount !== tracks.length) {

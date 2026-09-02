@@ -267,7 +267,15 @@ function updateReorderDrag(event: PointerEvent) {
   const rows = [...dragList.querySelectorAll<HTMLElement>('.track-row[data-reorder-index]')]
   const row = rows.find((item) => previewTop < item.getBoundingClientRect().bottom)
   const target = row ?? rows.at(-1)
-  if (!target) return
+  if (!target) {
+    const header = dragList.querySelector<HTMLElement>('.track-list__header')
+    if (!header) return
+    const bounds = header.getBoundingClientRect()
+    dropIndex.value = 0
+    dropAfter.value = false
+    dropIndicator.value = { left: bounds.left + 11, top: bounds.bottom, width: Math.max(0, bounds.width - 22), visible: true }
+    return
+  }
   const bounds = target.getBoundingClientRect()
   const index = Number(target.dataset.reorderIndex)
   if (!Number.isInteger(index) || index < 0) return
@@ -460,7 +468,7 @@ function isCurrent(track: DisplayTrack, currentTrack: DisplayTrack | null) {
     </div>
     <Teleport to="body">
       <div v-if="dropIndicator.visible" class="track-drop-indicator" :style="dropIndicatorStyle"><i /></div>
-      <div v-if="playlistDropIndicator.visible" class="track-playlist-drop-target" :style="playlistDropIndicatorStyle" />
+      <div v-if="playlistDropIndicator.visible && !targetPlaylist" class="track-playlist-drop-target" :style="playlistDropIndicatorStyle" />
       <Transition name="track-trash-drop">
         <div v-if="(dragging && reorderable && playlistIndex != null) || trashDropComplete" class="track-trash-drop" :class="{ 'is-active': targetTrash, 'is-complete': trashDropComplete }" data-track-trash-target>
           <Trash2 :size="24" aria-label="拖到此处从播放列表移除" />
