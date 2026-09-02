@@ -51,7 +51,26 @@ const indicatorStyle = computed(() => ({
   width: `${dropIndicator.value.width}px`,
 }))
 let playlistNav: HTMLElement | null = null
-let suppressPlaylistClick = false
+let dragStartedAt = { x: 0, y: 0 }
+let didMovePlaylist = false
+let clearSuppressedPlaylistClick: (() => void) | null = null
+
+function suppressNextPlaylistClick() {
+  clearSuppressedPlaylistClick?.()
+  const swallow = (event: MouseEvent) => {
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    clear()
+  }
+  const timeout = window.setTimeout(clear, 1000)
+  function clear() {
+    document.removeEventListener('click', swallow, true)
+    window.clearTimeout(timeout)
+    clearSuppressedPlaylistClick = null
+  }
+  clearSuppressedPlaylistClick = clear
+  document.addEventListener('click', swallow, true)
+}
 
 function stopPlaylistDrag() {
   window.removeEventListener('pointermove', updatePlaylistDrag)
@@ -66,6 +85,7 @@ function updatePlaylistDrag(event: PointerEvent) {
   event.preventDefault()
   dragX.value = event.clientX
   dragY.value = event.clientY
+  if (Math.hypot(event.clientX - dragStartedAt.x, event.clientY - dragStartedAt.y) > 4) didMovePlaylist = true
   const ipodTarget = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-ipod-drop-target]')
   if (ipodTarget) {
     ipodDropTarget.value = true
@@ -94,9 +114,7 @@ function finishPlaylistDrag() {
   const targetIpod = ipodDropTarget.value
   stopPlaylistDrag()
   if (!dragged) return
-  // Pointer release synthesizes a click on the drop target after dragging.
-  suppressPlaylistClick = true
-  window.setTimeout(() => { suppressPlaylistClick = false }, 160)
+  if (didMovePlaylist) suppressNextPlaylistClick()
   if (dragged && targetIpod) {
     emit('sendPlaylistToIpod', dragged.index)
     return
@@ -121,6 +139,8 @@ function beginPlaylistDrag(playlist: PlaylistInfo, event: PointerEvent) {
   draggingPlaylist.value = playlist
   dragX.value = event.clientX
   dragY.value = event.clientY
+  dragStartedAt = { x: event.clientX, y: event.clientY }
+  didMovePlaylist = false
   const row = (event.currentTarget as Element).closest<HTMLElement>('.playlist-nav__item')
   const bounds = row?.getBoundingClientRect()
   if (bounds) {
@@ -133,15 +153,14 @@ function beginPlaylistDrag(playlist: PlaylistInfo, event: PointerEvent) {
   updatePlaylistDrag(event)
 }
 
-function selectPlaylist(index: number, event: MouseEvent) {
-  if (suppressPlaylistClick) {
-    event.preventDefault()
-    return
-  }
+function selectPlaylist(index: number, _event: MouseEvent) {
   emit('playlist', index)
 }
 
-onBeforeUnmount(stopPlaylistDrag)
+onBeforeUnmount(() => {
+  clearSuppressedPlaylistClick?.()
+  stopPlaylistDrag()
+})
 </script>
 
 <template>
