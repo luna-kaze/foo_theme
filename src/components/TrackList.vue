@@ -433,9 +433,7 @@ function isCurrent(track: DisplayTrack, currentTrack: DisplayTrack | null) {
       <div v-if="playlistDropIndicator.visible" class="track-playlist-drop-target" :style="playlistDropIndicatorStyle" />
       <Transition name="track-trash-drop">
         <div v-if="(dragging && reorderable && playlistIndex != null) || trashDropComplete" class="track-trash-drop" :class="{ 'is-active': targetTrash, 'is-complete': trashDropComplete }" data-track-trash-target>
-          <span><Trash2 :size="22" /></span>
-          <strong>{{ trashDropComplete ? '已移除' : targetTrash ? '松开以移除' : '拖到这里移除' }}</strong>
-          <small v-if="draggedTrackCount > 1 && !trashDropComplete">{{ draggedTrackCount }} 首曲目</small>
+          <Trash2 :size="24" aria-label="拖到此处从播放列表移除" />
         </div>
       </Transition>
       <div v-if="dragFragments.length" class="track-drag-fragments" :style="dragPreviewStyle">

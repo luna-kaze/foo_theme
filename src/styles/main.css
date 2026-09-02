@@ -1227,17 +1227,12 @@ input[type="range"] {
 .track-drag-preview__badges b.is-moving { color: #c9f6c6; background: #183521; border-color: rgba(112,211,125,.56); box-shadow: 0 4px 12px rgba(58,177,76,.22); }
 .sidebar-nav button.is-playlist-drag-target { color: #fff; background: linear-gradient(90deg, rgba(231,99,97,.28), rgba(231,99,97,.08)); box-shadow: inset 2px 0 var(--accent), 0 0 14px rgba(231,99,97,.2); }
 .track-playlist-drop-target { position: fixed; z-index: 10001; pointer-events: none; background: linear-gradient(90deg, rgba(231,99,97,.25), rgba(231,99,97,.07)); border: 1px solid rgba(231,99,97,.58); border-radius: 7px; box-shadow: inset 2px 0 var(--accent), 0 0 14px rgba(231,99,97,.2); }
-.track-trash-drop { position: fixed; z-index: 10004; right: 26px; bottom: 26px; display: grid; grid-template-columns: 42px auto; grid-template-rows: 20px 14px; align-items: center; min-width: 190px; padding: 10px 16px 10px 10px; pointer-events: auto; color: #d6d1d3; background: linear-gradient(135deg, rgba(47,40,43,.98), rgba(30,29,33,.98)); border: 1px solid rgba(255,255,255,.13); border-radius: 13px; box-shadow: 0 18px 46px rgba(0,0,0,.42), inset 0 1px rgba(255,255,255,.06); transition: transform 150ms cubic-bezier(.2,.9,.2,1), color 150ms ease, background 150ms ease, border-color 150ms ease, box-shadow 150ms ease; }
-.track-trash-drop > span { grid-row: 1 / span 2; display: grid; place-items: center; width: 36px; height: 36px; color: #b7adb1; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.08); border-radius: 10px; transition: inherit; }
-.track-trash-drop strong { font-size: 11px; font-weight: 650; letter-spacing: .01em; }
-.track-trash-drop small { color: #aaa1a5; font-size: 9.5px; }
-.track-trash-drop.is-active { color: #fff0ef; background: linear-gradient(135deg, rgba(156,56,54,.98), rgba(82,37,41,.98)); border-color: rgba(255,153,147,.72); box-shadow: 0 20px 54px rgba(104,27,30,.46), 0 0 0 4px rgba(231,99,97,.14); transform: translateY(-4px) scale(1.04); }
-.track-trash-drop.is-active > span { color: #fff4f3; background: rgba(255,255,255,.16); border-color: rgba(255,255,255,.24); transform: rotate(-7deg) scale(1.08); }
-.track-trash-drop.is-complete { color: #fff; background: linear-gradient(135deg, #b74948, #742c33); animation: track-trash-confirm 460ms cubic-bezier(.2,.8,.2,1) both; }
-.track-trash-drop.is-complete > span { color: #fff; }
+.track-trash-drop { position: fixed; z-index: 10004; right: 28px; bottom: calc(var(--player-height) + 18px); display: grid; width: 48px; height: 48px; place-items: center; pointer-events: auto; color: rgba(220,214,217,.78); filter: drop-shadow(0 8px 18px rgba(0,0,0,.42)); transition: transform 150ms cubic-bezier(.2,.9,.2,1), color 150ms ease, filter 150ms ease; }
+.track-trash-drop.is-active { color: #ff8d88; filter: drop-shadow(0 0 12px rgba(231,99,97,.82)) drop-shadow(0 9px 20px rgba(0,0,0,.45)); transform: translateY(-4px) scale(1.2); }
+.track-trash-drop.is-complete { color: #fff1f0; animation: track-trash-confirm 460ms cubic-bezier(.2,.8,.2,1) both; }
 .track-trash-drop-enter-active, .track-trash-drop-leave-active { transition: opacity 160ms ease, transform 190ms cubic-bezier(.2,.85,.25,1); }
 .track-trash-drop-enter-from, .track-trash-drop-leave-to { opacity: 0; transform: translate3d(18px, 16px, 0) scale(.88); }
-@keyframes track-trash-confirm { 0% { transform: translateY(-4px) scale(1.04); } 34% { transform: translateY(-7px) scale(1.1); } 100% { transform: translateY(0) scale(1); } }
+@keyframes track-trash-confirm { 0% { transform: translateY(-4px) scale(1.2); } 34% { transform: translateY(-8px) scale(1.34); } 100% { transform: translateY(0) scale(1); } }
 .track-drop-indicator { position: fixed; z-index: 10003; height: 0; pointer-events: none; }
 .track-drop-indicator::before { position: absolute; right: 0; left: 0; height: 3px; content: ''; background: linear-gradient(90deg, var(--accent), #ffaaa6 72%, transparent); border-radius: 3px; box-shadow: 0 0 14px rgba(231,99,97,.65); }
 .track-drop-indicator i { position: absolute; top: -3px; left: -3px; width: 9px; height: 9px; background: var(--accent); border: 2px solid #18181b; border-radius: 50%; box-shadow: 0 0 9px rgba(231,99,97,.7); }
