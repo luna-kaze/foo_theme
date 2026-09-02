@@ -50,7 +50,9 @@ const fileDialog = reactive({ open: false, mode: 'rename' as 'rename' | 'move' |
 const ipodPlaylistConfirmation = ref<PlaylistInfo | null>(null)
 const trackDragRouteKey = ref<string | null>(null)
 const trackPlaylistHoverIndex = ref<number | null>(null)
+const trackPlaylistHoverPhase = ref<'selected' | 'waiting' | null>(null)
 let playlistHoverTimer: ReturnType<typeof setTimeout> | null = null
+let playlistHoverWaitTimer: ReturnType<typeof setTimeout> | null = null
 let hoveredPlaylistIndex: number | null = null
 
 function animateImmersiveFullscreen(time: number) {
@@ -123,23 +125,34 @@ function handleTrackDragState(active: boolean) {
     return
   }
   if (playlistHoverTimer) clearTimeout(playlistHoverTimer)
+  if (playlistHoverWaitTimer) clearTimeout(playlistHoverWaitTimer)
   playlistHoverTimer = null
+  playlistHoverWaitTimer = null
   hoveredPlaylistIndex = null
   trackPlaylistHoverIndex.value = null
+  trackPlaylistHoverPhase.value = null
   trackDragRouteKey.value = null
 }
 
 function handleTrackPlaylistHover(playlistIndex: number | null) {
   if (hoveredPlaylistIndex === playlistIndex) return
   if (playlistHoverTimer) clearTimeout(playlistHoverTimer)
+  if (playlistHoverWaitTimer) clearTimeout(playlistHoverWaitTimer)
   playlistHoverTimer = null
+  playlistHoverWaitTimer = null
   hoveredPlaylistIndex = playlistIndex
   trackPlaylistHoverIndex.value = playlistIndex
+  trackPlaylistHoverPhase.value = playlistIndex == null ? null : 'selected'
   if (playlistIndex == null || state.route.view === 'playlist' && state.route.playlistIndex === playlistIndex) return
-  playlistHoverTimer = setTimeout(() => {
-    playlistHoverTimer = null
-    if (hoveredPlaylistIndex === playlistIndex) void player.browsePlaylist(playlistIndex)
-  }, 650)
+  playlistHoverWaitTimer = setTimeout(() => {
+    playlistHoverWaitTimer = null
+    if (hoveredPlaylistIndex !== playlistIndex) return
+    trackPlaylistHoverPhase.value = 'waiting'
+    playlistHoverTimer = setTimeout(() => {
+      playlistHoverTimer = null
+      if (hoveredPlaylistIndex === playlistIndex) void player.browsePlaylist(playlistIndex)
+    }, 450)
+  }, 250)
 }
 
 const searchArtists = computed<ArtistCard[]>(() => {
@@ -364,6 +377,7 @@ onBeforeUnmount(() => {
   if (airplayTimer) clearTimeout(airplayTimer)
   if (fullscreenSettleTimer) clearTimeout(fullscreenSettleTimer)
   if (playlistHoverTimer) clearTimeout(playlistHoverTimer)
+  if (playlistHoverWaitTimer) clearTimeout(playlistHoverWaitTimer)
   if (immersiveFullscreenFrame) cancelAnimationFrame(immersiveFullscreenFrame)
 })
 
@@ -823,6 +837,7 @@ function onDrop(event: DragEvent) {
        :search="state.search"
        :ipod-available="player.pluginIntegrations.dop.installed"
        :track-playlist-hover-index="trackPlaylistHoverIndex"
+       :track-playlist-hover-phase="trackPlaylistHoverPhase"
       @navigate="navigatePrimary"
       @playlist="selectPrimaryPlaylist"
       @search="player.setSearch"
@@ -866,7 +881,7 @@ function onDrop(event: DragEvent) {
       />
       <div class="workspace-scroll" :class="{ 'workspace-scroll--index-rail': state.alphabetIndexView && ['albums', 'artists'].includes(state.view) }">
         <Transition name="route-page" mode="out-in">
-          <div :key="primaryRouteKey" class="route-page">
+          <div :key="state.view === 'playlist' ? 'playlist' : primaryRouteKey" class="route-page">
             <IpodManagerView
               v-if="state.view === 'ipod'"
               :connected="state.connected"
