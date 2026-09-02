@@ -93,11 +93,15 @@ function finishPlaylistDrag() {
   const after = dropAfter.value
   const targetIpod = ipodDropTarget.value
   stopPlaylistDrag()
+  if (!dragged) return
+  // Pointer release synthesizes a click on the drop target after dragging.
+  suppressPlaylistClick = true
+  window.setTimeout(() => { suppressPlaylistClick = false }, 160)
   if (dragged && targetIpod) {
     emit('sendPlaylistToIpod', dragged.index)
     return
   }
-  if (!dragged || targetIndex < 0) return
+  if (targetIndex < 0) return
   const order = props.playlists.map((playlist) => playlist.index)
   const from = order.indexOf(dragged.index)
   const targetPosition = order.indexOf(targetIndex)
@@ -107,8 +111,6 @@ function finishPlaylistDrag() {
   if (from < destination) destination -= 1
   order.splice(destination, 0, moved)
   if (order.every((index, position) => index === props.playlists[position]?.index)) return
-  suppressPlaylistClick = true
-  window.setTimeout(() => { suppressPlaylistClick = false }, 0)
   emit('reorderPlaylists', order)
 }
 
