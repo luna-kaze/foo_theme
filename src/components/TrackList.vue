@@ -20,7 +20,7 @@ const emit = defineEmits<{
   play: [track: DisplayTrack, index: number]
   menu: [track: DisplayTrack, index: number, event: MouseEvent]
   selection: [tracks: DisplayTrack[]]
-  reorder: [from: number, to: number, after: boolean]
+  reorder: [from: number, to: number, after: boolean, selectedIndexes: number[]]
   addToPlaylist: [tracks: DisplayTrack[], playlistIndex: number]
   moveToPlaylist: [tracks: DisplayTrack[], sourcePlaylistIndex: number, destinationPlaylistIndex: number]
   addToIpod: [tracks: DisplayTrack[]]
@@ -235,10 +235,6 @@ function updateReorderDrag(event: PointerEvent) {
   targetPlaylist.value = null
   targetIpod.value = false
   playlistDropIndicator.value.visible = false
-  if (draggedTrackCount.value > 1) {
-    dropIndicator.value.visible = false
-    return
-  }
   if (!dragList) return
   const previewTop = event.clientY - dragOffsetY.value
   const rows = [...dragList.querySelectorAll<HTMLElement>('.track-row[data-reorder-index]')]
@@ -270,7 +266,8 @@ function finishReorderDrag() {
   const tracks = (ipod || (playlist && playlist.index !== props.playlistIndex))
     ? props.tracks.filter((_, index) => draggedIndexes.value.has(index))
     : []
-  const moved = dragging.value && from >= 0 && to >= 0 && from !== to
+  const selectedIndexes = [...draggedIndexes.value].sort((a, b) => a - b)
+  const moved = dragging.value && from >= 0 && to >= 0 && (selectedIndexes.length > 1 ? selectedIndexes.some((index) => index !== to) : from !== to)
   stopReorderDrag()
   if (ipod && tracks.length) {
     emit('addToIpod', tracks)
@@ -284,11 +281,10 @@ function finishReorderDrag() {
     return
   }
   if (!props.reorderable) return
-  if (trackCount > 1) return
   if (!moved) return
   suppressClick = true
   window.setTimeout(() => { suppressClick = false }, 0)
-  emit('reorder', from, to, after)
+  emit('reorder', from, to, after, selectedIndexes)
 }
 
 function beginTrackDrag(index: number, event: PointerEvent) {

@@ -57,7 +57,7 @@ const emit = defineEmits<{
   filterRuleUpdate: [id: string, patch: Partial<Pick<LibraryFilterRule, 'field' | 'operator' | 'value'>>]
   filterRuleRemove: [id: string]
   clearFilters: []
-  reorder: [from: number, to: number, after: boolean]
+  reorder: [from: number, to: number, after: boolean, selectedIndexes?: number[]]
   addToPlaylist: [tracks: DisplayTrack[], playlistIndex: number]
   moveToPlaylist: [tracks: DisplayTrack[], sourcePlaylistIndex: number, destinationPlaylistIndex: number]
   addToIpod: [tracks: DisplayTrack[]]
@@ -193,7 +193,7 @@ const emit = defineEmits<{
         @play="(track, index) => emit('playTrack', track, index)"
         @menu="(track, index, event) => emit('trackMenu', track, index, event)"
         @selection="emit('selection', $event)"
-         @reorder="(from, to, after) => emit('reorder', from, to, after)"
+          @reorder="(from, to, after, selectedIndexes) => emit('reorder', from, to, after, selectedIndexes)"
           @add-to-playlist="(selected, playlistIndex) => emit('addToPlaylist', selected, playlistIndex)"
           @move-to-playlist="(selected, sourcePlaylistIndex, destinationPlaylistIndex) => emit('moveToPlaylist', selected, sourcePlaylistIndex, destinationPlaylistIndex)"
           @add-to-ipod="emit('addToIpod', $event)"

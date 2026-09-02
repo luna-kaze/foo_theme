@@ -1598,23 +1598,50 @@ async function undoPlaylistChange(playlistIndex: number) {
   }
 }
 
-async function reorderPlaylistTrack(from: number, to: number, after = false) {
+async function reorderPlaylistTrack(from: number, to: number, after = false, selectedVisibleIndexes: number[] = [from]) {
   const route = state.route
-  if (route.view !== 'playlist' || from === to) return
+  if (route.view !== 'playlist' || !selectedVisibleIndexes.length) return
   const playlist = state.playlists.find((item) => item.index === route.playlistIndex)
   if (!playlist || playlist.isLocked || playlist.isAutoplaylist) return
-  const sourceTrack = state.visibleTracks[from]
-  if (!sourceTrack) return
-  const resolved = await resolvePlaylistTrackIndex(route.playlistIndex, sourceTrack, sourceTrack.sourceIndex)
-  if (resolved == null) return
+  const visibleIndexes = [...new Set(selectedVisibleIndexes)].sort((left, right) => left - right)
+  if (visibleIndexes.includes(to)) return
+  const selectedTracks = visibleIndexes.map((index) => state.visibleTracks[index]).filter((track): track is DisplayTrack => Boolean(track))
   const targetTrack = state.visibleTracks[to]
-  const target = targetTrack ? await resolvePlaylistTrackIndex(route.playlistIndex, targetTrack, targetTrack.sourceIndex) : to
-  if (target == null) return
-  const delta = target > resolved
-    ? target - resolved - (after ? 0 : 1)
-    : target - resolved + (after ? 1 : 0)
-  if (!delta) return
-  const result = await runAction(() => fb.playlist.moveTracks(route.playlistIndex, [resolved], delta), '已调整播放列表顺序')
+  if (selectedTracks.length !== visibleIndexes.length || !targetTrack) return
+  const snapshot = await getAllPlaylistTracks(route.playlistIndex)
+  const usedIndexes = new Set<number>()
+  const resolveFromSnapshot = (track: DisplayTrack) => {
+    const hint = track.sourceIndex
+    if (hint != null && snapshot[hint] && trackKey(snapshot[hint]) === trackKey(track) && !usedIndexes.has(hint)) return hint
+    return snapshot.findIndex((item) => !usedIndexes.has(item.sourceIndex ?? -1) && isSameTrack(item, track))
+  }
+  const selectedIndexes: number[] = []
+  for (const track of selectedTracks) {
+    const index = resolveFromSnapshot(track)
+    if (index < 0) {
+      notify('播放列表已变化，请重新选择后再排序。', 'info')
+      await refreshActivePlaylist()
+      return
+    }
+    usedIndexes.add(index)
+    selectedIndexes.push(index)
+  }
+  selectedIndexes.sort((left, right) => left - right)
+  const targetHint = targetTrack.sourceIndex
+  const target = targetHint != null && snapshot[targetHint] && trackKey(snapshot[targetHint]) === trackKey(targetTrack)
+    ? targetHint
+    : snapshot.findIndex((item) => isSameTrack(item, targetTrack))
+  if (target < 0) {
+    notify('播放列表已变化，请重新选择后再排序。', 'info')
+    await refreshActivePlaylist()
+    return
+  }
+  const boundary = after ? target + 1 : target
+  const remaining = snapshot.map((_, index) => index).filter((index) => !selectedIndexes.includes(index))
+  const insertion = boundary - selectedIndexes.filter((index) => index < boundary).length
+  const order = [...remaining.slice(0, insertion), ...selectedIndexes, ...remaining.slice(insertion)]
+  if (order.every((index, position) => index === position)) return
+  const result = await runAction(() => fb.playlist.reorder(route.playlistIndex, order), '已调整播放列表顺序')
   if (result) await refreshActivePlaylist()
 }
 
