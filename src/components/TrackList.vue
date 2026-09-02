@@ -80,6 +80,59 @@ let dragList: HTMLElement | null = null
 let mergeFrame = 0
 let mergeTimer: ReturnType<typeof setTimeout> | null = null
 let trashCompleteTimer: ReturnType<typeof setTimeout> | null = null
+let autoScrollFrame = 0
+let autoScrollViewport: HTMLElement | null = null
+const autoScrollEdge = 56
+
+function clearTrackDropTarget() {
+  dropIndex.value = -1
+  dropAfter.value = false
+  dropIndicator.value.visible = false
+}
+
+function stopAutoScroll() {
+  if (autoScrollFrame) cancelAnimationFrame(autoScrollFrame)
+  autoScrollFrame = 0
+  autoScrollViewport = null
+}
+
+function updateAutoScroll(viewport: HTMLElement, clientY: number) {
+  const bounds = viewport.getBoundingClientRect()
+  const withinTopEdge = clientY >= bounds.top && clientY < bounds.top + autoScrollEdge
+  const withinBottomEdge = clientY <= bounds.bottom && clientY > bounds.bottom - autoScrollEdge
+  if (!withinTopEdge && !withinBottomEdge) {
+    stopAutoScroll()
+    return
+  }
+  autoScrollViewport = viewport
+  if (autoScrollFrame) return
+  const scroll = () => {
+    const currentViewport = autoScrollViewport
+    if (!currentViewport || !dragging.value) {
+      stopAutoScroll()
+      return
+    }
+    const currentBounds = currentViewport.getBoundingClientRect()
+    const topDistance = dragY.value - currentBounds.top
+    const bottomDistance = currentBounds.bottom - dragY.value
+    const direction = topDistance >= 0 && topDistance < autoScrollEdge ? -1 : bottomDistance >= 0 && bottomDistance < autoScrollEdge ? 1 : 0
+    if (!direction) {
+      stopAutoScroll()
+      return
+    }
+    const edgeDistance = direction < 0 ? topDistance : bottomDistance
+    const speed = Math.ceil(4 + (1 - edgeDistance / autoScrollEdge) * 16)
+    const previousTop = currentViewport.scrollTop
+    currentViewport.scrollTop += direction * speed
+    if (currentViewport.scrollTop === previousTop) {
+      stopAutoScroll()
+      return
+    }
+    updateTrackDropTarget(dragX.value, dragY.value)
+    autoScrollFrame = requestAnimationFrame(scroll)
+  }
+  autoScrollFrame = requestAnimationFrame(scroll)
+}
 
 function fragmentStyle(fragment: { offsetX: number; offsetY: number; width: number; layer: number }) {
   const visualLayer = Math.min(fragment.layer + 1, 2)
@@ -199,11 +252,10 @@ function stopReorderDrag() {
   window.removeEventListener('pointermove', updateReorderDrag)
   window.removeEventListener('pointerup', finishReorderDrag)
   window.removeEventListener('pointercancel', cancelReorderDrag)
+  stopAutoScroll()
   if (dragList && dragPointerId.value != null && dragList.hasPointerCapture(dragPointerId.value)) dragList.releasePointerCapture(dragPointerId.value)
   dragIndex.value = -1
-  dropIndex.value = -1
-  dropAfter.value = false
-  dropIndicator.value.visible = false
+  clearTrackDropTarget()
   playlistDropIndicator.value.visible = false
   targetPlaylist.value = null
   targetIpod.value = false
@@ -229,12 +281,17 @@ function stopReorderDrag() {
 function updateReorderDrag(event: PointerEvent) {
   if (event.pointerId !== dragPointerId.value) return
   event.preventDefault()
-  dragX.value = event.clientX
-  dragY.value = event.clientY
-  const playlistRow = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('.playlist-nav__item[data-playlist-index]')
-  const ipodTarget = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-ipod-drop-target]')
-  const trashTarget = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-track-trash-target]')
+  updateTrackDropTarget(event.clientX, event.clientY)
+}
+
+function updateTrackDropTarget(clientX: number, clientY: number) {
+  dragX.value = clientX
+  dragY.value = clientY
+  const playlistRow = document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>('.playlist-nav__item[data-playlist-index]')
+  const ipodTarget = document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>('[data-ipod-drop-target]')
+  const trashTarget = document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>('[data-track-trash-target]')
   if (trashTarget && props.reorderable && props.playlistIndex != null) {
+    stopAutoScroll()
     targetTrash.value = true
     targetIpod.value = false
     targetPlaylist.value = null
@@ -245,6 +302,7 @@ function updateReorderDrag(event: PointerEvent) {
   }
   targetTrash.value = false
   if (ipodTarget) {
+    stopAutoScroll()
     const bounds = ipodTarget.getBoundingClientRect()
     targetIpod.value = true
     targetPlaylist.value = null
@@ -255,6 +313,7 @@ function updateReorderDrag(event: PointerEvent) {
   }
   const playlistIndex = Number(playlistRow?.dataset.playlistIndex)
   if (Number.isInteger(playlistIndex) && playlistIndex >= 0 && playlistRow) {
+    stopAutoScroll()
     const bounds = playlistRow.getBoundingClientRect()
     targetPlaylist.value = { index: playlistIndex, name: playlistRow.dataset.playlistName ?? '播放列表' }
     targetIpod.value = false
@@ -268,7 +327,21 @@ function updateReorderDrag(event: PointerEvent) {
   playlistDropIndicator.value.visible = false
   emit('playlistHover', null)
   if (!dragList) return
-  const previewTop = event.clientY - dragOffsetY.value
+  const viewport = dragList.closest<HTMLElement>('.workspace-scroll')
+  const listBounds = dragList.getBoundingClientRect()
+  const viewportBounds = viewport?.getBoundingClientRect()
+  const withinList = viewportBounds
+    && clientX >= listBounds.left
+    && clientX <= listBounds.right
+    && clientY >= Math.max(viewportBounds.top, listBounds.top)
+    && clientY <= Math.min(viewportBounds.bottom, listBounds.bottom + 32)
+  if (!withinList || !viewport) {
+    stopAutoScroll()
+    clearTrackDropTarget()
+    return
+  }
+  updateAutoScroll(viewport, clientY)
+  const previewTop = clientY - dragOffsetY.value
   const rows = [...dragList.querySelectorAll<HTMLElement>('.track-row[data-reorder-index]')]
   const row = rows.find((item) => previewTop < item.getBoundingClientRect().bottom)
   const target = row ?? rows.at(-1)
