@@ -1646,6 +1646,8 @@ async function reorderPlaylistTrack(from: number, to: number, after = false, sel
 }
 
 async function reorderPlaylists(order: number[]) {
+  const routeBeforeReorder = state.route
+  const playlistRouteBeforeReorder = routeBeforeReorder.view === 'playlist' ? routeBeforeReorder : null
   const currentOrder = state.playlists.map((playlist) => playlist.index)
   if (order.length !== currentOrder.length || new Set(order).size !== order.length || order.some((index) => !currentOrder.includes(index))) return
   if (order.every((index, position) => index === currentOrder[position])) return
@@ -1665,7 +1667,12 @@ async function reorderPlaylists(order: number[]) {
   const newOrder = merged.map((index) => oldPositionByIndex.get(index))
   if (newOrder.some((position) => position == null)) return
   const result = await runAction(() => fb.playlist.reorderPlaylists(newOrder as number[]), '已调整播放列表顺序')
-  if (result) await loadPlaylists()
+  if (!result) return
+  if (playlistRouteBeforeReorder) {
+    const nextPlaylistIndex = merged.indexOf(playlistRouteBeforeReorder.playlistIndex)
+    if (nextPlaylistIndex >= 0) state.route = { ...playlistRouteBeforeReorder, playlistIndex: nextPlaylistIndex }
+  }
+  await loadPlaylists()
 }
 
 async function movePlaylistToTop(playlistIndex: number) {
