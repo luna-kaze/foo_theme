@@ -11,6 +11,7 @@ const props = defineProps<{
   activePlaylist: PlaylistInfo | null
   search: string
   ipodAvailable: boolean
+  trackPlaylistHoverIndex: number | null
 }>()
 
 const emit = defineEmits<{
@@ -198,7 +199,7 @@ onBeforeUnmount(() => {
           class="playlist-nav__item"
           :data-playlist-index="playlist.index"
           :data-playlist-name="playlist.name"
-          :class="{ active: view === 'playlist' && activePlaylist?.index === playlist.index }"
+          :class="{ active: view === 'playlist' && activePlaylist?.index === playlist.index, 'is-track-drag-hover': trackPlaylistHoverIndex === playlist.index }"
           @click="selectPlaylist(playlist.index, $event)"
           @contextmenu.prevent.stop="emit('playlistMenu', playlist, $event)"
         >

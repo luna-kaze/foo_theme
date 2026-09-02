@@ -61,6 +61,9 @@ const emit = defineEmits<{
   addToPlaylist: [tracks: DisplayTrack[], playlistIndex: number]
   moveToPlaylist: [tracks: DisplayTrack[], sourcePlaylistIndex: number, destinationPlaylistIndex: number]
   removeFromPlaylist: [tracks: DisplayTrack[], playlistIndex: number]
+  insertIntoPlaylist: [tracks: DisplayTrack[], sourcePlaylistIndex: number, destinationPlaylistIndex: number, targetIndex: number, after: boolean, move: boolean]
+  playlistHover: [playlistIndex: number | null]
+  dragState: [active: boolean]
   addToIpod: [tracks: DisplayTrack[]]
   albumSelection: [album: AlbumCard, selected: boolean]
   cancelAlbumSelection: []
@@ -198,6 +201,9 @@ const emit = defineEmits<{
           @add-to-playlist="(selected, playlistIndex) => emit('addToPlaylist', selected, playlistIndex)"
           @move-to-playlist="(selected, sourcePlaylistIndex, destinationPlaylistIndex) => emit('moveToPlaylist', selected, sourcePlaylistIndex, destinationPlaylistIndex)"
           @remove-from-playlist="(selected, playlistIndex) => emit('removeFromPlaylist', selected, playlistIndex)"
+          @insert-into-playlist="(selected, sourcePlaylistIndex, destinationPlaylistIndex, targetIndex, after, move) => emit('insertIntoPlaylist', selected, sourcePlaylistIndex, destinationPlaylistIndex, targetIndex, after, move)"
+          @playlist-hover="emit('playlistHover', $event)"
+          @drag-state="emit('dragState', $event)"
           @add-to-ipod="emit('addToIpod', $event)"
        />
       <div v-else-if="view !== 'search' || (!albums.length && !searchArtists.length)" class="collection-empty">

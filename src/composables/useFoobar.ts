@@ -1235,6 +1235,12 @@ async function selectActivePlaylist(index?: number, pushHistory = true) {
   await navigate({ view: 'playlist', playlistIndex: selected.index, playlistName: selected.name }, pushHistory ? 'push' : 'none')
 }
 
+async function browsePlaylist(index: number) {
+  const playlist = state.playlists.find((item) => item.index === index)
+  if (!playlist) return
+  await navigate({ view: 'playlist', playlistIndex: playlist.index, playlistName: playlist.name }, 'none')
+}
+
 async function refreshActivePlaylist() {
   if (state.route.view !== 'playlist') return
   await navigate(state.route, 'none')
@@ -1993,6 +1999,28 @@ async function addToPlaylist(track: DisplayTrack, playlistIndex: number) {
     if (!result) return
     notify(`已从“${playlist.name}”移除 ${tracks.length} 首曲目`, 'success')
     if (state.route.view === 'playlist' && state.route.playlistIndex === playlistIndex) await refreshActivePlaylist()
+  }
+
+  async function insertTracksIntoPlaylist(tracks: DisplayTrack[], sourcePlaylistIndex: number, destinationPlaylistIndex: number, targetIndex: number, after: boolean, move: boolean) {
+    const source = state.playlists.find((item) => item.index === sourcePlaylistIndex)
+    const destination = state.playlists.find((item) => item.index === destinationPlaylistIndex)
+    if (!source || !destination || sourcePlaylistIndex === destinationPlaylistIndex || source.isLocked || source.isAutoplaylist || destination.isLocked || destination.isAutoplaylist || !tracks.length) return
+    const destinationTracks = await getAllPlaylistTracks(destinationPlaylistIndex)
+    if (targetIndex < 0 || targetIndex >= destinationTracks.length) return
+    const added = await runAction(() => fb.playlist.add(destinationPlaylistIndex, tracks.map(playablePath)))
+    const addedCount = Number(added?.addedCount ?? 0)
+    if (!added || addedCount !== tracks.length) {
+      notify('部分曲目未能插入目标播放列表。', 'info')
+      return
+    }
+    const appended = Array.from({ length: addedCount }, (_, index) => destinationTracks.length + index)
+    const insertion = Math.min(destinationTracks.length, targetIndex + (after ? 1 : 0))
+    const original = Array.from({ length: destinationTracks.length }, (_, index) => index)
+    const order = [...original.slice(0, insertion), ...appended, ...original.slice(insertion)]
+    if (!await runAction(() => fb.playlist.reorder(destinationPlaylistIndex, order))) return
+    if (move) await removeTracksFromPlaylist(tracks, sourcePlaylistIndex)
+    notify(`已将 ${tracks.length} 首曲目插入“${destination.name}”`, 'success')
+    if (state.route.view === 'playlist' && state.route.playlistIndex === destinationPlaylistIndex) await refreshActivePlaylist()
   }
 
 async function playNext(track: DisplayTrack) {
@@ -2896,6 +2924,7 @@ export function useFoobar() {
     clearLibraryFilters,
     applyCustomColumn,
     selectActivePlaylist,
+    browsePlaylist,
     selectAlbum,
     selectArtist,
     getArtistTracks,
@@ -2951,6 +2980,7 @@ export function useFoobar() {
     addToPlaylist,
     moveTracksToPlaylist,
     removeTracksFromPlaylist,
+    insertTracksIntoPlaylist,
     addTracksToPlaylist,
     playNext,
     removePlaylistTrack,

@@ -1226,6 +1226,8 @@ input[type="range"] {
 .track-drag-preview__badges b { position: static; }
 .track-drag-preview__badges b.is-moving { color: #c9f6c6; background: #183521; border-color: rgba(112,211,125,.56); box-shadow: 0 4px 12px rgba(58,177,76,.22); }
 .sidebar-nav button.is-playlist-drag-target { color: #fff; background: linear-gradient(90deg, rgba(231,99,97,.28), rgba(231,99,97,.08)); box-shadow: inset 2px 0 var(--accent), 0 0 14px rgba(231,99,97,.2); }
+.playlist-nav__item.is-track-drag-hover { color: #fff; background: linear-gradient(90deg, rgba(231,99,97,.3), rgba(231,99,97,.08)); box-shadow: inset 2px 0 var(--accent), 0 0 0 1px rgba(231,99,97,.3), 0 0 16px rgba(231,99,97,.22); animation: playlist-track-hover-pulse 650ms ease-in-out infinite alternate; }
+@keyframes playlist-track-hover-pulse { from { filter: brightness(1); } to { filter: brightness(1.24); } }
 .track-playlist-drop-target { position: fixed; z-index: 10001; pointer-events: none; background: linear-gradient(90deg, rgba(231,99,97,.25), rgba(231,99,97,.07)); border: 1px solid rgba(231,99,97,.58); border-radius: 7px; box-shadow: inset 2px 0 var(--accent), 0 0 14px rgba(231,99,97,.2); }
 .track-trash-drop { position: fixed; z-index: 10004; right: 28px; bottom: calc(var(--player-height) + 18px); display: grid; width: 48px; height: 48px; place-items: center; pointer-events: auto; color: rgba(220,214,217,.78); filter: drop-shadow(0 8px 18px rgba(0,0,0,.42)); transition: transform 150ms cubic-bezier(.2,.9,.2,1), color 150ms ease, filter 150ms ease; }
 .track-trash-drop.is-active { color: #ff8d88; filter: drop-shadow(0 0 12px rgba(231,99,97,.82)) drop-shadow(0 9px 20px rgba(0,0,0,.45)); transform: translateY(-4px) scale(1.2); }

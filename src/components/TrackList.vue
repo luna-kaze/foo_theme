@@ -24,6 +24,9 @@ const emit = defineEmits<{
   addToPlaylist: [tracks: DisplayTrack[], playlistIndex: number]
   moveToPlaylist: [tracks: DisplayTrack[], sourcePlaylistIndex: number, destinationPlaylistIndex: number]
   removeFromPlaylist: [tracks: DisplayTrack[], playlistIndex: number]
+  insertIntoPlaylist: [tracks: DisplayTrack[], sourcePlaylistIndex: number, destinationPlaylistIndex: number, targetIndex: number, after: boolean, move: boolean]
+  playlistHover: [playlistIndex: number | null]
+  dragState: [active: boolean]
   addToIpod: [tracks: DisplayTrack[]]
 }>()
 
@@ -46,6 +49,7 @@ const dropIndicator = ref({ left: 0, top: 0, width: 0, visible: false })
 const dragPreviewTrack = ref<DisplayTrack | null>(null)
 const draggedTrackCount = ref(0)
 const draggedIndexes = ref(new Set<number>())
+const draggedTracks = ref<DisplayTrack[]>([])
 const dragFragments = ref<Array<{ id: string; track: DisplayTrack; offsetX: number; offsetY: number; width: number; layer: number }>>([])
 const mergePhase = ref(false)
 const mergedPreview = ref(false)
@@ -54,6 +58,7 @@ const targetIpod = ref(false)
 const targetTrash = ref(false)
 const trashDropComplete = ref(false)
 const dragMovesTracks = ref(false)
+const dragSourcePlaylistIndex = ref<number | null>(null)
 const playlistDropIndicator = ref({ left: 0, top: 0, width: 0, height: 0, visible: false })
 const dragPreviewStyle = computed(() => ({
   width: `${Math.min(dragWidth.value, globalThis.innerWidth - 24)}px`,
@@ -189,6 +194,7 @@ function selectAll(event: KeyboardEvent) {
 }
 
 function stopReorderDrag() {
+  if (dragging.value) emit('dragState', false)
   window.removeEventListener('pointermove', updateReorderDrag)
   window.removeEventListener('pointerup', finishReorderDrag)
   dragIndex.value = -1
@@ -200,8 +206,10 @@ function stopReorderDrag() {
   targetIpod.value = false
   targetTrash.value = false
   dragMovesTracks.value = false
+  dragSourcePlaylistIndex.value = null
   draggedTrackCount.value = 0
   draggedIndexes.value = new Set()
+  draggedTracks.value = []
   dragFragments.value = []
   mergePhase.value = false
   mergedPreview.value = false
@@ -227,6 +235,7 @@ function updateReorderDrag(event: PointerEvent) {
     targetPlaylist.value = null
     playlistDropIndicator.value.visible = false
     dropIndicator.value.visible = false
+    emit('playlistHover', null)
     return
   }
   targetTrash.value = false
@@ -236,6 +245,7 @@ function updateReorderDrag(event: PointerEvent) {
     targetPlaylist.value = null
     playlistDropIndicator.value = { left: bounds.left + 3, top: bounds.top + 2, width: Math.max(0, bounds.width - 6), height: Math.max(0, bounds.height - 4), visible: true }
     dropIndicator.value.visible = false
+    emit('playlistHover', null)
     return
   }
   const playlistIndex = Number(playlistRow?.dataset.playlistIndex)
@@ -245,11 +255,13 @@ function updateReorderDrag(event: PointerEvent) {
     targetIpod.value = false
     playlistDropIndicator.value = { left: bounds.left + 3, top: bounds.top + 2, width: Math.max(0, bounds.width - 6), height: Math.max(0, bounds.height - 4), visible: true }
     dropIndicator.value.visible = false
+    emit('playlistHover', playlistIndex === dragSourcePlaylistIndex.value ? null : playlistIndex)
     return
   }
   targetPlaylist.value = null
   targetIpod.value = false
   playlistDropIndicator.value.visible = false
+  emit('playlistHover', null)
   if (!dragList) return
   const previewTop = event.clientY - dragOffsetY.value
   const rows = [...dragList.querySelectorAll<HTMLElement>('.track-row[data-reorder-index]')]
@@ -278,28 +290,35 @@ function finishReorderDrag() {
   const ipod = targetIpod.value
   const trash = targetTrash.value
   const move = dragMovesTracks.value
-  const trackCount = draggedTrackCount.value
-  const tracks = (trash || ipod || (playlist && playlist.index !== props.playlistIndex))
-    ? props.tracks.filter((_, index) => draggedIndexes.value.has(index))
+  const sourcePlaylistIndex = dragSourcePlaylistIndex.value
+  const foreignPlaylist = sourcePlaylistIndex != null && props.playlistIndex != null && sourcePlaylistIndex !== props.playlistIndex
+  const tracks = (trash || ipod || foreignPlaylist || (playlist && playlist.index !== sourcePlaylistIndex))
+    ? draggedTracks.value
     : []
   const selectedIndexes = [...draggedIndexes.value].sort((a, b) => a - b)
   const moved = dragging.value && from >= 0 && to >= 0 && (selectedIndexes.length > 1 ? selectedIndexes.some((index) => index !== to) : from !== to)
   stopReorderDrag()
-  if (trash && tracks.length && props.playlistIndex != null) {
+  if (trash && tracks.length && sourcePlaylistIndex != null) {
     trashDropComplete.value = true
     if (trashCompleteTimer) clearTimeout(trashCompleteTimer)
     trashCompleteTimer = setTimeout(() => { trashDropComplete.value = false }, 460)
-    emit('removeFromPlaylist', tracks, props.playlistIndex)
+    emit('removeFromPlaylist', tracks, sourcePlaylistIndex)
     return
   }
   if (ipod && tracks.length) {
     emit('addToIpod', tracks)
     return
   }
-  if (playlist && playlist.index !== props.playlistIndex && tracks.length) {
+  if (foreignPlaylist && tracks.length && sourcePlaylistIndex != null && props.playlistIndex != null && to >= 0) {
     suppressClick = true
     window.setTimeout(() => { suppressClick = false }, 0)
-    if (move && props.reorderable && props.playlistIndex != null) emit('moveToPlaylist', tracks, props.playlistIndex, playlist.index)
+    emit('insertIntoPlaylist', tracks, sourcePlaylistIndex, props.playlistIndex, to, after, move)
+    return
+  }
+  if (playlist && playlist.index !== sourcePlaylistIndex && tracks.length && sourcePlaylistIndex != null) {
+    suppressClick = true
+    window.setTimeout(() => { suppressClick = false }, 0)
+    if (move) emit('moveToPlaylist', tracks, sourcePlaylistIndex, playlist.index)
     else emit('addToPlaylist', tracks, playlist.index)
     return
   }
@@ -315,8 +334,10 @@ function beginTrackDrag(index: number, event: PointerEvent) {
   event.preventDefault()
   dragIndex.value = index
   dragMovesTracks.value = event.shiftKey && Boolean(props.reorderable)
+  dragSourcePlaylistIndex.value = props.playlistIndex ?? null
   dropIndex.value = index
   draggedIndexes.value = selected.value.has(index) ? new Set(selected.value) : new Set([index])
+  draggedTracks.value = props.tracks.filter((_, trackIndex) => draggedIndexes.value.has(trackIndex))
   draggedTrackCount.value = draggedIndexes.value.size
   dragPreviewTrack.value = props.tracks[index] ?? null
   dragX.value = event.clientX
@@ -356,6 +377,7 @@ function beginTrackDrag(index: number, event: PointerEvent) {
     }
   }
   dragging.value = true
+  emit('dragState', true)
   updateReorderDrag(event)
   window.addEventListener('pointermove', updateReorderDrag)
   window.addEventListener('pointerup', finishReorderDrag)
@@ -373,9 +395,17 @@ function beginTrackDrag(index: number, event: PointerEvent) {
 }
 
 watch(() => props.tracks, () => {
+  if (dragging.value) return
   selected.value = new Set()
   anchorIndex = -1
   publishSelection()
+})
+
+watch(() => props.playlistIndex, (index, previous) => {
+  if (!dragging.value || index === previous) return
+  dropIndex.value = -1
+  dropIndicator.value.visible = false
+  targetPlaylist.value = null
 })
 
 onBeforeUnmount(() => {
