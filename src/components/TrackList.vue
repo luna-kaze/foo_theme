@@ -260,7 +260,7 @@ function updateReorderDrag(event: PointerEvent) {
     targetIpod.value = false
     playlistDropIndicator.value = { left: bounds.left + 3, top: bounds.top + 2, width: Math.max(0, bounds.width - 6), height: Math.max(0, bounds.height - 4), visible: true }
     dropIndicator.value.visible = false
-    emit('playlistHover', playlistIndex === dragSourcePlaylistIndex.value ? null : playlistIndex)
+    emit('playlistHover', playlistIndex === props.playlistIndex ? null : playlistIndex)
     return
   }
   targetPlaylist.value = null
