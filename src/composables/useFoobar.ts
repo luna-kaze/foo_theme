@@ -457,7 +457,7 @@ async function loadLibrary() {
 async function loadPlaylists() {
   const generation = ++playlistGeneration
   const [allPlaylists, active, ownerId] = await Promise.all([fb.playlist.getAll(), fb.playlist.getActive(), getOwnerId()])
-  if (generation !== playlistGeneration) return
+  if (generation !== playlistGeneration) return false
   const favouriteName = `收藏 [foo-theme:${ownerId}]`
   favouritePlaylistIndex = allPlaylists.find((playlist) => playlist.name === favouriteName)?.index ?? null
   const playlists = allPlaylists.filter((playlist) => !isThemeInternalPlaylist(playlist, ownerId))
@@ -468,6 +468,7 @@ async function loadPlaylists() {
     state.browsingPlaylist = playlists.find((item) => item.index === route.playlistIndex) ?? null
   }
   await refreshFavouriteTrackKeys()
+  return true
 }
 
 function isThemeInternalPlaylist(playlist: PlaylistInfo, ownerId: string) {
@@ -621,7 +622,7 @@ function bindEvents() {
     refreshSafely(loadQueue)
   }
   const reloadPlaylistStructure = async () => {
-    await loadPlaylists()
+    if (!await loadPlaylists()) return
     const route = state.route
     if (route.view === 'playlist') {
       const matches = state.playlists.filter((playlist) => playlist.name === route.playlistName)
@@ -1646,8 +1647,6 @@ async function reorderPlaylistTrack(from: number, to: number, after = false, sel
 }
 
 async function reorderPlaylists(order: number[]) {
-  const routeBeforeReorder = state.route
-  const playlistRouteBeforeReorder = routeBeforeReorder.view === 'playlist' ? routeBeforeReorder : null
   const currentOrder = state.playlists.map((playlist) => playlist.index)
   if (order.length !== currentOrder.length || new Set(order).size !== order.length || order.some((index) => !currentOrder.includes(index))) return
   if (order.every((index, position) => index === currentOrder[position])) return
@@ -1668,10 +1667,15 @@ async function reorderPlaylists(order: number[]) {
   if (newOrder.some((position) => position == null)) return
   const result = await runAction(() => fb.playlist.reorderPlaylists(newOrder as number[]), '已调整播放列表顺序')
   if (!result) return
-  if (playlistRouteBeforeReorder) {
-    const nextPlaylistIndex = merged.indexOf(playlistRouteBeforeReorder.playlistIndex)
-    if (nextPlaylistIndex >= 0) state.route = { ...playlistRouteBeforeReorder, playlistIndex: nextPlaylistIndex }
+  const remapPlaylistRoute = (route: ViewRoute): ViewRoute => {
+    if (route.view !== 'playlist') return route
+    const oldPlaylist = allPlaylists.find((playlist) => playlist.index === route.playlistIndex)
+    if (oldPlaylist?.name !== route.playlistName) return route
+    const nextPlaylistIndex = merged.indexOf(route.playlistIndex)
+    return nextPlaylistIndex >= 0 ? { ...route, playlistIndex: nextPlaylistIndex } : route
   }
+  history.forEach((route, index) => { history[index] = remapPlaylistRoute(route) })
+  state.route = remapPlaylistRoute(state.route)
   await loadPlaylists()
 }
 

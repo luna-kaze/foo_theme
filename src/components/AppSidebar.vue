@@ -51,26 +51,6 @@ const indicatorStyle = computed(() => ({
   width: `${dropIndicator.value.width}px`,
 }))
 let playlistNav: HTMLElement | null = null
-let dragStartedAt = { x: 0, y: 0 }
-let didMovePlaylist = false
-let clearSuppressedPlaylistClick: (() => void) | null = null
-
-function suppressNextPlaylistClick() {
-  clearSuppressedPlaylistClick?.()
-  const swallow = (event: MouseEvent) => {
-    event.preventDefault()
-    event.stopImmediatePropagation()
-    clear()
-  }
-  const timeout = window.setTimeout(clear, 1000)
-  function clear() {
-    document.removeEventListener('click', swallow, true)
-    window.clearTimeout(timeout)
-    clearSuppressedPlaylistClick = null
-  }
-  clearSuppressedPlaylistClick = clear
-  document.addEventListener('click', swallow, true)
-}
 
 function stopPlaylistDrag() {
   window.removeEventListener('pointermove', updatePlaylistDrag)
@@ -85,7 +65,6 @@ function updatePlaylistDrag(event: PointerEvent) {
   event.preventDefault()
   dragX.value = event.clientX
   dragY.value = event.clientY
-  if (Math.hypot(event.clientX - dragStartedAt.x, event.clientY - dragStartedAt.y) > 4) didMovePlaylist = true
   const ipodTarget = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-ipod-drop-target]')
   if (ipodTarget) {
     ipodDropTarget.value = true
@@ -114,7 +93,6 @@ function finishPlaylistDrag() {
   const targetIpod = ipodDropTarget.value
   stopPlaylistDrag()
   if (!dragged) return
-  if (didMovePlaylist) suppressNextPlaylistClick()
   if (dragged && targetIpod) {
     emit('sendPlaylistToIpod', dragged.index)
     return
@@ -139,8 +117,6 @@ function beginPlaylistDrag(playlist: PlaylistInfo, event: PointerEvent) {
   draggingPlaylist.value = playlist
   dragX.value = event.clientX
   dragY.value = event.clientY
-  dragStartedAt = { x: event.clientX, y: event.clientY }
-  didMovePlaylist = false
   const row = (event.currentTarget as Element).closest<HTMLElement>('.playlist-nav__item')
   const bounds = row?.getBoundingClientRect()
   if (bounds) {
@@ -158,7 +134,6 @@ function selectPlaylist(index: number, _event: MouseEvent) {
 }
 
 onBeforeUnmount(() => {
-  clearSuppressedPlaylistClick?.()
   stopPlaylistDrag()
 })
 </script>
@@ -229,7 +204,7 @@ onBeforeUnmount(() => {
         >
           <ListMusic :size="16" />
           <span>{{ playlist.name }}</span>
-          <GripVertical v-if="!playlistFilter" class="playlist-nav__drag-handle" :size="15" aria-label="拖动排序" @pointerdown.stop="beginPlaylistDrag(playlist, $event)" />
+          <GripVertical v-if="!playlistFilter" class="playlist-nav__drag-handle" :size="15" aria-label="拖动排序" @pointerdown.stop="beginPlaylistDrag(playlist, $event)" @click.stop.prevent />
         </button>
         <p v-if="playlistFilter && !filteredPlaylists.length" class="sidebar-playlist-filter__empty">没有匹配的播放列表</p>
       </nav>
