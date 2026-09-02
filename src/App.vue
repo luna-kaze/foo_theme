@@ -917,6 +917,7 @@ function onDrop(event: DragEvent) {
               @selection="selectedTracks = $event"
               @add-to-playlist="player.addTracksToPlaylist"
               @move-to-playlist="player.moveTracksToPlaylist"
+              @remove-from-playlist="player.removeTracksFromPlaylist"
               @add-to-ipod="player.sendTracksToIpod"
               @filter-facet-change="player.setLibraryFilterFacet"
               @filter-rule-add="player.addLibraryFilterRule"

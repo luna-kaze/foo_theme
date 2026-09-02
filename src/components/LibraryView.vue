@@ -60,6 +60,7 @@ const emit = defineEmits<{
   reorder: [from: number, to: number, after: boolean, selectedIndexes?: number[]]
   addToPlaylist: [tracks: DisplayTrack[], playlistIndex: number]
   moveToPlaylist: [tracks: DisplayTrack[], sourcePlaylistIndex: number, destinationPlaylistIndex: number]
+  removeFromPlaylist: [tracks: DisplayTrack[], playlistIndex: number]
   addToIpod: [tracks: DisplayTrack[]]
   albumSelection: [album: AlbumCard, selected: boolean]
   cancelAlbumSelection: []
@@ -196,6 +197,7 @@ const emit = defineEmits<{
           @reorder="(from, to, after, selectedIndexes) => emit('reorder', from, to, after, selectedIndexes)"
           @add-to-playlist="(selected, playlistIndex) => emit('addToPlaylist', selected, playlistIndex)"
           @move-to-playlist="(selected, sourcePlaylistIndex, destinationPlaylistIndex) => emit('moveToPlaylist', selected, sourcePlaylistIndex, destinationPlaylistIndex)"
+          @remove-from-playlist="(selected, playlistIndex) => emit('removeFromPlaylist', selected, playlistIndex)"
           @add-to-ipod="emit('addToIpod', $event)"
        />
       <div v-else-if="view !== 'search' || (!albums.length && !searchArtists.length)" class="collection-empty">

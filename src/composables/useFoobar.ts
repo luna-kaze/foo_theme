@@ -1964,6 +1964,37 @@ async function addToPlaylist(track: DisplayTrack, playlistIndex: number) {
     if (state.route.view === 'playlist' && state.route.playlistIndex === sourcePlaylistIndex) await refreshActivePlaylist()
   }
 
+  async function removeTracksFromPlaylist(tracks: DisplayTrack[], playlistIndex: number) {
+    const playlist = state.playlists.find((item) => item.index === playlistIndex)
+    if (!playlist || playlist.isLocked || playlist.isAutoplaylist || !tracks.length) return
+    if (!state.connected) {
+      const indexes = tracks.map((track) => track.sourceIndex).filter((index): index is number => index != null).sort((a, b) => b - a)
+      indexes.forEach((index) => state.viewTracks.splice(index, 1))
+      state.visibleTracks = state.viewTracks.slice()
+      notify(`已从“${playlist.name}”移除 ${tracks.length} 首曲目`, 'success')
+      return
+    }
+    const sourceTracks = await getAllPlaylistTracks(playlistIndex)
+    const usedIndexes = new Set<number>()
+    const indexes: number[] = []
+    for (const track of tracks) {
+      const hintedIndex = track.sourceIndex
+      const hintedTrack = hintedIndex == null ? null : sourceTracks[hintedIndex]
+      const hasMatchingHint = hintedIndex != null && hintedTrack && trackKey(hintedTrack) === trackKey(track) && !usedIndexes.has(hintedIndex)
+      const index = hasMatchingHint ? hintedIndex! : sourceTracks.findIndex((item) => !usedIndexes.has(item.sourceIndex ?? -1) && isSameTrack(item, track))
+      if (index < 0) {
+        notify('播放列表已变化，请重新选择后再移除。', 'info')
+        return
+      }
+      usedIndexes.add(index)
+      indexes.push(index)
+    }
+    const result = await runAction(() => fb.playlist.removeTracks(playlistIndex, indexes.sort((a, b) => b - a)))
+    if (!result) return
+    notify(`已从“${playlist.name}”移除 ${tracks.length} 首曲目`, 'success')
+    if (state.route.view === 'playlist' && state.route.playlistIndex === playlistIndex) await refreshActivePlaylist()
+  }
+
 async function playNext(track: DisplayTrack) {
   if (!state.connected) {
     state.queue.unshift({ ...track, queueSource: 'explicit', sourceIndex: 0 })
@@ -2919,6 +2950,7 @@ export function useFoobar() {
     addToActivePlaylist,
     addToPlaylist,
     moveTracksToPlaylist,
+    removeTracksFromPlaylist,
     addTracksToPlaylist,
     playNext,
     removePlaylistTrack,

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { GripVertical, Heart, MoreHorizontal, Volume2 } from '@lucide/vue'
+import { GripVertical, Heart, MoreHorizontal, Trash2, Volume2 } from '@lucide/vue'
 import type { DisplayTrack } from '../types/music'
 import { formatTime } from '../utils/format'
 import ArtworkImage from './ArtworkImage.vue'
@@ -23,6 +23,7 @@ const emit = defineEmits<{
   reorder: [from: number, to: number, after: boolean, selectedIndexes: number[]]
   addToPlaylist: [tracks: DisplayTrack[], playlistIndex: number]
   moveToPlaylist: [tracks: DisplayTrack[], sourcePlaylistIndex: number, destinationPlaylistIndex: number]
+  removeFromPlaylist: [tracks: DisplayTrack[], playlistIndex: number]
   addToIpod: [tracks: DisplayTrack[]]
 }>()
 
@@ -50,6 +51,8 @@ const mergePhase = ref(false)
 const mergedPreview = ref(false)
 const targetPlaylist = ref<{ index: number; name: string } | null>(null)
 const targetIpod = ref(false)
+const targetTrash = ref(false)
+const trashDropComplete = ref(false)
 const dragMovesTracks = ref(false)
 const playlistDropIndicator = ref({ left: 0, top: 0, width: 0, height: 0, visible: false })
 const dragPreviewStyle = computed(() => ({
@@ -70,6 +73,7 @@ const playlistDropIndicatorStyle = computed(() => ({
 let dragList: HTMLElement | null = null
 let mergeFrame = 0
 let mergeTimer: ReturnType<typeof setTimeout> | null = null
+let trashCompleteTimer: ReturnType<typeof setTimeout> | null = null
 
 function fragmentStyle(fragment: { offsetX: number; offsetY: number; width: number; layer: number }) {
   const visualLayer = Math.min(fragment.layer + 1, 2)
@@ -194,6 +198,7 @@ function stopReorderDrag() {
   playlistDropIndicator.value.visible = false
   targetPlaylist.value = null
   targetIpod.value = false
+  targetTrash.value = false
   dragMovesTracks.value = false
   draggedTrackCount.value = 0
   draggedIndexes.value = new Set()
@@ -215,6 +220,16 @@ function updateReorderDrag(event: PointerEvent) {
   dragY.value = event.clientY
   const playlistRow = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('.playlist-nav__item[data-playlist-index]')
   const ipodTarget = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-ipod-drop-target]')
+  const trashTarget = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-track-trash-target]')
+  if (trashTarget && props.reorderable && props.playlistIndex != null) {
+    targetTrash.value = true
+    targetIpod.value = false
+    targetPlaylist.value = null
+    playlistDropIndicator.value.visible = false
+    dropIndicator.value.visible = false
+    return
+  }
+  targetTrash.value = false
   if (ipodTarget) {
     const bounds = ipodTarget.getBoundingClientRect()
     targetIpod.value = true
@@ -261,14 +276,22 @@ function finishReorderDrag() {
   const after = dropAfter.value
   const playlist = targetPlaylist.value
   const ipod = targetIpod.value
+  const trash = targetTrash.value
   const move = dragMovesTracks.value
   const trackCount = draggedTrackCount.value
-  const tracks = (ipod || (playlist && playlist.index !== props.playlistIndex))
+  const tracks = (trash || ipod || (playlist && playlist.index !== props.playlistIndex))
     ? props.tracks.filter((_, index) => draggedIndexes.value.has(index))
     : []
   const selectedIndexes = [...draggedIndexes.value].sort((a, b) => a - b)
   const moved = dragging.value && from >= 0 && to >= 0 && (selectedIndexes.length > 1 ? selectedIndexes.some((index) => index !== to) : from !== to)
   stopReorderDrag()
+  if (trash && tracks.length && props.playlistIndex != null) {
+    trashDropComplete.value = true
+    if (trashCompleteTimer) clearTimeout(trashCompleteTimer)
+    trashCompleteTimer = setTimeout(() => { trashDropComplete.value = false }, 460)
+    emit('removeFromPlaylist', tracks, props.playlistIndex)
+    return
+  }
   if (ipod && tracks.length) {
     emit('addToIpod', tracks)
     return
@@ -357,6 +380,7 @@ watch(() => props.tracks, () => {
 
 onBeforeUnmount(() => {
   resetWheelSelection()
+  if (trashCompleteTimer) clearTimeout(trashCompleteTimer)
   stopReorderDrag()
 })
 
@@ -407,6 +431,13 @@ function isCurrent(track: DisplayTrack, currentTrack: DisplayTrack | null) {
     <Teleport to="body">
       <div v-if="dropIndicator.visible" class="track-drop-indicator" :style="dropIndicatorStyle"><i /></div>
       <div v-if="playlistDropIndicator.visible" class="track-playlist-drop-target" :style="playlistDropIndicatorStyle" />
+      <Transition name="track-trash-drop">
+        <div v-if="(dragging && reorderable && playlistIndex != null) || trashDropComplete" class="track-trash-drop" :class="{ 'is-active': targetTrash, 'is-complete': trashDropComplete }" data-track-trash-target>
+          <span><Trash2 :size="22" /></span>
+          <strong>{{ trashDropComplete ? '已移除' : targetTrash ? '松开以移除' : '拖到这里移除' }}</strong>
+          <small v-if="draggedTrackCount > 1 && !trashDropComplete">{{ draggedTrackCount }} 首曲目</small>
+        </div>
+      </Transition>
       <div v-if="dragFragments.length" class="track-drag-fragments" :style="dragPreviewStyle">
         <div v-for="fragment in dragFragments" :key="fragment.id" class="track-drag-fragment" :style="fragmentStyle(fragment)"><ArtworkImage :src="fragment.track.artworkUrl" :alt="`${fragment.track.album} 封面`" /><span><strong>{{ fragment.track.title || '未命名曲目' }}</strong><small>{{ fragment.track.artist || '未知艺人' }}</small></span></div>
       </div>
