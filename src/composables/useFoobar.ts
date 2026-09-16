@@ -1611,7 +1611,6 @@ async function reorderPlaylistTrack(from: number, to: number, after = false, sel
   const playlist = state.playlists.find((item) => item.index === route.playlistIndex)
   if (!playlist || playlist.isLocked || playlist.isAutoplaylist) return
   const visibleIndexes = [...new Set(selectedVisibleIndexes)].sort((left, right) => left - right)
-  if (visibleIndexes.includes(to)) return
   const selectedTracks = visibleIndexes.map((index) => state.visibleTracks[index]).filter((track): track is DisplayTrack => Boolean(track))
   const targetTrack = state.visibleTracks[to]
   if (selectedTracks.length !== visibleIndexes.length || !targetTrack) return
