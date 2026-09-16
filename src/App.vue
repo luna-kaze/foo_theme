@@ -117,7 +117,7 @@ const routePageKey = computed(() => {
   if (route.view === 'radio') return `radio:${route.nonce}`
   return route.view
 })
-const primaryRouteKey = computed(() => trackDragRouteKey.value ?? routePageKey.value)
+const primaryRouteKey = computed(() => trackDragRouteKey.value ?? (state.route.view === 'playlist' ? 'playlist' : routePageKey.value))
 
 function handleTrackDragState(active: boolean) {
   if (active) {
@@ -902,7 +902,7 @@ function onDrop(event: DragEvent) {
       />
       <div class="workspace-scroll" :class="{ 'workspace-scroll--index-rail': state.alphabetIndexView && ['albums', 'artists'].includes(state.view) }">
         <Transition name="route-page" mode="out-in">
-          <div :key="state.view === 'playlist' ? 'playlist' : primaryRouteKey" class="route-page">
+          <div :key="primaryRouteKey" class="route-page">
             <IpodManagerView
               v-if="state.view === 'ipod'"
               :connected="state.connected"
