@@ -62,7 +62,7 @@ const emit = defineEmits<{
   addToPlaylist: [tracks: DisplayTrack[], playlistIndex: number]
   moveToPlaylist: [tracks: DisplayTrack[], sourcePlaylistIndex: number, destinationPlaylistIndex: number]
   removeFromPlaylist: [tracks: DisplayTrack[], playlistIndex: number]
-  insertIntoPlaylist: [tracks: DisplayTrack[], sourcePlaylistIndex: number, destinationPlaylistIndex: number, targetIndex: number, after: boolean, move: boolean]
+  insertIntoPlaylist: [tracks: DisplayTrack[], sourcePlaylistIndex: number | null, destinationPlaylistIndex: number, targetIndex: number, after: boolean, move: boolean]
   playlistHover: [playlistIndex: number | null]
   dragState: [active: boolean]
   addToIpod: [tracks: DisplayTrack[]]
@@ -112,9 +112,12 @@ const emit = defineEmits<{
           :is-playing="isPlaying"
           @play="(track, index) => emit('playTrack', track, index)"
           @menu="(track, index, event) => emit('trackMenu', track, index, event)"
-          @selection="emit('selection', $event)"
-           @add-to-playlist="(selected, playlistIndex) => emit('addToPlaylist', selected, playlistIndex)"
-           @add-to-ipod="emit('addToIpod', $event)"
+         @selection="emit('selection', $event)"
+         @add-to-playlist="(selected, playlistIndex) => emit('addToPlaylist', selected, playlistIndex)"
+         @insert-into-playlist="(selected, sourcePlaylistIndex, destinationPlaylistIndex, targetIndex, after, move) => emit('insertIntoPlaylist', selected, sourcePlaylistIndex, destinationPlaylistIndex, targetIndex, after, move)"
+         @playlist-hover="emit('playlistHover', $event)"
+         @drag-state="emit('dragState', $event)"
+         @add-to-ipod="emit('addToIpod', $event)"
         />
       </section>
     </template>
@@ -148,16 +151,6 @@ const emit = defineEmits<{
           </div>
         </div>
       </section>
-      <TrackList
-        :tracks="tracks"
-        :current-track="currentTrack"
-        :is-playing="isPlaying"
-        @play="(track, index) => emit('playTrack', track, index)"
-        @menu="(track, index, event) => emit('trackMenu', track, index, event)"
-        @selection="emit('selection', $event)"
-        @add-to-playlist="(selected, playlistIndex) => emit('addToPlaylist', selected, playlistIndex)"
-        @add-to-ipod="emit('addToIpod', $event)"
-      />
     </template>
 
     <template v-else>
@@ -187,26 +180,6 @@ const emit = defineEmits<{
           </button>
         </div>
       </section>
-      <TrackList
-        v-show="tracks.length || dragActive"
-        :tracks="tracks"
-        :current-track="currentTrack"
-        :is-playing="isPlaying"
-         :reorderable="view === 'playlist' && !activePlaylist?.isLocked && !activePlaylist?.isAutoplaylist"
-        :playlist-index="view === 'playlist' ? activePlaylist?.index : undefined"
-        :custom-column-label="customColumn.label"
-        @play="(track, index) => emit('playTrack', track, index)"
-        @menu="(track, index, event) => emit('trackMenu', track, index, event)"
-        @selection="emit('selection', $event)"
-          @reorder="(from, to, after, selectedIndexes) => emit('reorder', from, to, after, selectedIndexes)"
-          @add-to-playlist="(selected, playlistIndex) => emit('addToPlaylist', selected, playlistIndex)"
-          @move-to-playlist="(selected, sourcePlaylistIndex, destinationPlaylistIndex) => emit('moveToPlaylist', selected, sourcePlaylistIndex, destinationPlaylistIndex)"
-          @remove-from-playlist="(selected, playlistIndex) => emit('removeFromPlaylist', selected, playlistIndex)"
-          @insert-into-playlist="(selected, sourcePlaylistIndex, destinationPlaylistIndex, targetIndex, after, move) => emit('insertIntoPlaylist', selected, sourcePlaylistIndex, destinationPlaylistIndex, targetIndex, after, move)"
-          @playlist-hover="emit('playlistHover', $event)"
-          @drag-state="emit('dragState', $event)"
-          @add-to-ipod="emit('addToIpod', $event)"
-       />
       <div v-if="!tracks.length && !dragActive && (view !== 'search' || (!albums.length && !searchArtists.length))" class="collection-empty">
         <SearchX v-if="view === 'search'" :size="30" /><FileMusic v-else :size="30" />
         <strong>{{ view === 'search' ? '没有匹配的音乐' : view === 'favourites' ? '还没有收藏曲目' : view === 'playlist' ? '这个播放列表是空的' : '没有可显示的音乐' }}</strong>
@@ -214,5 +187,25 @@ const emit = defineEmits<{
         <div><button v-if="view === 'search'" class="secondary-button" @click="emit('clearSearch')">清除搜索</button><template v-else><button class="primary-button" @click="emit('openFiles')"><FileMusic :size="16" /> 打开文件</button><button class="secondary-button" @click="emit('openFolder')"><FolderOpen :size="16" /> 打开文件夹</button></template></div>
       </div>
     </template>
+    <TrackList
+      v-show="(view === 'album' || (view !== 'home' && view !== 'albums' && view !== 'artists' && view !== 'folders')) && (tracks.length || dragActive)"
+      :tracks="tracks"
+      :current-track="currentTrack"
+      :is-playing="isPlaying"
+      :reorderable="view === 'playlist' && !activePlaylist?.isLocked && !activePlaylist?.isAutoplaylist"
+      :playlist-index="view === 'playlist' ? activePlaylist?.index : undefined"
+      :custom-column-label="customColumn.label"
+      @play="(track, index) => emit('playTrack', track, index)"
+      @menu="(track, index, event) => emit('trackMenu', track, index, event)"
+      @selection="emit('selection', $event)"
+      @reorder="(from, to, after, selectedIndexes) => emit('reorder', from, to, after, selectedIndexes)"
+      @add-to-playlist="(selected, playlistIndex) => emit('addToPlaylist', selected, playlistIndex)"
+      @move-to-playlist="(selected, sourcePlaylistIndex, destinationPlaylistIndex) => emit('moveToPlaylist', selected, sourcePlaylistIndex, destinationPlaylistIndex)"
+      @remove-from-playlist="(selected, playlistIndex) => emit('removeFromPlaylist', selected, playlistIndex)"
+      @insert-into-playlist="(selected, sourcePlaylistIndex, destinationPlaylistIndex, targetIndex, after, move) => emit('insertIntoPlaylist', selected, sourcePlaylistIndex, destinationPlaylistIndex, targetIndex, after, move)"
+      @playlist-hover="emit('playlistHover', $event)"
+      @drag-state="emit('dragState', $event)"
+      @add-to-ipod="emit('addToIpod', $event)"
+    />
   </main>
 </template>

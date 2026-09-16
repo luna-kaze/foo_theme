@@ -24,7 +24,7 @@ const emit = defineEmits<{
   addToPlaylist: [tracks: DisplayTrack[], playlistIndex: number]
   moveToPlaylist: [tracks: DisplayTrack[], sourcePlaylistIndex: number, destinationPlaylistIndex: number]
   removeFromPlaylist: [tracks: DisplayTrack[], playlistIndex: number]
-  insertIntoPlaylist: [tracks: DisplayTrack[], sourcePlaylistIndex: number, destinationPlaylistIndex: number, targetIndex: number, after: boolean, move: boolean]
+  insertIntoPlaylist: [tracks: DisplayTrack[], sourcePlaylistIndex: number | null, destinationPlaylistIndex: number, targetIndex: number, after: boolean, move: boolean]
   playlistHover: [playlistIndex: number | null]
   dragState: [active: boolean]
   addToIpod: [tracks: DisplayTrack[]]
@@ -379,7 +379,8 @@ function finishReorderDrag(event: PointerEvent) {
   const move = dragMovesTracks.value
   const sourcePlaylistIndex = dragSourcePlaylistIndex.value
   const foreignPlaylist = sourcePlaylistIndex != null && props.playlistIndex != null && sourcePlaylistIndex !== props.playlistIndex
-  const tracks = (trash || ipod || foreignPlaylist || (playlist && playlist.index !== sourcePlaylistIndex))
+  const externalSource = sourcePlaylistIndex == null
+  const tracks = (trash || ipod || foreignPlaylist || externalSource || (playlist && playlist.index !== sourcePlaylistIndex))
     ? draggedTracks.value
     : []
   const selectedIndexes = [...draggedIndexes.value].sort((a, b) => a - b)
@@ -396,16 +397,16 @@ function finishReorderDrag(event: PointerEvent) {
     emit('addToIpod', tracks)
     return
   }
-  if (foreignPlaylist && tracks.length && sourcePlaylistIndex != null && props.playlistIndex != null && to >= 0) {
+  if ((foreignPlaylist || externalSource) && tracks.length && props.playlistIndex != null && to >= 0) {
     suppressClick = true
     window.setTimeout(() => { suppressClick = false }, 0)
     emit('insertIntoPlaylist', tracks, sourcePlaylistIndex, props.playlistIndex, to, after, move)
     return
   }
-  if (playlist && playlist.index !== sourcePlaylistIndex && tracks.length && sourcePlaylistIndex != null) {
+  if (playlist && playlist.index !== sourcePlaylistIndex && tracks.length) {
     suppressClick = true
     window.setTimeout(() => { suppressClick = false }, 0)
-    if (move) emit('moveToPlaylist', tracks, sourcePlaylistIndex, playlist.index)
+    if (move && sourcePlaylistIndex != null) emit('moveToPlaylist', tracks, sourcePlaylistIndex, playlist.index)
     else emit('addToPlaylist', tracks, playlist.index)
     return
   }

@@ -2000,10 +2000,10 @@ async function addToPlaylist(track: DisplayTrack, playlistIndex: number) {
     if (state.route.view === 'playlist' && state.route.playlistIndex === playlistIndex) await refreshActivePlaylist()
   }
 
-  async function insertTracksIntoPlaylist(tracks: DisplayTrack[], sourcePlaylistIndex: number, destinationPlaylistIndex: number, targetIndex: number, after: boolean, move: boolean) {
-    const source = state.playlists.find((item) => item.index === sourcePlaylistIndex)
+  async function insertTracksIntoPlaylist(tracks: DisplayTrack[], sourcePlaylistIndex: number | null, destinationPlaylistIndex: number, targetIndex: number, after: boolean, move: boolean) {
+    const source = sourcePlaylistIndex == null ? null : state.playlists.find((item) => item.index === sourcePlaylistIndex)
     const destination = state.playlists.find((item) => item.index === destinationPlaylistIndex)
-    if (!source || !destination || sourcePlaylistIndex === destinationPlaylistIndex || source.isLocked || source.isAutoplaylist || destination.isLocked || destination.isAutoplaylist || !tracks.length) return
+    if (!destination || sourcePlaylistIndex != null && (!source || sourcePlaylistIndex === destinationPlaylistIndex || source.isLocked || source.isAutoplaylist) || destination.isLocked || destination.isAutoplaylist || !tracks.length) return
     const destinationTracks = await getAllPlaylistTracks(destinationPlaylistIndex)
     if (targetIndex < 0 || targetIndex > destinationTracks.length) return
     const added = await runAction(() => fb.playlist.add(destinationPlaylistIndex, tracks.map(playablePath)))
@@ -2017,7 +2017,7 @@ async function addToPlaylist(track: DisplayTrack, playlistIndex: number) {
     const original = Array.from({ length: destinationTracks.length }, (_, index) => index)
     const order = [...original.slice(0, insertion), ...appended, ...original.slice(insertion)]
     if (!await runAction(() => fb.playlist.reorder(destinationPlaylistIndex, order))) return
-    if (move) await removeTracksFromPlaylist(tracks, sourcePlaylistIndex)
+    if (move && sourcePlaylistIndex != null) await removeTracksFromPlaylist(tracks, sourcePlaylistIndex)
     notify(`已将 ${tracks.length} 首曲目插入“${destination.name}”`, 'success')
     if (state.route.view === 'playlist' && state.route.playlistIndex === destinationPlaylistIndex) await refreshActivePlaylist()
   }
