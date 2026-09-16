@@ -2552,6 +2552,13 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 .inspector-content dt,.inspector-content dd { min-height: 42px; margin: 0; padding: 12px 10px; border-bottom: 1px solid rgba(255,255,255,.055); font-size: 11px; }
 .inspector-content dt { color: var(--text-muted); }
 .inspector-content dd { overflow-wrap: anywhere; text-align: right; }
+.inspector-batch-details > p { margin: 0 0 13px; color: var(--text-muted); font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.inspector-batch-details__table-wrap { overflow: auto; border: 1px solid rgba(255,255,255,.08); border-radius: 10px; }
+.inspector-batch-details table { width: 100%; min-width: 980px; border-collapse: collapse; font-size: 10.5px; }
+.inspector-batch-details th { position: sticky; top: 0; z-index: 1; padding: 10px; color: var(--text-muted); text-align: left; white-space: nowrap; background: #202025; font-size: 9px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+.inspector-batch-details td { max-width: 180px; padding: 10px; overflow: hidden; border-top: 1px solid rgba(255,255,255,.055); text-overflow: ellipsis; white-space: nowrap; }
+.inspector-batch-details tbody tr:hover { background: rgba(255,255,255,.045); }
+.inspector-batch-details__path { max-width: 260px; color: var(--text-muted); }
 .inspector-rating { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px 16px; color: var(--text-muted); font-size: 11px; }
 .inspector-rating div { display: flex; }
 .inspector-rating button { padding: 3px; color: #f2bd66; background: transparent; }
