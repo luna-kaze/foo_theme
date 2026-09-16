@@ -530,7 +530,8 @@ async function openTrackMenu(track: DisplayTrack, index: number, event: MouseEve
       if (converterItem) pluginItems.push(converterItem)
       if (dopItem) pluginItems.push(dopItem)
       const sourcePlaylist = state.view === 'playlist' && index >= 0 ? state.browsingPlaylist ?? state.activePlaylist : null
-      const items: ContextMenuItem[] = [
+      const isBatch = targets.length > 1
+      const singleItems: ContextMenuItem[] = [
         { id: 'track:header', type: 'nowplaying', cover, title: targets.length > 1 ? `已选择 ${targets.length} 首曲目` : track.title, subtitle: targets.length > 1 ? '批量操作' : `${track.artist} · ${track.album}` },
         { type: 'separator' },
         { id: 'track:play', label: '立即播放', iconSvg: menuIcons.play },
@@ -551,6 +552,19 @@ async function openTrackMenu(track: DisplayTrack, index: number, event: MouseEve
         { id: 'track:move', label: '移动文件', iconSvg: menuIcons.folder, enabled: Boolean(localFilePath(track)) },
         { id: 'track:delete-file', label: '移动文件到回收站', iconSvg: menuIcons.remove, enabled: Boolean(localFilePath(track)) },
       ]
+      const items: ContextMenuItem[] = isBatch
+        ? [
+            { id: 'track:header', type: 'nowplaying', cover, title: `已选择 ${targets.length} 首曲目`, subtitle: '批量操作' },
+            { type: 'separator' },
+            { id: 'track:queue', label: `将 ${targets.length} 首曲目添加到队列`, iconSvg: menuIcons.queue },
+            { id: 'track:playlist', label: `将 ${targets.length} 首曲目添加到播放列表`, iconSvg: menuIcons.playlist, enabled: state.playlists.length > 0, submenu: playlistSubmenu('track:playlist') },
+            ...(sourcePlaylist ? [{ id: 'track:move-playlist', label: `将 ${targets.length} 首曲目移动到播放列表`, iconSvg: menuIcons.move, enabled: !sourcePlaylist.isLocked && !sourcePlaylist.isAutoplaylist, submenu: movePlaylistSubmenu(sourcePlaylist.index) } as ContextMenuItem] : []),
+            ...(pluginItems.length ? [{ type: 'separator' } as ContextMenuItem, ...pluginItems] : []),
+            { type: 'separator' },
+            { id: 'track:properties', label: `查看 ${targets.length} 首曲目属性`, iconSvg: menuIcons.info },
+            { id: 'track:edit', label: `编辑 ${targets.length} 首曲目标签`, iconSvg: menuIcons.edit },
+          ]
+        : singleItems
        if (sourcePlaylist) {
          items.push(
            { type: 'separator' },
@@ -1063,22 +1077,24 @@ function onDrop(event: DragEvent) {
       :track="trackMenu.track"
       :index="trackMenu.index"
       :view="state.view"
-      :active-playlist="state.browsingPlaylist ?? state.activePlaylist"
-      :playlists="state.playlists"
-      :connected="state.connected"
+       :active-playlist="state.browsingPlaylist ?? state.activePlaylist"
+       :playlists="state.playlists"
+       :batch="trackMenu.tracks.length > 1"
+       :track-count="trackMenu.tracks.length"
+       :connected="state.connected"
       :x="trackMenu.x"
       :y="trackMenu.y"
       @close="trackMenu.open = false"
       @play="runTrackAction(() => handlePlayTrack(trackMenu.track!, trackMenu.index))"
       @play-next="runTrackAction(() => player.playNext(trackMenu.track!))"
-      @queue="runTrackAction(() => player.addToQueue(trackMenu.track!))"
-      @playlist="runTrackAction(() => player.addToPlaylist(trackMenu.track!, $event))"
+       @queue="runTrackAction(() => player.addTracksToQueue(trackMenu.tracks))"
+       @playlist="(playlistIndex) => runTrackAction(() => player.addTracksToPlaylist(trackMenu.tracks, playlistIndex))"
       @favourite="runTrackAction(() => player.toggleFavourite(trackMenu.track!))"
       @album="runTrackAction(() => player.openTrackAlbum(trackMenu.track!))"
       @location="runTrackAction(() => player.showInExplorer(trackMenu.track!))"
         @remove="runTrackAction(removeTrackMenuTracks)"
-      @properties="runTrackAction(() => openInspector('properties', [trackMenu.track!]))"
-      @edit-metadata="runTrackAction(() => openInspector('edit', [trackMenu.track!]))"
+       @properties="runTrackAction(() => openInspector('properties', trackMenu.tracks))"
+       @edit-metadata="runTrackAction(() => openInspector('edit', trackMenu.tracks))"
     />
 
     <TrackInspector
