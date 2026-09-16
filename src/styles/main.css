@@ -324,6 +324,7 @@ input[type="range"] {
   flex: 0 0 33px;
   position: relative;
 }
+.playlist-nav__item:focus-visible { outline: none; }
 .playlist-nav button > span { flex: 1; min-width: 0; }
 .playlist-nav__drag-handle { position: absolute; right: 8px; display: none; color: var(--faint); cursor: grab; }
 .playlist-nav__drag-handle:active { cursor: grabbing; }
