@@ -117,11 +117,12 @@ const routePageKey = computed(() => {
   if (route.view === 'radio') return `radio:${route.nonce}`
   return route.view
 })
-const primaryRouteKey = computed(() => trackDragRouteKey.value ?? (state.route.view === 'playlist' ? 'playlist' : routePageKey.value))
+const settledRouteKey = computed(() => state.route.view === 'playlist' ? 'playlist' : routePageKey.value)
+const primaryRouteKey = computed(() => trackDragRouteKey.value ?? settledRouteKey.value)
 
 function handleTrackDragState(active: boolean) {
   if (active) {
-    trackDragRouteKey.value = routePageKey.value
+    trackDragRouteKey.value = primaryRouteKey.value
     return
   }
   if (playlistHoverTimer) clearTimeout(playlistHoverTimer)
