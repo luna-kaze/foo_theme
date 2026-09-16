@@ -523,7 +523,7 @@ function isCurrent(track: DisplayTrack, currentTrack: DisplayTrack | null) {
       v-for="(track, index) in tracks"
       :key="`${trackKey(track)}-${index}`"
        class="track-row"
-        :class="{ current: isCurrent(track, currentTrack), selected: selected.has(index), 'drag-source': dragging && dragIndex === index, 'dragged-item': dragging && draggedIndexes.has(index) }"
+         :class="{ current: isCurrent(track, currentTrack), selected: selected.has(index), 'drag-source': dragging && dragSourcePlaylistIndex === playlistIndex && dragIndex === index, 'dragged-item': dragging && dragSourcePlaylistIndex === playlistIndex && draggedIndexes.has(index) }"
        :data-reorder-index="reorderable ? index : undefined"
        :data-track-index="index"
       role="button"
