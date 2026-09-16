@@ -60,6 +60,7 @@ const trashDropComplete = ref(false)
 const dragMovesTracks = ref(false)
 const dragSourcePlaylistIndex = ref<number | null>(null)
 const dragPointerId = ref<number | null>(null)
+const dropPlaylistIndex = ref<number | null>(null)
 const playlistDropIndicator = ref({ left: 0, top: 0, width: 0, height: 0, visible: false })
 const dragPreviewStyle = computed(() => ({
   width: `${Math.min(dragWidth.value, globalThis.innerWidth - 24)}px`,
@@ -94,6 +95,10 @@ function stopAutoScroll() {
   if (autoScrollFrame) cancelAnimationFrame(autoScrollFrame)
   autoScrollFrame = 0
   autoScrollViewport = null
+}
+
+function releaseDragPointerCapture() {
+  if (dragList && dragPointerId.value != null && dragList.hasPointerCapture(dragPointerId.value)) dragList.releasePointerCapture(dragPointerId.value)
 }
 
 function updateAutoScroll(viewport: HTMLElement, clientY: number) {
@@ -252,14 +257,16 @@ function stopReorderDrag() {
   window.removeEventListener('pointermove', updateReorderDrag)
   window.removeEventListener('pointerup', finishReorderDrag)
   window.removeEventListener('pointercancel', cancelReorderDrag)
+  window.removeEventListener('foo-theme:track-drag-route-change', releaseDragPointerCapture)
   stopAutoScroll()
-  if (dragList && dragPointerId.value != null && dragList.hasPointerCapture(dragPointerId.value)) dragList.releasePointerCapture(dragPointerId.value)
+  releaseDragPointerCapture()
   dragIndex.value = -1
   clearTrackDropTarget()
   playlistDropIndicator.value.visible = false
   targetPlaylist.value = null
   targetIpod.value = false
   targetTrash.value = false
+  dropPlaylistIndex.value = null
   dragMovesTracks.value = false
   dragSourcePlaylistIndex.value = null
   dragPointerId.value = null
@@ -295,6 +302,7 @@ function updateTrackDropTarget(clientX: number, clientY: number) {
     targetTrash.value = true
     targetIpod.value = false
     targetPlaylist.value = null
+    dropPlaylistIndex.value = null
     playlistDropIndicator.value.visible = false
     dropIndicator.value.visible = false
     emit('playlistHover', null)
@@ -306,6 +314,7 @@ function updateTrackDropTarget(clientX: number, clientY: number) {
     const bounds = ipodTarget.getBoundingClientRect()
     targetIpod.value = true
     targetPlaylist.value = null
+    dropPlaylistIndex.value = null
     playlistDropIndicator.value = { left: bounds.left + 3, top: bounds.top + 2, width: Math.max(0, bounds.width - 6), height: Math.max(0, bounds.height - 4), visible: true }
     dropIndicator.value.visible = false
     emit('playlistHover', null)
@@ -317,6 +326,7 @@ function updateTrackDropTarget(clientX: number, clientY: number) {
     const bounds = playlistRow.getBoundingClientRect()
     targetPlaylist.value = { index: playlistIndex, name: playlistRow.dataset.playlistName ?? '播放列表' }
     targetIpod.value = false
+    dropPlaylistIndex.value = null
     playlistDropIndicator.value = { left: bounds.left + 3, top: bounds.top + 2, width: Math.max(0, bounds.width - 6), height: Math.max(0, bounds.height - 4), visible: true }
     dropIndicator.value.visible = false
     emit('playlistHover', playlistIndex === props.playlistIndex ? null : playlistIndex)
@@ -326,9 +336,17 @@ function updateTrackDropTarget(clientX: number, clientY: number) {
   targetIpod.value = false
   playlistDropIndicator.value.visible = false
   emit('playlistHover', null)
-  if (!dragList) return
-  const viewport = dragList.closest<HTMLElement>('.workspace-scroll')
-  const listBounds = dragList.getBoundingClientRect()
+  const targetList = document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>('.track-list')
+  if (!targetList) {
+    stopAutoScroll()
+    clearTrackDropTarget()
+    dropPlaylistIndex.value = null
+    return
+  }
+  const targetListPlaylistIndex = Number(targetList.dataset.playlistIndex)
+  dropPlaylistIndex.value = Number.isInteger(targetListPlaylistIndex) && targetListPlaylistIndex >= 0 ? targetListPlaylistIndex : null
+  const viewport = targetList.closest<HTMLElement>('.workspace-scroll')
+  const listBounds = targetList.getBoundingClientRect()
   const viewportBounds = viewport?.getBoundingClientRect()
   const withinList = viewportBounds
     && clientX >= listBounds.left
@@ -338,15 +356,16 @@ function updateTrackDropTarget(clientX: number, clientY: number) {
   if (!withinList || !viewport) {
     stopAutoScroll()
     clearTrackDropTarget()
+    dropPlaylistIndex.value = null
     return
   }
   updateAutoScroll(viewport, clientY)
   const previewTop = clientY - dragOffsetY.value
-  const rows = [...dragList.querySelectorAll<HTMLElement>('.track-row[data-reorder-index]')]
+  const rows = [...targetList.querySelectorAll<HTMLElement>('.track-row[data-reorder-index]')]
   const row = rows.find((item) => previewTop < item.getBoundingClientRect().bottom)
   const target = row ?? rows.at(-1)
   if (!target) {
-    const header = dragList.querySelector<HTMLElement>('.track-list__header')
+    const header = targetList.querySelector<HTMLElement>('.track-list__header')
     if (!header) return
     const bounds = header.getBoundingClientRect()
     dropIndex.value = 0
@@ -378,7 +397,8 @@ function finishReorderDrag(event: PointerEvent) {
   const trash = targetTrash.value
   const move = dragMovesTracks.value
   const sourcePlaylistIndex = dragSourcePlaylistIndex.value
-  const foreignPlaylist = sourcePlaylistIndex != null && props.playlistIndex != null && sourcePlaylistIndex !== props.playlistIndex
+  const destinationPlaylistIndex = dropPlaylistIndex.value ?? props.playlistIndex ?? null
+  const foreignPlaylist = sourcePlaylistIndex != null && destinationPlaylistIndex != null && sourcePlaylistIndex !== destinationPlaylistIndex
   const externalSource = sourcePlaylistIndex == null
   const tracks = (trash || ipod || foreignPlaylist || externalSource || (playlist && playlist.index !== sourcePlaylistIndex))
     ? draggedTracks.value
@@ -397,10 +417,10 @@ function finishReorderDrag(event: PointerEvent) {
     emit('addToIpod', tracks)
     return
   }
-  if ((foreignPlaylist || externalSource) && tracks.length && props.playlistIndex != null && to >= 0) {
+  if ((foreignPlaylist || externalSource) && tracks.length && destinationPlaylistIndex != null && to >= 0) {
     suppressClick = true
     window.setTimeout(() => { suppressClick = false }, 0)
-    emit('insertIntoPlaylist', tracks, sourcePlaylistIndex, props.playlistIndex, to, after, move)
+    emit('insertIntoPlaylist', tracks, sourcePlaylistIndex, destinationPlaylistIndex, to, after, move)
     return
   }
   if (playlist && playlist.index !== sourcePlaylistIndex && tracks.length) {
@@ -477,6 +497,7 @@ function beginTrackDrag(index: number, event: PointerEvent) {
   window.addEventListener('pointermove', updateReorderDrag)
   window.addEventListener('pointerup', finishReorderDrag)
   window.addEventListener('pointercancel', cancelReorderDrag)
+  window.addEventListener('foo-theme:track-drag-route-change', releaseDragPointerCapture)
   if (!dragFragments.value.length) {
     mergedPreview.value = true
     return
@@ -519,7 +540,7 @@ function isCurrent(track: DisplayTrack, currentTrack: DisplayTrack | null) {
 </script>
 
 <template>
-  <div class="track-list" :class="{ compact, reorderable, 'has-custom-column': customColumnLabel }" tabindex="-1" @keydown="selectAll" @wheel="selectWithWheel">
+  <div class="track-list" :class="{ compact, reorderable, 'has-custom-column': customColumnLabel }" :data-playlist-index="playlistIndex" tabindex="-1" @keydown="selectAll" @wheel="selectWithWheel">
     <div class="track-list__header">
       <span class="track-select"><input type="checkbox" aria-label="选择全部曲目" :checked="tracks.length > 0 && selected.size === tracks.length" :indeterminate="selected.size > 0 && selected.size < tracks.length" @click.stop @change="toggleAllSelection" /></span><span>#</span><span>标题</span><span>专辑</span><span>年份</span><span v-if="customColumnLabel">{{ customColumnLabel }}</span><span>时长</span><span />
     </div>

@@ -96,6 +96,7 @@ let libraryStatusTimer: ReturnType<typeof setTimeout> | null = null
 let noDragResizeTimer: ReturnType<typeof setTimeout> | null = null
 let playcountLibraryGeneration = -1
 let favouritePlaylistIndex: number | null = null
+const insertingPlaylistIndexes = new Set<number>()
 const favouriteTrackKeys = new Set<string>()
 let desktopLyricsCommand: { guid: string; subGuid?: string } | null = null
 let miniPlayerWindowId = ''
@@ -612,6 +613,7 @@ function bindEvents() {
     }), 450)
   }
   const onPlaylistItemsChanged = (event: { playlist: number }) => {
+    if (insertingPlaylistIndexes.has(event.playlist)) return
     if (state.route.view === 'playlist' && state.route.playlistIndex === event.playlist) refreshSafely(refreshActivePlaylist)
     if (state.playingPlaylistIndex === event.playlist) refreshSafely(loadPlaybackSequence)
     const refreshFavouriteView = event.playlist === favouritePlaylistIndex && (state.route.view === 'favourites' || (state.route.view === 'songs' && state.libraryFilters.favourite !== 'all'))
@@ -2006,20 +2008,32 @@ async function addToPlaylist(track: DisplayTrack, playlistIndex: number) {
     if (!destination || sourcePlaylistIndex != null && (!source || sourcePlaylistIndex === destinationPlaylistIndex || source.isLocked || source.isAutoplaylist) || destination.isLocked || destination.isAutoplaylist || !tracks.length) return
     const destinationTracks = await getAllPlaylistTracks(destinationPlaylistIndex)
     if (targetIndex < 0 || targetIndex > destinationTracks.length) return
-    const added = await runAction(() => fb.playlist.add(destinationPlaylistIndex, tracks.map(playablePath)))
-    const addedCount = Number(added?.addedCount ?? 0)
-    if (!added || addedCount !== tracks.length) {
-      notify('部分曲目未能插入目标播放列表。', 'info')
-      return
+    insertingPlaylistIndexes.add(destinationPlaylistIndex)
+    let changed = false
+    try {
+      const added = await runAction(() => fb.playlist.add(destinationPlaylistIndex, tracks.map(playablePath)))
+      const addedCount = Number(added?.addedCount ?? 0)
+      if (!added || addedCount !== tracks.length) {
+        notify('部分曲目未能插入目标播放列表。', 'info')
+        return
+      }
+      changed = true
+      const appended = Array.from({ length: addedCount }, (_, index) => destinationTracks.length + index)
+      const insertion = Math.min(destinationTracks.length, targetIndex + (after ? 1 : 0))
+      const original = Array.from({ length: destinationTracks.length }, (_, index) => index)
+      const order = [...original.slice(0, insertion), ...appended, ...original.slice(insertion)]
+      if (!await runAction(() => fb.playlist.reorder(destinationPlaylistIndex, order))) return
+      if (move && sourcePlaylistIndex != null) await removeTracksFromPlaylist(tracks, sourcePlaylistIndex)
+      notify(`已将 ${tracks.length} 首曲目插入“${destination.name}”`, 'success')
+    } finally {
+      insertingPlaylistIndexes.delete(destinationPlaylistIndex)
+      if (changed) {
+        await loadPlaylists()
+        if (state.route.view === 'playlist' && state.route.playlistIndex === destinationPlaylistIndex) await refreshActivePlaylist()
+        if (state.playingPlaylistIndex === destinationPlaylistIndex) await loadPlaybackSequence()
+        await loadQueue()
+      }
     }
-    const appended = Array.from({ length: addedCount }, (_, index) => destinationTracks.length + index)
-    const insertion = Math.min(destinationTracks.length, targetIndex + (after ? 1 : 0))
-    const original = Array.from({ length: destinationTracks.length }, (_, index) => index)
-    const order = [...original.slice(0, insertion), ...appended, ...original.slice(insertion)]
-    if (!await runAction(() => fb.playlist.reorder(destinationPlaylistIndex, order))) return
-    if (move && sourcePlaylistIndex != null) await removeTracksFromPlaylist(tracks, sourcePlaylistIndex)
-    notify(`已将 ${tracks.length} 首曲目插入“${destination.name}”`, 'success')
-    if (state.route.view === 'playlist' && state.route.playlistIndex === destinationPlaylistIndex) await refreshActivePlaylist()
   }
 
 async function playNext(track: DisplayTrack) {

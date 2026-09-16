@@ -107,22 +107,11 @@ watch(() => state.nowPlayingOpen, () => {
   if (fullscreenWindowSettled) commitImmersiveFullscreenTarget()
 })
 
-const routePageKey = computed(() => {
-  const route = state.route
-  if (route.view === 'playlist') return `playlist:${route.playlistIndex}`
-  if (route.view === 'album') return `album:${route.albumName}:${route.albumArtist}`
-  if (route.view === 'artist') return `artist:${route.artist}`
-  if (route.view === 'folder') return `folder:${route.rootId}:${route.pathId}`
-  if (route.view === 'search') return `search:${route.query}`
-  if (route.view === 'radio') return `radio:${route.nonce}`
-  return route.view
-})
-const settledRouteKey = computed(() => state.route.view === 'playlist' ? 'playlist' : routePageKey.value)
-const primaryRouteKey = computed(() => trackDragRouteKey.value ?? settledRouteKey.value)
+const primaryRouteKey = computed(() => state.route.view === 'ipod' ? 'ipod' : 'library')
 
 function handleTrackDragState(active: boolean) {
   if (active) {
-    trackDragRouteKey.value = primaryRouteKey.value
+    trackDragRouteKey.value = 'active'
     return
   }
   if (playlistHoverTimer) clearTimeout(playlistHoverTimer)
@@ -151,7 +140,10 @@ function handleTrackPlaylistHover(playlistIndex: number | null) {
     trackPlaylistHoverPhase.value = 'waiting'
     playlistHoverTimer = setTimeout(() => {
       playlistHoverTimer = null
-      if (hoveredPlaylistIndex === playlistIndex) void player.browsePlaylist(playlistIndex)
+      if (hoveredPlaylistIndex === playlistIndex) {
+        window.dispatchEvent(new Event('foo-theme:track-drag-route-change'))
+        void player.browsePlaylist(playlistIndex)
+      }
     }, 450)
   }, 250)
 }
@@ -918,8 +910,9 @@ function onDrop(event: DragEvent) {
               @preferences="player.showPreferences"
               @playlist="selectPrimaryPlaylist"
             />
+            <KeepAlive v-else>
             <MediaLibraryView
-              v-else-if="['overview', 'artists', 'artist', 'folders', 'folder'].includes(state.view)"
+              v-if="['overview', 'artists', 'artist', 'folders', 'folder'].includes(state.view)"
               :route="state.route"
               :stats="state.libraryStats"
               :artists="state.artists"
@@ -948,6 +941,9 @@ function onDrop(event: DragEvent) {
               @track-menu="openTrackMenu"
               @selection="selectedTracks = $event"
               @add-to-playlist="player.addTracksToPlaylist"
+              @insert-into-playlist="player.insertTracksIntoPlaylist"
+              @playlist-hover="handleTrackPlaylistHover"
+              @drag-state="handleTrackDragState"
               @add-to-ipod="player.sendTracksToIpod"
               @shuffle="player.shuffleCurrent"
             />
@@ -1002,6 +998,7 @@ function onDrop(event: DragEvent) {
               @cancel-album-selection="cancelAlbumSelection"
               @alphabet-index-view="player.setAlphabetIndexView"
             />
+            </KeepAlive>
           </div>
         </Transition>
       </div>
