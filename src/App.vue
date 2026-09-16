@@ -23,7 +23,7 @@ import { isSameTrack, localFilePath, playablePath, trackKey } from './utils/trac
 const player = useFoobar()
 const { state, filteredAlbums, libraryFilterOptions } = player
 const miniMode = new URLSearchParams(window.location.search).get('mode') === 'mini'
-const trackMenu = reactive({ open: false, track: null as DisplayTrack | null, index: -1, x: 0, y: 0 })
+const trackMenu = reactive({ open: false, track: null as DisplayTrack | null, tracks: [] as DisplayTrack[], index: -1, x: 0, y: 0 })
 const dragState = reactive({ active: false, depth: 0 })
 const queueOpen = ref(false)
 const outputDevices = ref<OutputDevice[]>([])
@@ -554,7 +554,7 @@ async function openTrackMenu(track: DisplayTrack, index: number, event: MouseEve
        if (sourcePlaylist) {
          items.push(
            { type: 'separator' },
-           { id: 'track:remove', label: `从“${sourcePlaylist?.name ?? '播放列表'}”移除`, iconSvg: menuIcons.remove },
+            { id: 'track:remove', label: targets.length > 1 ? `从“${sourcePlaylist?.name ?? '播放列表'}”移除 ${targets.length} 首曲目` : `从“${sourcePlaylist?.name ?? '播放列表'}”移除`, iconSvg: menuIcons.remove },
          )
       }
       const action = await openPopup(items, event)
@@ -570,7 +570,7 @@ async function openTrackMenu(track: DisplayTrack, index: number, event: MouseEve
       if (action === 'track:rename') openFileDialog('rename', track)
       if (action === 'track:move') await moveFile(track)
       if (action === 'track:delete-file') openFileDialog('delete', track)
-       if (action === 'track:remove') await player.removePlaylistTrack(track, index)
+        if (action === 'track:remove' && sourcePlaylist) await player.removeTracksFromPlaylist(targets, sourcePlaylist.index)
        if (action.startsWith('track:playlist:')) await player.addTracksToPlaylist(targets, Number(action.split(':').at(-1)))
        if (action.startsWith('track:move-playlist:')) {
          const source = state.browsingPlaylist ?? state.activePlaylist
@@ -587,6 +587,7 @@ async function openTrackMenu(track: DisplayTrack, index: number, event: MouseEve
   const target = event.currentTarget as HTMLElement | null
   const rect = target?.getBoundingClientRect()
   trackMenu.track = track
+  trackMenu.tracks = targets
   trackMenu.index = index
   trackMenu.x = event.clientX || rect?.right || 20
   trackMenu.y = event.clientY || rect?.bottom || 20
@@ -776,6 +777,12 @@ async function openQueueMenu(index: number, event: MouseEvent) {
 async function runTrackAction(action: () => Promise<unknown>) {
   trackMenu.open = false
   await action()
+}
+
+async function removeTrackMenuTracks() {
+  const route = state.route
+  if (route.view !== 'playlist' || !trackMenu.tracks.length) return
+  await player.removeTracksFromPlaylist(trackMenu.tracks, route.playlistIndex)
 }
 
 async function handlePlayTrack(track: DisplayTrack, index?: number) {
@@ -1069,7 +1076,7 @@ function onDrop(event: DragEvent) {
       @favourite="runTrackAction(() => player.toggleFavourite(trackMenu.track!))"
       @album="runTrackAction(() => player.openTrackAlbum(trackMenu.track!))"
       @location="runTrackAction(() => player.showInExplorer(trackMenu.track!))"
-      @remove="runTrackAction(() => player.removePlaylistTrack(trackMenu.track!, trackMenu.index))"
+        @remove="runTrackAction(removeTrackMenuTracks)"
       @properties="runTrackAction(() => openInspector('properties', [trackMenu.track!]))"
       @edit-metadata="runTrackAction(() => openInspector('edit', [trackMenu.track!]))"
     />
