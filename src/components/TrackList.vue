@@ -498,8 +498,11 @@ watch(() => props.tracks, () => {
 
 watch(() => props.playlistIndex, (index, previous) => {
   if (!dragging.value || index === previous) return
-  dropIndex.value = -1
-  dropIndicator.value.visible = false
+  // Selection indexes belong to the source playlist and must not color same-index target rows.
+  selected.value = new Set()
+  anchorIndex = -1
+  publishSelection()
+  clearTrackDropTarget()
   targetPlaylist.value = null
 })
 
