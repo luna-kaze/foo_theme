@@ -35,6 +35,7 @@ const props = defineProps<{
 }>()
 
 const albumGroups = useAlphabetGroups(() => props.albums, (album) => album.name, (album) => album.sortName ?? '')
+const orderedAlbums = computed(() => albumGroups.value.flatMap((group) => group.items))
 const albumLetters = computed(() => albumGroups.value.map((group) => group.letter))
 const { activeLetter: activeAlbumLetter, registerGroup: registerAlbumGroup, jumpToLetter: jumpToAlbumLetter } = useAlphabetNavigation()
 const searchArtistArtwork = computed(() => Object.fromEntries(props.albums.filter((album) => album.artworkUrl).map((album) => [album.artist, album.artworkUrl])))
@@ -146,7 +147,7 @@ const emit = defineEmits<{
         </div>
         <AlphabetIndexRail data-layout-chrome="rail" :available="albumLetters" :active="activeAlbumLetter" @select="jumpToAlbumLetter" />
       </div>
-      <AlbumGrid v-else-if="albums.length" :albums="albums" :selection-mode="albumSelectionMode" :selected-ids="selectedAlbumIds" @open="emit('openAlbum', $event)" @menu="(album, event) => emit('albumMenu', album, event)" @selection="(album, selected) => emit('albumSelection', album, selected)" />
+      <AlbumGrid v-else-if="albums.length" :albums="orderedAlbums" :selection-mode="albumSelectionMode" :selected-ids="selectedAlbumIds" @open="emit('openAlbum', $event)" @menu="(album, event) => emit('albumMenu', album, event)" @selection="(album, selected) => emit('albumSelection', album, selected)" />
       <div v-else class="collection-empty"><FileMusic :size="30" /><strong>没有找到专辑</strong><span>打开本地音乐，或在 foobar2000 首选项中更新监视文件夹。</span><div><button class="primary-button" @click="emit('openFiles')">打开文件</button><button class="secondary-button" @click="emit('openFolder')">打开文件夹</button></div></div>
     </template>
 

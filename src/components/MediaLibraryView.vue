@@ -69,6 +69,7 @@ const artistArtwork = computed(() => {
   return artwork
 })
 const artistGroups = useAlphabetGroups(() => props.artists, (artist) => artist.name, (artist) => artist.sortName ?? '')
+const orderedArtists = computed(() => artistGroups.value.flatMap((group) => group.items))
 const artistLetters = computed(() => artistGroups.value.map((group) => group.letter))
 const { activeLetter: activeArtistLetter, registerGroup: registerArtistGroup, jumpToLetter: jumpToArtistLetter } = useAlphabetNavigation()
 const viewRoot = ref<HTMLElement | null>(null)
@@ -138,7 +139,7 @@ function openFolder(folder: LibraryFolderCard) {
         <AlphabetIndexRail data-layout-chrome="rail" :available="artistLetters" :active="activeArtistLetter" @select="jumpToArtistLetter" />
       </div>
       <section v-else class="library-card-grid">
-        <button v-for="artist in artists" :key="artist.name" class="artist-browser-card" :data-layout-key="`artist:${artist.name}`" @click="emit('artist', artist.name)" @contextmenu.prevent.stop="emit('artistMenu', artist, $event)">
+        <button v-for="artist in orderedArtists" :key="artist.name" class="artist-browser-card" :data-layout-key="`artist:${artist.name}`" @click="emit('artist', artist.name)" @contextmenu.prevent.stop="emit('artistMenu', artist, $event)">
           <span class="artist-browser-card__art" :style="artistArtwork[artist.name] ? { backgroundImage: `url(${artistArtwork[artist.name]})` } : {}"><i v-if="!artistArtwork[artist.name]">{{ artist.name.slice(0, 1).toLocaleUpperCase() }}</i></span>
           <strong>{{ artist.name }}</strong><small>{{ artist.trackCount }} 首曲目 · {{ artist.albumCount }} 张专辑</small>
         </button>

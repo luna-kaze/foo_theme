@@ -11,15 +11,15 @@ function visibleSnapshots(root: HTMLElement, viewport: HTMLElement | null) {
   const top = bounds.top - 480
   const bottom = bounds.bottom + 480
   const snapshots = new Map<string, LayoutSnapshot>()
-  let anchor: { key: string; top: number } | null = null
+  let anchor: { key: string; top: number; index: number } | null = null
 
-  for (const element of layoutItems(root)) {
+  for (const [index, element] of layoutItems(root).entries()) {
     const key = element.dataset.layoutKey
     if (!key) continue
     const rect = element.getBoundingClientRect()
     if (rect.bottom < top || rect.top > bottom) continue
     snapshots.set(key, { rect })
-    if (!anchor && rect.bottom > bounds.top) anchor = { key, top: rect.top }
+    if (!anchor && rect.bottom > bounds.top) anchor = { key, top: rect.top, index }
   }
   return { snapshots, anchor }
 }
@@ -55,8 +55,13 @@ export async function animateLayoutReorder(root: HTMLElement | null, update: () 
   await nextTick()
 
   if (viewport && anchor) {
-    const nextAnchor = layoutItems(root).find((element) => element.dataset.layoutKey === anchor.key)
-    if (nextAnchor) viewport.scrollTop += nextAnchor.getBoundingClientRect().top - anchor.top
+    const nextItems = layoutItems(root)
+    const nextAnchorIndex = nextItems.findIndex((element) => element.dataset.layoutKey === anchor.key)
+    const nextAnchor = nextItems[nextAnchorIndex]
+    if (nextAnchor && nextAnchorIndex === anchor.index) {
+      const correction = nextAnchor.getBoundingClientRect().top - anchor.top
+      if (Number.isFinite(correction)) viewport.scrollTop += correction
+    }
   }
 
   const animations: Animation[] = []
