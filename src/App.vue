@@ -127,6 +127,7 @@ const sceneWaiters = new Set<() => void>()
 const sceneAnimationEnabled = ref(false)
 const sceneSwitching = ref(false)
 const scenePreparedGeneration = ref(0)
+let requestedSceneTransition: { key: string; generation: number; animate: boolean } | null = null
 const scenePending = computed(() => (player.routeNavigation.value?.generation ?? 0) > scenePreparedGeneration.value)
 const sceneControls = computed(() => ({
   ipod: {
@@ -187,6 +188,12 @@ watch(player.routeNavigation, (navigation) => {
   if (!navigation) return
   saveSceneScroll()
   if (navigationTransitions.targetKey && navigationTransitions.targetKey !== routeKey(navigation.to)) navigationTransitions.cancelAlbum()
+  // Save the intent at request time. A same-route refresh can finish loading
+  // with a newer generation without becoming a new visual navigation.
+  requestedSceneTransition = {
+    key: routeKey(navigation.to), generation: navigation.generation,
+    animate: Boolean(navigation.animate && !trackDragRouteKey.value && !navigationTransitions.targetKey),
+  }
 }, { flush: 'sync' })
 
 watch(player.routeReady, async (ready) => {
@@ -195,14 +202,16 @@ watch(player.routeReady, async (ready) => {
   if (next.route.view === 'albums') await groupAlphabetically(next.albums, (album) => album.name, (album) => album.sortName ?? '')
   if (next.route.view === 'artists') await groupAlphabetically(next.artists, (artist) => artist.name, (artist) => artist.sortName ?? '')
   if (player.routeReady.value !== ready || routeKey(state.route) !== next.key) return
-  const navigation = player.routeNavigation.value
-  sceneAnimationEnabled.value = Boolean(navigation?.generation === ready.generation && navigation.animate && !trackDragRouteKey.value && !navigationTransitions.targetKey)
-  if (displayedScene.value.key !== next.key) selectedTracks.value = []
+  if (displayedScene.value.key !== next.key) {
+    const requested = requestedSceneTransition
+    sceneAnimationEnabled.value = Boolean(requested?.key === next.key && requested.generation <= ready.generation && requested.animate)
+    selectedTracks.value = []
+  }
   displayedScene.value = next
   scenePreparedGeneration.value = ready.generation
 }, { flush: 'sync' })
 
-watch(() => [state.loading, state.searchLoading, state.visibleTracks, filteredAlbums.value, state.artists, state.libraryFolders, state.libraryStats, state.selectedAlbum, state.browsingPlaylist], () => {
+watch(() => [state.loading, state.searchLoading, state.visibleTracks, filteredAlbums.value, state.artists, state.libraryFolders, state.libraryStats, state.selectedAlbum, state.browsingPlaylist, sceneSwitching.value], () => {
   if (!scenePending.value && !sceneSwitching.value && displayedScene.value.key === routeKey(state.route)) displayedScene.value = captureScene()
 }, { flush: 'post' })
 
