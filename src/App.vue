@@ -156,6 +156,10 @@ function enterScene() {
   if (viewport) viewport.scrollTop = navigationTransitions.direction === 'enter' ? 0 : sceneScrollPositions.get(displayedScene.value.key) ?? 0
 }
 
+function finishSceneLeave() {
+  if (!sceneAnimationEnabled.value) sceneSwitching.value = false
+}
+
 function waitForScene(key: string) {
   return new Promise<void>((resolve) => {
     let settled = false
@@ -1006,9 +1010,10 @@ function onDrop(event: DragEvent) {
         :data-browsing-playlist-index="state.route.view === 'playlist' ? state.route.playlistIndex : undefined"
         :data-route-pending="scenePending" :aria-busy="scenePending">
         <div class="route-page" :inert="(scenePending || sceneSwitching) && trackDragRouteKey === null">
-          <Transition name="route-scene" mode="out-in" :css="sceneAnimationEnabled"
+          <Transition name="route-scene" :mode="sceneAnimationEnabled ? 'out-in' : 'default'" :css="sceneAnimationEnabled"
             @before-leave="sceneSwitching = true" @enter="enterScene"
-            @after-enter="sceneSwitching = false" @leave-cancelled="sceneSwitching = false">
+            @after-enter="sceneSwitching = false" @after-leave="finishSceneLeave"
+            @enter-cancelled="sceneSwitching = false" @leave-cancelled="sceneSwitching = false">
             <KeepAlive :max="trackDragRouteKey === null ? 8 : undefined">
               <RouteScene :key="displayedScene.key" :scene="displayedScene" :controls="sceneControls"
                 @action="player.runIpodMainAction" @refresh="player.refreshIpodDeviceStatus"
