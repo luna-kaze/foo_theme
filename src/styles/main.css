@@ -480,10 +480,11 @@ input[type="range"] {
 .workspace-scroll--index-rail::-webkit-scrollbar-track { background: transparent; }
 
 .route-page { min-height: 100%; }
-.route-page-enter-active { transition: transform 180ms cubic-bezier(.2,.78,.16,1); }
-.route-page-leave-active { transition: transform 110ms ease-in; }
-.route-page-enter-from { transform: translateX(18px); }
-.route-page-leave-to { transform: translateX(-12px); }
+.page-exit-snapshot { position: fixed; z-index: 25; overflow: hidden; pointer-events: none; }
+.page-exit-snapshot__motion { position: absolute; inset: 0; }
+.workspace-scroll.page-transition-exiting .library-view > :not(.alphabet-browser),
+.workspace-scroll.page-transition-exiting .library-view > .alphabet-browser > .alphabet-browser__groups,
+.workspace-scroll.page-transition-exiting .ipod-page { visibility: hidden; }
 
 .ipod-page {
   width: min(1320px, 100%);

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { AlertCircle, CheckCircle2, FileMusic, Info } from '@lucide/vue'
 import AppSidebar from './components/AppSidebar.vue'
 import AppTopbar from './components/AppTopbar.vue'
@@ -111,23 +111,29 @@ watch(() => state.nowPlayingOpen, () => {
 
 const primaryRouteKey = computed(() => state.route.view === 'ipod' ? 'ipod' : 'library')
 
-watch(() => state.route, (route, previous) => {
-  if (routeKey(route) !== routeKey(previous)) navigationTransitions.cancelPage()
+watch(() => state.route, () => {
   if (navigationTransitions.albumId && state.selectedAlbum?.id !== navigationTransitions.albumId) navigationTransitions.cancelAlbum()
 }, { flush: 'post' })
 
-watch(player.routeNavigation, async (navigation) => {
+watch(player.routeNavigation, (navigation) => {
   if (!navigation) return
-  await nextTick()
-  if (player.routeNavigation.value !== navigation || routeKey(state.route) !== routeKey(navigation.to) || trackDragRouteKey.value) return
-  // iPod still uses the existing outer Transition. Album entries own their
-  // shared-artwork transition; neither should also get a generic page slide.
-  if (navigation.from.view === 'ipod' || navigation.to.view === 'ipod' || navigationTransitions.albumId) return
-  navigationTransitions.enterPage()
-}, { flush: 'post' })
+  const target = navigation.to
+  const targetAlbumId = target.view === 'album'
+    ? state.albums.find((album) => album.name === target.albumName && album.artist === target.albumArtist)?.id
+    : undefined
+  if (navigationTransitions.albumId && navigationTransitions.albumId !== targetAlbumId) navigationTransitions.cancelAlbum()
+  if (!navigation.animate || trackDragRouteKey.value || navigationTransitions.albumId) {
+    navigationTransitions.cancelPage()
+    return
+  }
+  void navigationTransitions.transitionPage(() =>
+    player.routeNavigation.value === navigation && routeKey(state.route) === routeKey(target) && !trackDragRouteKey.value,
+  )
+}, { flush: 'sync' })
 
 function handleTrackDragState(active: boolean) {
   if (active) {
+    navigationTransitions.cancelPage()
     trackDragRouteKey.value = 'active'
     return
   }
@@ -922,7 +928,6 @@ function onDrop(event: DragEvent) {
         @maximize="player.toggleWindowMaximize"
       />
       <div class="workspace-scroll" :class="{ 'workspace-scroll--layout-switch': ['albums', 'artists'].includes(state.view), 'workspace-scroll--index-rail': state.alphabetIndexView && ['albums', 'artists'].includes(state.view) }">
-        <Transition name="route-page" mode="out-in">
           <div :key="primaryRouteKey" class="route-page">
             <IpodManagerView
               v-if="state.view === 'ipod'"
@@ -1029,7 +1034,6 @@ function onDrop(event: DragEvent) {
             />
             </KeepAlive>
           </div>
-        </Transition>
       </div>
     </div>
 

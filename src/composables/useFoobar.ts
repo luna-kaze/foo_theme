@@ -77,7 +77,7 @@ const state = reactive<PlayerUiState>({
 })
 
 // Navigation animation is a visual effect, not a reason to replace the page.
-const routeNavigation = shallowRef<{ from: ViewRoute; to: ViewRoute; generation: number } | null>(null)
+const routeNavigation = shallowRef<{ from: ViewRoute; to: ViewRoute; generation: number; animate: boolean } | null>(null)
 
 let initPromise: Promise<void> | null = null
 let subscriptions: Array<() => void> = []
@@ -1127,6 +1127,8 @@ async function navigate(route: ViewRoute, historyMode: 'push' | 'replace' | 'non
   } else if (historyMode === 'replace') {
     history[historyIndex] = route
   }
+  // Synchronous subscribers capture the OLD DOM before Vue patches the route.
+  if (routeChanged) routeNavigation.value = { from: previousRoute, to: route, generation, animate: animateNavigation }
   state.route = route
   state.view = route.view
   if (route.view === 'search') state.search = route.query
@@ -1138,7 +1140,6 @@ async function navigate(route: ViewRoute, historyMode: 'push' | 'replace' | 'non
     : null
   state.searchLoading = route.view === 'search'
   updateHistoryState()
-  if (routeChanged && animateNavigation) routeNavigation.value = { from: previousRoute, to: route, generation }
   try {
     const tracks = await materializeRoute(route)
     if (generation !== routeGeneration || routeKey(state.route) !== routeKey(route)) return
