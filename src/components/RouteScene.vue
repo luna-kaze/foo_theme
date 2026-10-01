@@ -12,13 +12,13 @@ defineProps<{
   controls: {
     ipod: { connected: boolean; installed: boolean; version: string; status: IpodDeviceStatus; probing: boolean; availableActions: Record<IpodMainAction, boolean>; playlists: PlaylistInfo[] }
     media: { currentTrack: DisplayTrack | null; isPlaying: boolean; folderSelectionMode: boolean; selectedFolderIds: string[]; alphabetIndexView: boolean; dragActive: boolean }
-    library: { currentTrack: DisplayTrack | null; isPlaying: boolean; importing: boolean; libraryFilters: PlayerUiState['libraryFilters']; filterOptions: { artists: string[]; albumArtists: string[]; genres: string[]; folders: string[] }; customColumn: PlayerUiState['customColumn']; albumSelectionMode: boolean; selectedAlbumIds: string[]; alphabetIndexView: boolean; dragActive: boolean }
+    library: { currentTrack: DisplayTrack | null; isPlaying: boolean; importing: boolean; libraryFilters: PlayerUiState['libraryFilters']; filterOptions: { artists: string[]; albumArtists: string[]; genres: string[]; folders: string[] }; customColumn: PlayerUiState['customColumn']; albumSelectionMode: boolean; selectedAlbumIds: string[]; alphabetIndexView: boolean; dragActive: boolean; searchBusy: boolean }
   }
 }>()
 </script>
 
 <template>
-  <div class="route-scene" :data-route-key="scene.key">
+  <div class="route-scene" :data-route-key="scene.key" :data-route-kind="scene.route.view">
     <IpodManagerView v-if="scene.route.view === 'ipod'" v-bind="{ ...controls.ipod, ...$attrs }" />
     <MediaLibraryView
       v-else-if="['overview', 'artists', 'artist', 'folders', 'folder'].includes(scene.route.view)"

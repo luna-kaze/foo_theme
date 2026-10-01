@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { ArrowLeft, ArrowRight, FileMusic, FolderOpen, Grid3X3, ListTree, Play, Radio, SearchX, Shuffle } from '@lucide/vue'
 import type { AlbumCard, ArtistCard, DisplayTrack, LibraryFilterRule, ViewId } from '../types/music'
 import type { PlaylistInfo } from 'foo-webview-sdk'
@@ -23,6 +23,7 @@ const props = defineProps<{
   loading: boolean
   search: string
   searchLoading: boolean
+  searchBusy?: boolean
   importing: boolean
   libraryFilters: PlayerUiState['libraryFilters']
   filterOptions: { artists: string[]; albumArtists: string[]; genres: string[]; folders: string[] }
@@ -41,6 +42,31 @@ const { activeLetter: activeAlbumLetter, registerGroup: registerAlbumGroup, jump
 const searchArtistArtwork = computed(() => Object.fromEntries(props.albums.filter((album) => album.artworkUrl).map((album) => [album.artist, album.artworkUrl])))
 const viewRoot = ref<HTMLElement | null>(null)
 const layoutAnimating = ref(false)
+let resultsActive = false
+let resultsRequest = 0
+let resultsAnimations: Animation[] = []
+function stopResultsAnimation() {
+  resultsRequest += 1
+  resultsAnimations.forEach((animation) => animation.cancel())
+  resultsAnimations = []
+}
+onMounted(() => { resultsActive = true })
+onActivated(() => { resultsActive = true })
+onDeactivated(() => { resultsActive = false; stopResultsAnimation() })
+onBeforeUnmount(stopResultsAnimation)
+watch(() => props.searchBusy, (busy) => { if (busy) stopResultsAnimation() })
+watch(() => props.search, async (query, previous) => {
+  if (!resultsActive || props.view !== 'search' || query === previous) return
+  stopResultsAnimation()
+  const request = resultsRequest
+  await nextTick()
+  if (request !== resultsRequest || !viewRoot.value?.isConnected || globalThis.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+  const parts = [...viewRoot.value.querySelectorAll<HTMLElement>('.search-albums, .search-artists, .track-list, .collection-empty')].filter((element) => element.getClientRects().length)
+  const animations = parts.map((element) => element.animate([{ opacity: .82 }, { opacity: 1 }], { duration: 180, easing: 'ease-out', fill: 'both' }))
+  resultsAnimations = animations
+  await Promise.allSettled(animations.map((animation) => animation.finished))
+  if (request === resultsRequest) { animations.forEach((animation) => animation.cancel()); resultsAnimations = [] }
+})
 let layoutRequest = 0
 
 async function toggleAlphabetIndexView() {
@@ -88,8 +114,8 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <main ref="viewRoot" class="library-view" :data-detail-album="view === 'album' ? selectedAlbum?.id : undefined">
-    <div v-if="loading || searchLoading" class="library-loading">
+  <main ref="viewRoot" class="library-view" :aria-busy="view === 'search' && searchBusy" :data-detail-album="view === 'album' ? selectedAlbum?.id : undefined">
+    <div v-if="loading || (searchLoading && view !== 'search')" class="library-loading">
       <span /><span /><span />
       <small>{{ searchLoading ? '正在搜索音乐库…' : '正在加载音乐…' }}</small>
     </div>

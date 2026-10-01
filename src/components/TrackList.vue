@@ -356,7 +356,7 @@ function updateTrackDropTarget(clientX: number, clientY: number) {
     && clientX >= listBounds.left
     && clientX <= listBounds.right
     && clientY >= Math.max(viewportBounds.top, listBounds.top)
-    && clientY <= Math.min(viewportBounds.bottom, listBounds.bottom + 32)
+    && clientY <= Math.min(viewportBounds.bottom, listBounds.bottom)
   if (!withinList || !viewport) {
     stopAutoScroll()
     clearTrackDropTarget()
@@ -366,7 +366,12 @@ function updateTrackDropTarget(clientX: number, clientY: number) {
   updateAutoScroll(viewport, clientY)
   const previewTop = clientY - dragOffsetY.value
   const rows = [...targetList.querySelectorAll<HTMLElement>('.track-row[data-reorder-index]')]
-  const row = rows.find((item) => previewTop < item.getBoundingClientRect().bottom)
+  const lastRow = rows.at(-1)
+  const lastBounds = lastRow?.getBoundingClientRect()
+  // The pointer can reach the end while the lifted preview's top still lies
+  // inside the last row. Treat its lower half and the tail as the end boundary.
+  const atEnd = Boolean(lastBounds && clientY >= lastBounds.top + lastBounds.height / 2)
+  const row = atEnd ? undefined : rows.find((item) => previewTop < item.getBoundingClientRect().bottom)
   const target = row ?? rows.at(-1)
   if (!target) {
     const header = targetList.querySelector<HTMLElement>('.track-list__header')
@@ -385,7 +390,7 @@ function updateTrackDropTarget(clientX: number, clientY: number) {
   dropAfter.value = afterLast
   dropIndicator.value = {
     left: bounds.left + 11,
-    top: afterLast ? bounds.bottom : bounds.top,
+    top: Math.max(viewportBounds.top + 3, Math.min(viewportBounds.bottom - 3, afterLast ? bounds.bottom : bounds.top)),
     width: Math.max(0, bounds.width - 22),
     visible: true,
   }
@@ -393,6 +398,8 @@ function updateTrackDropTarget(clientX: number, clientY: number) {
 
 function finishReorderDrag(event: PointerEvent) {
   if (event.pointerId !== dragPointerId.value) return
+  // Re-check the actual release position, including the final edge-scroll step.
+  updateTrackDropTarget(event.clientX, event.clientY)
   const from = dragIndex.value
   const to = dropIndex.value
   const after = dropAfter.value
@@ -408,7 +415,7 @@ function finishReorderDrag(event: PointerEvent) {
     ? draggedTracks.value
     : []
   const selectedIndexes = [...draggedIndexes.value].sort((a, b) => a - b)
-  const moved = dragging.value && from >= 0 && to >= 0 && (selectedIndexes.length > 1 ? selectedIndexes.some((index) => index !== to) : from !== to)
+  const moved = dragging.value && from >= 0 && to >= 0 && (selectedIndexes.length > 1 || from !== to)
   stopReorderDrag()
   if (trash && tracks.length && sourcePlaylistIndex != null) {
     trashDropComplete.value = true
@@ -586,6 +593,7 @@ function isCurrent(track: DisplayTrack, currentTrack: DisplayTrack | null) {
         <button aria-label="曲目操作" @keydown.stop @click.stop="openMenu(track, index, $event)"><MoreHorizontal :size="17" /></button>
       </span>
     </div>
+    <div v-if="reorderable && playlistIndex != null" class="track-list__tail" aria-hidden="true" />
     <Teleport to="body">
       <div v-if="dropIndicator.visible" class="track-drop-indicator" :style="dropIndicatorStyle"><i /></div>
       <div v-if="playlistDropIndicator.visible && !targetPlaylist" class="track-playlist-drop-target" :style="playlistDropIndicatorStyle" />

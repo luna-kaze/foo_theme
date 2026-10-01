@@ -1222,11 +1222,15 @@ function buildLibraryQuery(value: string) {
 async function submitSearch() {
   const query = state.search.trim()
   if (!query) return
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = null
   searchGeneration += 1
   await navigate({ view: 'search', query }, state.view === 'search' ? 'replace' : 'push')
 }
 
 async function clearSearch() {
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = null
   searchGeneration += 1
   state.search = ''
   state.searchLoading = false
@@ -2023,16 +2027,16 @@ async function addToPlaylist(track: DisplayTrack, playlistIndex: number) {
     try {
       const added = await runAction(() => fb.playlist.add(destinationPlaylistIndex, tracks.map(playablePath)))
       const addedCount = Number(added?.addedCount ?? 0)
+      changed = addedCount > 0
       if (!added || addedCount !== tracks.length) {
         notify('部分曲目未能插入目标播放列表。', 'info')
         return
       }
-      changed = true
       const appended = Array.from({ length: addedCount }, (_, index) => destinationTracks.length + index)
       const insertion = Math.min(destinationTracks.length, targetIndex + (after ? 1 : 0))
       const original = Array.from({ length: destinationTracks.length }, (_, index) => index)
       const order = [...original.slice(0, insertion), ...appended, ...original.slice(insertion)]
-      if (!await runAction(() => fb.playlist.reorder(destinationPlaylistIndex, order))) return
+      if (!order.every((index, position) => index === position) && !await runAction(() => fb.playlist.reorder(destinationPlaylistIndex, order))) return
       if (move && sourcePlaylistIndex != null) await removeTracksFromPlaylist(tracks, sourcePlaylistIndex)
       notify(`已将 ${tracks.length} 首曲目插入“${destination.name}”`, 'success')
     } finally {

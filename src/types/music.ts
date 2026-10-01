@@ -60,6 +60,7 @@ export type ViewRoute =
 
 export interface RouteSceneData {
   key: string
+  cacheKey: string
   route: ViewRoute
   albums: AlbumCard[]
   tracks: DisplayTrack[]

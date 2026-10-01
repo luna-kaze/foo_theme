@@ -112,7 +112,8 @@ function captureScene(): RouteSceneData {
   const search = state.route.view === 'search' ? state.route.query : state.search
   const terms = search.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean)
   return {
-    key: routeKey(state.route), route: { ...state.route }, albums: filteredAlbums.value,
+    key: routeKey(state.route), cacheKey: state.route.view === 'search' ? 'search' : routeKey(state.route),
+    route: { ...state.route }, albums: filteredAlbums.value,
     tracks: state.visibleTracks, artists: state.artists, folders: state.libraryFolders, stats: state.libraryStats,
     selectedAlbum: state.selectedAlbum, activePlaylist: state.browsingPlaylist ?? state.activePlaylist,
     search,
@@ -143,6 +144,7 @@ const sceneControls = computed(() => ({
     libraryFilters: state.libraryFilters, filterOptions: libraryFilterOptions.value, customColumn: state.customColumn,
     albumSelectionMode: albumSelectionMode.value, selectedAlbumIds: selectedAlbumIds.value,
     alphabetIndexView: state.alphabetIndexView, dragActive: trackDragRouteKey.value !== null,
+    searchBusy: state.searchLoading,
   },
 }))
 
@@ -202,11 +204,11 @@ watch(player.routeReady, async (ready) => {
   if (next.route.view === 'albums') await groupAlphabetically(next.albums, (album) => album.name, (album) => album.sortName ?? '')
   if (next.route.view === 'artists') await groupAlphabetically(next.artists, (artist) => artist.name, (artist) => artist.sortName ?? '')
   if (player.routeReady.value !== ready || routeKey(state.route) !== next.key) return
-  if (displayedScene.value.key !== next.key) {
+  if (displayedScene.value.cacheKey !== next.cacheKey) {
     const requested = requestedSceneTransition
     sceneAnimationEnabled.value = Boolean(requested?.key === next.key && requested.generation <= ready.generation && requested.animate)
-    selectedTracks.value = []
   }
+  if (displayedScene.value.key !== next.key) selectedTracks.value = []
   displayedScene.value = next
   scenePreparedGeneration.value = ready.generation
 }, { flush: 'sync' })
@@ -977,6 +979,7 @@ function onDrop(event: DragEvent) {
       @playlist="selectPrimaryPlaylist"
       @search="player.setSearch"
       @submit-search="submitPrimarySearch"
+      @clear-search="clearPrimarySearch"
        @playlist-menu="openPlaylistMenu"
        @reorder-playlists="player.reorderPlaylists"
        @send-playlist-to-ipod="requestPlaylistIpodTransfer"
@@ -988,6 +991,7 @@ function onDrop(event: DragEvent) {
       <AppTopbar
         :connected="state.connected"
         :search="state.search"
+        :search-busy="state.searchLoading"
         :can-go-back="state.canGoBack"
         :can-go-forward="state.canGoForward"
         :output-devices="outputDevices"
@@ -1024,7 +1028,7 @@ function onDrop(event: DragEvent) {
             @after-enter="sceneSwitching = false" @after-leave="finishSceneLeave"
             @enter-cancelled="sceneSwitching = false" @leave-cancelled="sceneSwitching = false">
             <KeepAlive :max="trackDragRouteKey === null ? 8 : undefined">
-              <RouteScene :key="displayedScene.key" :scene="displayedScene" :controls="sceneControls"
+              <RouteScene :key="displayedScene.cacheKey" :scene="displayedScene" :controls="sceneControls"
                 @action="player.runIpodMainAction" @refresh="player.refreshIpodDeviceStatus"
                 @preferences="player.showPreferences" @playlist="selectPrimaryPlaylist"
                 @navigate="navigatePrimary" @back="goBackPrimary"

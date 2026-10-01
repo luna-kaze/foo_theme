@@ -20,6 +20,7 @@ const emit = defineEmits<{
   playlist: [index: number]
   search: [value: string]
   submitSearch: []
+  clearSearch: []
   createPlaylist: []
   favourites: []
   playlistMenu: [playlist: PlaylistInfo, event: MouseEvent]
@@ -38,6 +39,11 @@ const dropIndicator = ref({ left: 0, top: 0, width: 0, visible: false })
 const ipodDropTarget = ref(false)
 const playlistFilterOpen = ref(false)
 const playlistFilter = ref('')
+const searchInput = ref<HTMLInputElement | null>(null)
+function clearSearch() {
+  emit('clearSearch')
+  searchInput.value?.focus({ preventScroll: true })
+}
 const filteredPlaylists = computed(() => {
   const terms = playlistFilter.value.toLocaleLowerCase().split(/\s+/).filter(Boolean)
   if (!terms.length) return props.playlists
@@ -149,7 +155,8 @@ onBeforeUnmount(() => {
 
     <form class="sidebar-search" role="search" @submit.prevent="emit('submitSearch')">
       <button type="submit" aria-label="搜索音乐库"><Search :size="15" /></button>
-      <input type="search" placeholder="搜索音乐库" :value="search" @input="emit('search', ($event.target as HTMLInputElement).value)" />
+      <input ref="searchInput" type="search" placeholder="搜索音乐库" :value="search" @input="emit('search', ($event.target as HTMLInputElement).value)" />
+      <span class="sidebar-search__trailing"><Transition name="search-clear"><button v-if="search" type="button" aria-label="清除搜索" @click="clearSearch"><X :size="14" /></button></Transition></span>
     </form>
 
     <nav class="sidebar-nav" aria-label="主导航">

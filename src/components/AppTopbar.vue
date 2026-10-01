@@ -6,6 +6,7 @@ import type { OutputDevice } from 'foo-webview-sdk'
 defineProps<{
   connected: boolean
   search: string
+  searchBusy: boolean
   canGoBack: boolean
   canGoForward: boolean
   outputDevices: OutputDevice[]
@@ -39,7 +40,13 @@ const emit = defineEmits<{
 const menuOpen = ref(false)
 const outputOpen = ref(false)
 const root = ref<HTMLElement | null>(null)
+const searchInput = ref<HTMLInputElement | null>(null)
 let dragCandidate: { pointerId: number; x: number; y: number } | null = null
+
+function clearSearch() {
+  emit('clearSearch')
+  searchInput.value?.focus({ preventScroll: true })
+}
 
 function run(action: 'refresh' | 'preferences' | 'fullscreen' | 'reload' | 'rescan' | 'desktopLyrics' | 'miniPlayer' | 'ipodManager') {
   if (action === 'refresh') emit('refresh')
@@ -115,17 +122,21 @@ onBeforeUnmount(() => {
       <button aria-label="后退" :disabled="!canGoBack" @click="navigate('back')"><ChevronLeft :size="19" /></button>
       <button aria-label="前进" :disabled="!canGoForward" @click="navigate('forward')"><ChevronRight :size="19" /></button>
     </div>
-    <form class="topbar-search" role="search" @submit.prevent="emit('submitSearch')">
+    <form class="topbar-search" :class="{ 'is-searching': searchBusy }" :aria-busy="searchBusy" role="search" @submit.prevent="emit('submitSearch')" @dblclick.stop>
       <button class="topbar-search__submit" type="submit" aria-label="搜索音乐库"><Search :size="16" /></button>
       <input
+        ref="searchInput"
         type="search"
         placeholder="搜索歌曲、艺人或专辑"
         :value="search"
         @input="emit('search', ($event.target as HTMLInputElement).value)"
-        @search="emit('search', ($event.target as HTMLInputElement).value)"
       />
-      <button v-if="search" class="topbar-search__clear" type="button" aria-label="清除搜索" @click="emit('clearSearch')"><X :size="14" /></button>
-      <kbd v-else>Ctrl K</kbd>
+      <span class="topbar-search__trailing">
+        <Transition name="search-clear" mode="out-in">
+          <button v-if="search" key="clear" class="topbar-search__clear" type="button" aria-label="清除搜索" @click="clearSearch"><X :size="14" /></button>
+          <kbd v-else key="hint">Ctrl K</kbd>
+        </Transition>
+      </span>
     </form>
     <div class="topbar-actions">
       <span class="connection-pill" :class="{ online: connected && !connectionTransitioning, transitioning: connectionTransitioning }">
