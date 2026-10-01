@@ -1,4 +1,4 @@
-import { computed, reactive } from 'vue'
+import { computed, reactive, shallowRef } from 'vue'
 import fb, {
   type AlbumInfo,
   type ArtistInfo,
@@ -75,6 +75,9 @@ const state = reactive<PlayerUiState>({
   libraryStatus: { initialized: false, scanning: null, itemCount: 0 },
   customColumn: { label: '', pattern: '' },
 })
+
+// Navigation animation is a visual effect, not a reason to replace the page.
+const routeNavigation = shallowRef<{ from: ViewRoute; to: ViewRoute; generation: number } | null>(null)
 
 let initPromise: Promise<void> | null = null
 let subscriptions: Array<() => void> = []
@@ -628,7 +631,7 @@ function bindEvents() {
     const route = state.route
     if (route.view === 'playlist') {
       const matches = state.playlists.filter((playlist) => playlist.name === route.playlistName)
-      if (matches.length === 1) await navigate({ ...route, playlistIndex: matches[0].index }, 'none')
+      if (matches.length === 1) await navigate({ ...route, playlistIndex: matches[0].index }, 'none', false)
       else await navigate({ view: 'home' }, 'replace')
     }
   }
@@ -845,7 +848,7 @@ async function initialize() {
   return initPromise
 }
 
-function routeKey(route: ViewRoute) {
+export function routeKey(route: ViewRoute) {
   if (route.view === 'album') return `album:${route.albumName}\u0000${route.albumArtist}`
   if (route.view === 'artist') return `artist:${route.artist}`
   if (route.view === 'folder') return `folder:${route.rootId}\u0000${route.pathId}`
@@ -1095,7 +1098,7 @@ async function applyCustomColumn(label: string, pattern: string) {
   state.customColumn = { label: label.trim() || '自定义', pattern: trimmedPattern }
 }
 
-async function navigate(route: ViewRoute, historyMode: 'push' | 'replace' | 'none' = 'push') {
+async function navigate(route: ViewRoute, historyMode: 'push' | 'replace' | 'none' = 'push', animateNavigation = true) {
   if (route.view === 'ipod' && !pluginIntegrations.dop.installed) route = { view: 'home' }
   if (route.view === 'playlist') {
     const playlistRoute = route
@@ -1107,7 +1110,8 @@ async function navigate(route: ViewRoute, historyMode: 'push' | 'replace' | 'non
     }
   }
   const generation = ++routeGeneration
-  const routeChanged = routeKey(route) !== routeKey(state.route)
+  const previousRoute = state.route
+  const routeChanged = routeKey(route) !== routeKey(previousRoute)
   if (historyMode !== 'none') {
     state.nowPlayingOpen = false
     state.dialog = null
@@ -1134,6 +1138,7 @@ async function navigate(route: ViewRoute, historyMode: 'push' | 'replace' | 'non
     : null
   state.searchLoading = route.view === 'search'
   updateHistoryState()
+  if (routeChanged && animateNavigation) routeNavigation.value = { from: previousRoute, to: route, generation }
   try {
     const tracks = await materializeRoute(route)
     if (generation !== routeGeneration || routeKey(state.route) !== routeKey(route)) return
@@ -1150,7 +1155,9 @@ async function navigate(route: ViewRoute, historyMode: 'push' | 'replace' | 'non
     state.error = message
     notify(message, 'error')
   } finally {
-    if (generation === routeGeneration) state.searchLoading = false
+    if (generation === routeGeneration) {
+      state.searchLoading = false
+    }
   }
 }
 
@@ -1240,7 +1247,7 @@ async function selectActivePlaylist(index?: number, pushHistory = true) {
 async function browsePlaylist(index: number) {
   const playlist = state.playlists.find((item) => item.index === index)
   if (!playlist) return
-  await navigate({ view: 'playlist', playlistIndex: playlist.index, playlistName: playlist.name }, 'none')
+  await navigate({ view: 'playlist', playlistIndex: playlist.index, playlistName: playlist.name }, 'none', false)
 }
 
 async function refreshActivePlaylist() {
@@ -2916,6 +2923,7 @@ export function useFoobar() {
 
   return {
     state,
+    routeNavigation,
     filteredAlbums,
     libraryFilterOptions,
     pluginIntegrations,

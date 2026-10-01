@@ -74,14 +74,15 @@ const artistLetters = computed(() => artistGroups.value.map((group) => group.let
 const { activeLetter: activeArtistLetter, registerGroup: registerArtistGroup, jumpToLetter: jumpToArtistLetter } = useAlphabetNavigation()
 const viewRoot = ref<HTMLElement | null>(null)
 const layoutAnimating = ref(false)
+let layoutRequest = 0
 
 async function toggleAlphabetIndexView() {
-  if (layoutAnimating.value) return
+  const request = ++layoutRequest
   layoutAnimating.value = true
   try {
     await animateLayoutReorder(viewRoot.value, () => emit('alphabetIndexView', !props.alphabetIndexView))
   } finally {
-    layoutAnimating.value = false
+    if (request === layoutRequest) layoutAnimating.value = false
   }
 }
 
@@ -123,7 +124,7 @@ function openFolder(folder: LibraryFolderCard) {
     </template>
 
     <template v-else-if="route.view === 'artists'">
-      <section class="page-heading page-heading--row"><div><p class="eyebrow">媒体库</p><h1>艺术家</h1><p>共 {{ artists.length }} 位艺术家，点按卡片查看其全部曲目。</p></div><button class="secondary-button view-mode-toggle" :class="{ active: alphabetIndexView, 'is-animating': layoutAnimating }" :disabled="layoutAnimating" @click="toggleAlphabetIndexView"><span class="view-mode-toggle__icon"><ListTree :class="{ visible: alphabetIndexView }" :size="16" /><Grid3X3 :class="{ visible: !alphabetIndexView }" :size="16" /></span>{{ alphabetIndexView ? '索引视图' : '网格视图' }}</button></section>
+      <section class="page-heading page-heading--row"><div><p class="eyebrow">媒体库</p><h1>艺术家</h1><p>共 {{ artists.length }} 位艺术家，点按卡片查看其全部曲目。</p></div><button class="secondary-button view-mode-toggle" :class="{ active: alphabetIndexView, 'is-animating': layoutAnimating }" @click="toggleAlphabetIndexView"><span class="view-mode-toggle__icon"><ListTree :class="{ visible: alphabetIndexView }" :size="16" /><Grid3X3 :class="{ visible: !alphabetIndexView }" :size="16" /></span>{{ alphabetIndexView ? '索引视图' : '网格视图' }}</button></section>
       <div v-if="alphabetIndexView" class="alphabet-browser">
         <div class="alphabet-browser__groups">
           <section v-for="group in artistGroups" :key="group.letter" :ref="(element) => registerArtistGroup(group.letter, element)" class="alphabet-group">

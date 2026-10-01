@@ -474,8 +474,10 @@ input[type="range"] {
   overflow-x: hidden;
   overflow-y: auto;
 }
-.workspace-scroll--index-rail { scrollbar-width: none; }
-.workspace-scroll--index-rail::-webkit-scrollbar { display: none; }
+.workspace-scroll--layout-switch { scrollbar-gutter: stable; overflow-anchor: none; }
+.workspace-scroll--index-rail { scrollbar-color: transparent transparent; }
+.workspace-scroll--index-rail::-webkit-scrollbar-thumb,
+.workspace-scroll--index-rail::-webkit-scrollbar-track { background: transparent; }
 
 .route-page { min-height: 100%; }
 .route-page-enter-active { transition: transform 180ms cubic-bezier(.2,.78,.16,1); }
@@ -706,9 +708,10 @@ input[type="range"] {
 .alphabet-index button.active { color: #fff; background: var(--accent); box-shadow: 0 3px 10px rgba(231,99,97,.3); }
 .alphabet-index button:disabled { cursor: default; opacity: .22; }
 .view-mode-toggle.active { color: #ffe8e5; background: rgba(231,99,97,.16); border-color: rgba(231,99,97,.34); }
-.view-mode-toggle.is-animating { cursor: wait; }
+.view-mode-toggle { min-width: 112px; }
+.view-mode-toggle.is-animating { cursor: pointer; }
 .view-mode-toggle__icon { position: relative; width: 16px; height: 16px; flex: 0 0 16px; }
-.view-mode-toggle__icon svg { position: absolute; inset: 0; opacity: 0; transform: rotate(-34deg) scale(.72); transition: opacity 180ms ease, transform 260ms cubic-bezier(.2,.8,.16,1); }
+.view-mode-toggle__icon svg { position: absolute; inset: 0; opacity: 0; transform: rotate(-34deg) scale(.72); transition: opacity 280ms ease, transform 420ms cubic-bezier(.2,.8,.16,1); }
 .view-mode-toggle__icon svg.visible { opacity: 1; transform: rotate(0) scale(1); }
 [data-layout-key] { transform-origin: top left; }
 .sidebar-section__title > div { display: flex; gap: 2px; }
@@ -902,8 +905,8 @@ input[type="range"] {
 }
 .album-card.selected .album-card__art { box-shadow: 0 0 0 2px var(--accent), 0 18px 35px rgba(0,0,0,.29); }
 .album-card__art > .artwork-image { transition: filter 180ms ease, transform 220ms var(--ease); }
-.album-card__select { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; background: rgba(12,12,15,.2); border: 1px solid rgba(255,255,255,.12); border-radius: inherit; opacity: 0; transition: opacity 140ms ease; z-index: 3; }
-.album-grid.selection-mode .album-card:hover .album-card__select,.album-grid.selection-mode .album-card:focus-within .album-card__select,.album-card.selected .album-card__select { opacity: 1; }
+.album-grid.selection-mode .album-card { cursor: pointer; }
+.album-card__select { position: absolute; inset: 0; display: grid; align-items: start; justify-items: end; padding: 10px; pointer-events: none; background: rgba(12,12,15,.2); border: 1px solid rgba(255,255,255,.12); border-radius: inherit; opacity: 1; transition: background 140ms ease; z-index: 3; }
 .album-card.selected .album-card__select { background: rgba(116,116,122,.42); }
 .album-card__select input { width: 24px; height: 24px; margin: 0; appearance: none; pointer-events: auto; cursor: pointer; border: 1px solid rgba(255,255,255,.7); border-radius: 7px; background: rgba(18,18,21,.78); box-shadow: 0 7px 20px rgba(0,0,0,.35); }
 .album-card__select input:checked { border-color: var(--accent); background: var(--accent); }
@@ -1996,6 +1999,14 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   gap: 31px;
 }
 
+.album-entry-artwork { position: fixed; z-index: 10000; pointer-events: none; overflow: hidden; transform-origin: top left; box-shadow: 0 22px 48px rgba(0,0,0,.33); }
+.album-entry-artwork > .artwork-image { width: 100%; height: 100%; border-radius: inherit; }
+.album-entry-pending .library-view[data-detail-album] .album-detail-heading__art,
+.album-entry-pending .library-view[data-detail-album] .album-detail-heading__copy,
+.album-entry-pending .library-view[data-detail-album] .album-detail-heading__back,
+.album-entry-pending .library-view[data-detail-album] > .track-list { opacity: 0; }
+.album-entry-pending .library-view[data-detail-album] > .track-list { pointer-events: none; }
+
 .album-detail-heading__back {
   position: absolute;
   top: 18px;
@@ -2448,7 +2459,7 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   .workspace-scroll { height: calc(100% - 56px); }
   .library-view { padding: 32px 18px 55px; }
   .alphabet-group + .alphabet-group { margin-top: 30px; }
-  .alphabet-index { top: 10px; padding: 4px 0; border-radius: 11px; }
+  .alphabet-index { padding: 4px 0; border-radius: 11px; }
   .alphabet-index button { width: 17px; height: 15px; font-size: 8px; }
   .hero { padding-top: 18px; }
   .hero h1, .page-heading h1 { font-size: 42px; letter-spacing: -2px; }

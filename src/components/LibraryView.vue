@@ -41,14 +41,15 @@ const { activeLetter: activeAlbumLetter, registerGroup: registerAlbumGroup, jump
 const searchArtistArtwork = computed(() => Object.fromEntries(props.albums.filter((album) => album.artworkUrl).map((album) => [album.artist, album.artworkUrl])))
 const viewRoot = ref<HTMLElement | null>(null)
 const layoutAnimating = ref(false)
+let layoutRequest = 0
 
 async function toggleAlphabetIndexView() {
-  if (layoutAnimating.value) return
+  const request = ++layoutRequest
   layoutAnimating.value = true
   try {
     await animateLayoutReorder(viewRoot.value, () => emit('alphabetIndexView', !props.alphabetIndexView))
   } finally {
-    layoutAnimating.value = false
+    if (request === layoutRequest) layoutAnimating.value = false
   }
 }
 
@@ -87,7 +88,7 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <main ref="viewRoot" class="library-view">
+  <main ref="viewRoot" class="library-view" :data-detail-album="view === 'album' ? selectedAlbum?.id : undefined">
     <div v-if="loading || searchLoading" class="library-loading">
       <span /><span /><span />
       <small>{{ searchLoading ? '正在搜索音乐库…' : '正在加载音乐…' }}</small>
@@ -137,7 +138,7 @@ const emit = defineEmits<{
     </template>
 
     <template v-else-if="view === 'albums'">
-      <section class="page-heading page-heading--row"><div><p class="eyebrow">音乐库</p><h1>{{ albumSelectionMode ? `已选择 ${selectedAlbumIds.length} 张专辑` : '专辑' }}</h1><p>收藏中共有 {{ albums.length }} 张专辑</p></div><div class="page-heading__actions"><button class="secondary-button view-mode-toggle" :class="{ active: alphabetIndexView, 'is-animating': layoutAnimating }" :disabled="layoutAnimating" @click="toggleAlphabetIndexView"><span class="view-mode-toggle__icon"><ListTree :class="{ visible: alphabetIndexView }" :size="16" /><Grid3X3 :class="{ visible: !alphabetIndexView }" :size="16" /></span>{{ alphabetIndexView ? '索引视图' : '网格视图' }}</button><button v-if="albumSelectionMode" class="secondary-button" @click="emit('cancelAlbumSelection')">退出选择</button></div></section>
+      <section class="page-heading page-heading--row"><div><p class="eyebrow">音乐库</p><h1>{{ albumSelectionMode ? `已选择 ${selectedAlbumIds.length} 张专辑` : '专辑' }}</h1><p>收藏中共有 {{ albums.length }} 张专辑</p></div><div class="page-heading__actions"><button class="secondary-button view-mode-toggle" :class="{ active: alphabetIndexView, 'is-animating': layoutAnimating }" @click="toggleAlphabetIndexView"><span class="view-mode-toggle__icon"><ListTree :class="{ visible: alphabetIndexView }" :size="16" /><Grid3X3 :class="{ visible: !alphabetIndexView }" :size="16" /></span>{{ alphabetIndexView ? '索引视图' : '网格视图' }}</button><button v-if="albumSelectionMode" class="secondary-button" @click="emit('cancelAlbumSelection')">退出选择</button></div></section>
       <div v-if="albums.length && alphabetIndexView" class="alphabet-browser">
         <div class="alphabet-browser__groups">
           <section v-for="group in albumGroups" :key="group.letter" :ref="(element) => registerAlbumGroup(group.letter, element)" class="alphabet-group">

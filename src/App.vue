@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { AlertCircle, CheckCircle2, FileMusic, Info } from '@lucide/vue'
 import AppSidebar from './components/AppSidebar.vue'
 import AppTopbar from './components/AppTopbar.vue'
@@ -14,14 +14,16 @@ import QueuePopover from './components/QueuePopover.vue'
 import TrackInspector from './components/TrackInspector.vue'
 import FileOperationDialog from './components/FileOperationDialog.vue'
 import TrackActionMenu from './components/TrackActionMenu.vue'
-import { useFoobar } from './composables/useFoobar'
+import { routeKey, useFoobar } from './composables/useFoobar'
 import fb, { type ArtistInfo, type OutputDevice, type PlaylistInfo } from 'foo-webview-sdk'
 import type { AlbumCard, ArtistCard, DisplayTrack, LibraryFolderCard, TrackDetails, ViewId } from './types/music'
 import { menuIcons, showContextMenu, type ContextMenuItem } from './utils/contextMenu'
 import { isSameTrack, localFilePath, playablePath, trackKey } from './utils/track'
+import { createNavigationTransitions } from './utils/navigationTransition'
 
 const player = useFoobar()
 const { state, filteredAlbums, libraryFilterOptions } = player
+const navigationTransitions = createNavigationTransitions()
 const miniMode = new URLSearchParams(window.location.search).get('mode') === 'mini'
 const trackMenu = reactive({ open: false, track: null as DisplayTrack | null, tracks: [] as DisplayTrack[], index: -1, x: 0, y: 0 })
 const dragState = reactive({ active: false, depth: 0 })
@@ -108,6 +110,21 @@ watch(() => state.nowPlayingOpen, () => {
 })
 
 const primaryRouteKey = computed(() => state.route.view === 'ipod' ? 'ipod' : 'library')
+
+watch(() => state.route, (route, previous) => {
+  if (routeKey(route) !== routeKey(previous)) navigationTransitions.cancelPage()
+  if (navigationTransitions.albumId && state.selectedAlbum?.id !== navigationTransitions.albumId) navigationTransitions.cancelAlbum()
+}, { flush: 'post' })
+
+watch(player.routeNavigation, async (navigation) => {
+  if (!navigation) return
+  await nextTick()
+  if (player.routeNavigation.value !== navigation || routeKey(state.route) !== routeKey(navigation.to) || trackDragRouteKey.value) return
+  // iPod still uses the existing outer Transition. Album entries own their
+  // shared-artwork transition; neither should also get a generic page slide.
+  if (navigation.from.view === 'ipod' || navigation.to.view === 'ipod' || navigationTransitions.albumId) return
+  navigationTransitions.enterPage()
+}, { flush: 'post' })
 
 function handleTrackDragState(active: boolean) {
   if (active) {
@@ -359,6 +376,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  navigationTransitions.cancel()
   document.body.classList.remove('mini-window')
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('resize', onFullscreenWindowResize)
@@ -427,8 +445,18 @@ function clearPrimarySearch() {
 }
 
 function openPrimaryAlbum(album: AlbumCard) {
+  if (state.view === 'albums' && albumSelectionMode.value) {
+    setAlbumSelection(album, !selectedAlbumIds.value.includes(album.id))
+    return
+  }
+  void enterAlbum(album)
+}
+
+async function enterAlbum(album: AlbumCard) {
   closeSecondaryUi()
-  void player.selectAlbum(album)
+  await navigationTransitions.openAlbum(album.id, () => player.selectAlbum(album), () =>
+    state.route.view === 'album' && state.route.albumName === album.name && state.route.albumArtist === album.artist,
+  )
 }
 
 async function loadOutputDevices() {
@@ -604,7 +632,7 @@ async function openTrackMenu(track: DisplayTrack, index: number, event: MouseEve
 async function openAlbumMenu(album: AlbumCard, event: MouseEvent) {
   event.preventDefault()
   if (!state.connected) {
-    await player.selectAlbum(album)
+    await enterAlbum(album)
     return
   }
   if (albumSelectionMode.value && !selectedAlbumIds.value.includes(album.id)) setAlbumSelection(album, true)
@@ -644,7 +672,7 @@ async function openAlbumMenu(album: AlbumCard, event: MouseEvent) {
       selectedAlbumIds.value = [album.id]
     }
   }
-  if (action === 'album:open') await player.selectAlbum(album)
+  if (action === 'album:open') await enterAlbum(album)
   if (action === 'album:play') await player.playAlbum(album)
   if (action === 'album:shuffle') await player.shuffleAlbum(album)
   if (action === 'album:queue') {
@@ -893,7 +921,7 @@ function onDrop(event: DragEvent) {
         @drag="player.startWindowDrag"
         @maximize="player.toggleWindowMaximize"
       />
-      <div class="workspace-scroll" :class="{ 'workspace-scroll--index-rail': state.alphabetIndexView && ['albums', 'artists'].includes(state.view) }">
+      <div class="workspace-scroll" :class="{ 'workspace-scroll--layout-switch': ['albums', 'artists'].includes(state.view), 'workspace-scroll--index-rail': state.alphabetIndexView && ['albums', 'artists'].includes(state.view) }">
         <Transition name="route-page" mode="out-in">
           <div :key="primaryRouteKey" class="route-page">
             <IpodManagerView
@@ -955,6 +983,7 @@ function onDrop(event: DragEvent) {
               :current-track="state.currentTrack"
               :active-playlist="state.browsingPlaylist ?? state.activePlaylist"
               :selected-album="state.selectedAlbum"
+              :drag-active="trackDragRouteKey !== null"
               :is-playing="state.isPlaying"
               :loading="state.loading"
               :search="state.search"
