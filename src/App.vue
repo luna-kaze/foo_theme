@@ -1,12 +1,10 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import { AlertCircle, CheckCircle2, FileMusic, Info } from '@lucide/vue'
 import AppSidebar from './components/AppSidebar.vue'
 import AppTopbar from './components/AppTopbar.vue'
 import CreatePlaylistDialog from './components/CreatePlaylistDialog.vue'
-import LibraryView from './components/LibraryView.vue'
-import MediaLibraryView from './components/MediaLibraryView.vue'
-import IpodManagerView from './components/IpodManagerView.vue'
+import RouteScene from './components/RouteScene.vue'
 import MiniPlayer from './components/MiniPlayer.vue'
 import NowPlayingPanel from './components/NowPlayingPanel.vue'
 import PlayerBar from './components/PlayerBar.vue'
@@ -16,10 +14,11 @@ import FileOperationDialog from './components/FileOperationDialog.vue'
 import TrackActionMenu from './components/TrackActionMenu.vue'
 import { routeKey, useFoobar } from './composables/useFoobar'
 import fb, { type ArtistInfo, type OutputDevice, type PlaylistInfo } from 'foo-webview-sdk'
-import type { AlbumCard, ArtistCard, DisplayTrack, LibraryFolderCard, TrackDetails, ViewId } from './types/music'
+import type { AlbumCard, ArtistCard, DisplayTrack, LibraryFolderCard, RouteSceneData, TrackDetails, ViewId } from './types/music'
 import { menuIcons, showContextMenu, type ContextMenuItem } from './utils/contextMenu'
 import { isSameTrack, localFilePath, playablePath, trackKey } from './utils/track'
 import { createNavigationTransitions } from './utils/navigationTransition'
+import { groupAlphabetically } from './utils/alphabetIndex'
 
 const player = useFoobar()
 const { state, filteredAlbums, libraryFilterOptions } = player
@@ -109,31 +108,102 @@ watch(() => state.nowPlayingOpen, () => {
   if (fullscreenWindowSettled) commitImmersiveFullscreenTarget()
 })
 
-const primaryRouteKey = computed(() => state.route.view === 'ipod' ? 'ipod' : 'library')
+function captureScene(): RouteSceneData {
+  const search = state.route.view === 'search' ? state.route.query : state.search
+  const terms = search.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean)
+  return {
+    key: routeKey(state.route), route: { ...state.route }, albums: filteredAlbums.value,
+    tracks: state.visibleTracks, artists: state.artists, folders: state.libraryFolders, stats: state.libraryStats,
+    selectedAlbum: state.selectedAlbum, activePlaylist: state.browsingPlaylist ?? state.activePlaylist,
+    search,
+    searchArtists: state.route.view === 'search' && terms.length ? state.artists.filter((artist) => terms.every((term) => artist.name.toLocaleLowerCase().includes(term))) : [],
+    loading: state.loading, searchLoading: state.searchLoading,
+  }
+}
 
-watch(() => state.route, () => {
-  if (navigationTransitions.albumId && state.selectedAlbum?.id !== navigationTransitions.albumId) navigationTransitions.cancelAlbum()
-}, { flush: 'post' })
+const displayedScene = shallowRef(captureScene())
+const sceneScrollPositions = new Map<string, number>()
+const sceneWaiters = new Set<() => void>()
+const sceneAnimationEnabled = ref(false)
+const sceneSwitching = ref(false)
+const scenePreparedGeneration = ref(0)
+const scenePending = computed(() => (player.routeNavigation.value?.generation ?? 0) > scenePreparedGeneration.value)
+const sceneControls = computed(() => ({
+  ipod: {
+    connected: state.connected, installed: player.pluginIntegrations.dop.installed, version: player.pluginIntegrations.dop.version,
+    status: player.ipodDevice.status, probing: player.ipodDevice.probing, availableActions: player.ipodCommands, playlists: state.playlists,
+  },
+  media: {
+    currentTrack: state.currentTrack, isPlaying: state.isPlaying, folderSelectionMode: folderSelectionMode.value,
+    selectedFolderIds: selectedFolderIds.value, alphabetIndexView: state.alphabetIndexView, dragActive: trackDragRouteKey.value !== null,
+  },
+  library: {
+    currentTrack: state.currentTrack, isPlaying: state.isPlaying, importing: state.importing,
+    libraryFilters: state.libraryFilters, filterOptions: libraryFilterOptions.value, customColumn: state.customColumn,
+    albumSelectionMode: albumSelectionMode.value, selectedAlbumIds: selectedAlbumIds.value,
+    alphabetIndexView: state.alphabetIndexView, dragActive: trackDragRouteKey.value !== null,
+  },
+}))
+
+function saveSceneScroll() {
+  const viewport = document.querySelector<HTMLElement>('.workspace-scroll')
+  const key = viewport?.querySelector<HTMLElement>('.route-scene')?.dataset.routeKey
+  if (viewport && key) sceneScrollPositions.set(key, viewport.scrollTop)
+}
+
+function enterScene() {
+  const viewport = document.querySelector<HTMLElement>('.workspace-scroll')
+  if (viewport) viewport.scrollTop = navigationTransitions.direction === 'enter' ? 0 : sceneScrollPositions.get(displayedScene.value.key) ?? 0
+}
+
+function waitForScene(key: string) {
+  return new Promise<void>((resolve) => {
+    let settled = false
+    let stop: () => void = () => {}
+    const finish = () => {
+      if (settled) return
+      settled = true
+      stop()
+      sceneWaiters.delete(finish)
+      resolve()
+    }
+    const inspect = async () => {
+      if (routeKey(state.route) !== key) { finish(); return }
+      if (displayedScene.value.key !== key || scenePending.value || sceneSwitching.value) return
+      await nextTick()
+      if (routeKey(state.route) !== key || document.querySelector<HTMLElement>('.workspace-scroll .route-scene')?.dataset.routeKey === key) finish()
+    }
+    sceneWaiters.add(finish)
+    stop = watch([displayedScene, scenePending, sceneSwitching, () => state.route], inspect, { flush: 'post' })
+    void inspect()
+  })
+}
 
 watch(player.routeNavigation, (navigation) => {
   if (!navigation) return
-  const target = navigation.to
-  const targetAlbumId = target.view === 'album'
-    ? state.albums.find((album) => album.name === target.albumName && album.artist === target.albumArtist)?.id
-    : undefined
-  if (navigationTransitions.albumId && navigationTransitions.albumId !== targetAlbumId) navigationTransitions.cancelAlbum()
-  if (!navigation.animate || trackDragRouteKey.value || navigationTransitions.albumId) {
-    navigationTransitions.cancelPage()
-    return
-  }
-  void navigationTransitions.transitionPage(() =>
-    player.routeNavigation.value === navigation && routeKey(state.route) === routeKey(target) && !trackDragRouteKey.value,
-  )
+  saveSceneScroll()
+  if (navigationTransitions.targetKey && navigationTransitions.targetKey !== routeKey(navigation.to)) navigationTransitions.cancelAlbum()
 }, { flush: 'sync' })
+
+watch(player.routeReady, async (ready) => {
+  if (!ready || routeKey(ready.route) !== routeKey(state.route)) return
+  const next = captureScene()
+  if (next.route.view === 'albums') await groupAlphabetically(next.albums, (album) => album.name, (album) => album.sortName ?? '')
+  if (next.route.view === 'artists') await groupAlphabetically(next.artists, (artist) => artist.name, (artist) => artist.sortName ?? '')
+  if (player.routeReady.value !== ready || routeKey(state.route) !== next.key) return
+  const navigation = player.routeNavigation.value
+  sceneAnimationEnabled.value = Boolean(navigation?.generation === ready.generation && navigation.animate && !trackDragRouteKey.value && !navigationTransitions.targetKey)
+  if (displayedScene.value.key !== next.key) selectedTracks.value = []
+  displayedScene.value = next
+  scenePreparedGeneration.value = ready.generation
+}, { flush: 'sync' })
+
+watch(() => [state.loading, state.searchLoading, state.visibleTracks, filteredAlbums.value, state.artists, state.libraryFolders, state.libraryStats, state.selectedAlbum, state.browsingPlaylist], () => {
+  if (!scenePending.value && !sceneSwitching.value && displayedScene.value.key === routeKey(state.route)) displayedScene.value = captureScene()
+}, { flush: 'post' })
 
 function handleTrackDragState(active: boolean) {
   if (active) {
-    navigationTransitions.cancelPage()
     trackDragRouteKey.value = 'active'
     return
   }
@@ -171,13 +241,6 @@ function handleTrackPlaylistHover(playlistIndex: number | null) {
   }, 250)
 }
 
-const searchArtists = computed<ArtistCard[]>(() => {
-  const route = state.route
-  if (route.view !== 'search') return []
-  const terms = route.query.toLocaleLowerCase().split(/\s+/).filter(Boolean)
-  if (!terms.length) return []
-  return state.artists.filter((artist) => terms.every((term) => artist.name.toLocaleLowerCase().includes(term)))
-})
 
 watch(() => state.currentTrack?.path ?? '', (path, previous) => {
   const active = path.toLocaleLowerCase().startsWith('airplay://live/')
@@ -382,6 +445,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  sceneWaiters.forEach((finish) => finish())
   navigationTransitions.cancel()
   document.body.classList.remove('mini-window')
   window.removeEventListener('keydown', onKeydown)
@@ -432,7 +496,13 @@ function showFavourites() {
 
 function goBackPrimary() {
   closeSecondaryUi()
-  void player.goBack()
+  const originKey = navigationTransitions.originKey
+  if (state.route.view === 'album' && originKey && navigationTransitions.originAlbumId === state.selectedAlbum?.id) {
+    void navigationTransitions.returnAlbum(async () => {
+      await player.goBack()
+      await waitForScene(originKey)
+    }, () => routeKey(state.route) === originKey)
+  } else void player.goBack()
 }
 
 function goForwardPrimary() {
@@ -460,7 +530,11 @@ function openPrimaryAlbum(album: AlbumCard) {
 
 async function enterAlbum(album: AlbumCard) {
   closeSecondaryUi()
-  await navigationTransitions.openAlbum(album.id, () => player.selectAlbum(album), () =>
+  const targetKey = routeKey({ view: 'album', albumName: album.name, albumArtist: album.artist })
+  await navigationTransitions.openAlbum(album.id, targetKey, displayedScene.value.key, async () => {
+    await player.selectAlbum(album)
+    await waitForScene(targetKey)
+  }, () =>
     state.route.view === 'album' && state.route.albumName === album.name && state.route.albumArtist === album.artist,
   )
 }
@@ -927,113 +1001,38 @@ function onDrop(event: DragEvent) {
         @drag="player.startWindowDrag"
         @maximize="player.toggleWindowMaximize"
       />
-      <div class="workspace-scroll" :class="{ 'workspace-scroll--layout-switch': ['albums', 'artists'].includes(state.view), 'workspace-scroll--index-rail': state.alphabetIndexView && ['albums', 'artists'].includes(state.view) }">
-          <div :key="primaryRouteKey" class="route-page">
-            <IpodManagerView
-              v-if="state.view === 'ipod'"
-              :connected="state.connected"
-              :installed="player.pluginIntegrations.dop.installed"
-              :version="player.pluginIntegrations.dop.version"
-              :status="player.ipodDevice.status"
-              :probing="player.ipodDevice.probing"
-              :available-actions="player.ipodCommands"
-              :playlists="state.playlists"
-              @action="player.runIpodMainAction"
-              @refresh="player.refreshIpodDeviceStatus"
-              @preferences="player.showPreferences"
-              @playlist="selectPrimaryPlaylist"
-            />
-            <KeepAlive v-else>
-            <MediaLibraryView
-              v-if="['overview', 'artists', 'artist', 'folders', 'folder'].includes(state.view)"
-              :route="state.route"
-              :stats="state.libraryStats"
-              :artists="state.artists"
-              :folders="state.libraryFolders"
-              :albums="state.albums"
-              :tracks="state.visibleTracks"
-              :current-track="state.currentTrack"
-              :is-playing="state.isPlaying"
-              :loading="state.loading || state.searchLoading"
-              :folder-selection-mode="folderSelectionMode"
-              :selected-folder-ids="selectedFolderIds"
-              :alphabet-index-view="state.alphabetIndexView"
-              :drag-active="trackDragRouteKey !== null"
-              @navigate="navigatePrimary"
-              @artist="player.selectArtist"
-              @artist-menu="openArtistMenu"
-              @folder="player.selectLibraryFolder"
-              @folder-menu="openFolderMenu"
-              @folder-selection="setFolderSelection"
-              @cancel-folder-selection="cancelFolderSelection"
-              @alphabet-index-view="player.setAlphabetIndexView"
-              @back="goBackPrimary"
-              @open-album="openPrimaryAlbum"
-              @album-menu="openAlbumMenu"
-              @play-track="handlePlayTrack"
-              @track-menu="openTrackMenu"
-              @selection="selectedTracks = $event"
-              @add-to-playlist="player.addTracksToPlaylist"
-              @insert-into-playlist="player.insertTracksIntoPlaylist"
-              @playlist-hover="handleTrackPlaylistHover"
-              @drag-state="handleTrackDragState"
-              @add-to-ipod="player.sendTracksToIpod"
-              @shuffle="player.shuffleCurrent"
-            />
-            <LibraryView
-              v-else
-              :view="state.view"
-              :albums="filteredAlbums"
-              :tracks="state.visibleTracks"
-              :current-track="state.currentTrack"
-              :active-playlist="state.browsingPlaylist ?? state.activePlaylist"
-              :selected-album="state.selectedAlbum"
-              :drag-active="trackDragRouteKey !== null"
-              :is-playing="state.isPlaying"
-              :loading="state.loading"
-              :search="state.search"
-              :search-loading="state.searchLoading"
-              :importing="state.importing"
-              :library-filters="state.libraryFilters"
-              :filter-options="libraryFilterOptions"
-              :custom-column="state.customColumn"
-              :album-selection-mode="albumSelectionMode"
-              :selected-album-ids="selectedAlbumIds"
-              :search-artists="searchArtists"
-              :alphabet-index-view="state.alphabetIndexView"
-              @navigate="navigatePrimary"
-              @back="goBackPrimary"
-              @open-album="openPrimaryAlbum"
-              @play-album="player.playAlbum"
-              @play-track="handlePlayTrack"
-              @shuffle="player.shuffleCurrent"
-              @track-menu="openTrackMenu"
-              @album-menu="openAlbumMenu"
-              @artist="player.selectArtist"
-              @artist-menu="openArtistMenu"
-              @open-files="player.openFiles"
-              @open-folder="player.openFolder"
-              @clear-search="clearPrimarySearch"
-              @selection="selectedTracks = $event"
-              @add-to-playlist="player.addTracksToPlaylist"
-              @move-to-playlist="player.moveTracksToPlaylist"
-              @remove-from-playlist="player.removeTracksFromPlaylist"
-              @insert-into-playlist="player.insertTracksIntoPlaylist"
-              @playlist-hover="handleTrackPlaylistHover"
-              @drag-state="handleTrackDragState"
-              @add-to-ipod="player.sendTracksToIpod"
-              @filter-facet-change="player.setLibraryFilterFacet"
-              @filter-rule-add="player.addLibraryFilterRule"
-              @filter-rule-update="player.updateLibraryFilterRule"
-              @filter-rule-remove="player.removeLibraryFilterRule"
-              @clear-filters="player.clearLibraryFilters"
-              @reorder="player.reorderPlaylistTrack"
-              @album-selection="setAlbumSelection"
-              @cancel-album-selection="cancelAlbumSelection"
-              @alphabet-index-view="player.setAlphabetIndexView"
-            />
+      <div class="workspace-scroll"
+        :class="{ 'workspace-scroll--layout-switch': ['albums', 'artists'].includes(displayedScene.route.view), 'workspace-scroll--index-rail': state.alphabetIndexView && ['albums', 'artists'].includes(displayedScene.route.view) }"
+        :data-browsing-playlist-index="state.route.view === 'playlist' ? state.route.playlistIndex : undefined"
+        :data-route-pending="scenePending" :aria-busy="scenePending">
+        <div class="route-page" :inert="(scenePending || sceneSwitching) && trackDragRouteKey === null">
+          <Transition name="route-scene" mode="out-in" :css="sceneAnimationEnabled"
+            @before-leave="sceneSwitching = true" @enter="enterScene"
+            @after-enter="sceneSwitching = false" @leave-cancelled="sceneSwitching = false">
+            <KeepAlive :max="trackDragRouteKey === null ? 8 : undefined">
+              <RouteScene :key="displayedScene.key" :scene="displayedScene" :controls="sceneControls"
+                @action="player.runIpodMainAction" @refresh="player.refreshIpodDeviceStatus"
+                @preferences="player.showPreferences" @playlist="selectPrimaryPlaylist"
+                @navigate="navigatePrimary" @back="goBackPrimary"
+                @artist="player.selectArtist" @artist-menu="openArtistMenu"
+                @folder="player.selectLibraryFolder" @folder-menu="openFolderMenu"
+                @folder-selection="setFolderSelection" @cancel-folder-selection="cancelFolderSelection"
+                @open-album="openPrimaryAlbum" @album-menu="openAlbumMenu" @play-album="player.playAlbum"
+                @play-track="handlePlayTrack" @track-menu="openTrackMenu" @shuffle="player.shuffleCurrent"
+                @open-files="player.openFiles" @open-folder="player.openFolder" @clear-search="clearPrimarySearch"
+                @selection="selectedTracks = $event" @add-to-playlist="player.addTracksToPlaylist"
+                @move-to-playlist="player.moveTracksToPlaylist" @remove-from-playlist="player.removeTracksFromPlaylist"
+                @insert-into-playlist="player.insertTracksIntoPlaylist"
+                @playlist-hover="handleTrackPlaylistHover" @drag-state="handleTrackDragState"
+                @add-to-ipod="player.sendTracksToIpod"
+                @filter-facet-change="player.setLibraryFilterFacet" @filter-rule-add="player.addLibraryFilterRule"
+                @filter-rule-update="player.updateLibraryFilterRule" @filter-rule-remove="player.removeLibraryFilterRule"
+                @clear-filters="player.clearLibraryFilters" @reorder="player.reorderPlaylistTrack"
+                @album-selection="setAlbumSelection" @cancel-album-selection="cancelAlbumSelection"
+                @alphabet-index-view="player.setAlphabetIndexView" />
             </KeepAlive>
-          </div>
+          </Transition>
+        </div>
       </div>
     </div>
 

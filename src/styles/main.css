@@ -474,17 +474,22 @@ input[type="range"] {
   overflow-x: hidden;
   overflow-y: auto;
 }
-.workspace-scroll--layout-switch { scrollbar-gutter: stable; overflow-anchor: none; }
+.workspace-scroll { scrollbar-gutter: stable; }
+.workspace-scroll--layout-switch { overflow-anchor: none; }
 .workspace-scroll--index-rail { scrollbar-color: transparent transparent; }
 .workspace-scroll--index-rail::-webkit-scrollbar-thumb,
 .workspace-scroll--index-rail::-webkit-scrollbar-track { background: transparent; }
 
 .route-page { min-height: 100%; }
-.page-exit-snapshot { position: fixed; z-index: 25; overflow: hidden; pointer-events: none; }
-.page-exit-snapshot__motion { position: absolute; inset: 0; }
-.workspace-scroll.page-transition-exiting .library-view > :not(.alphabet-browser),
-.workspace-scroll.page-transition-exiting .library-view > .alphabet-browser > .alphabet-browser__groups,
-.workspace-scroll.page-transition-exiting .ipod-page { visibility: hidden; }
+.route-scene { min-height: 100%; }
+.route-scene-enter-active { transition: transform 180ms cubic-bezier(.2,.78,.16,1); }
+.route-scene-leave-active { transition: transform 110ms ease-in; }
+.route-scene-enter-from { transform: translateX(18px); }
+.route-scene-leave-to { transform: translateX(-12px); }
+.workspace-scroll[data-route-pending="true"] .route-scene { pointer-events: none; }
+@media (prefers-reduced-motion: reduce) {
+  .route-scene-enter-active, .route-scene-leave-active { transition: none; }
+}
 
 .ipod-page {
   width: min(1320px, 100%);
@@ -703,7 +708,10 @@ input[type="range"] {
   z-index: 30;
   transform: translateY(-50%);
   transition: background 150ms ease, border-color 150ms ease;
+  animation: alphabet-rail-appear 360ms ease both;
 }
+@keyframes alphabet-rail-appear { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .alphabet-index { animation: none; } }
 .alphabet-index button { display: grid; width: 21px; height: 17px; padding: 0; place-items: center; color: #8e8a91; font-size: 9px; font-weight: 700; line-height: 1; background: transparent; border-radius: 7px; }
 .alphabet-index button:hover:not(:disabled) { color: white; background: rgba(255,255,255,.09); }
 .alphabet-index button.active { color: #fff; background: var(--accent); box-shadow: 0 3px 10px rgba(231,99,97,.3); }

@@ -2,89 +2,11 @@ import { nextTick } from 'vue'
 
 type AlbumEntry = {
   albumId: string
+  targetKey: string
+  direction: 'enter' | 'return'
   animations: Animation[]
   overlay: HTMLElement | null
-}
-
-type PageEntry = {
-  viewport: HTMLElement
-  overlay: HTMLElement | null
-  animations: Animation[]
-}
-
-function pageSections() {
-  return [...document.querySelectorAll<HTMLElement>(
-    '.workspace-scroll .library-view > :not(.alphabet-browser), .workspace-scroll .library-view > .alphabet-browser > .alphabet-browser__groups, .workspace-scroll .ipod-page',
-  )].filter((element) => element.getClientRects().length)
-}
-
-function clonePageContent(source: HTMLElement, viewportBounds: DOMRect): HTMLElement {
-  const repeated = '.track-list, .album-grid, .library-card-grid'
-  let copy: HTMLElement
-  if (source.matches(repeated)) {
-    copy = source.cloneNode(false) as HTMLElement
-    const bounds = source.getBoundingClientRect()
-    Object.assign(copy.style, { display: 'block', position: 'relative', height: `${bounds.height}px` })
-    // A large library can contain thousands of rows/cards. Keep the container's
-    // geometry but only clone what the exiting viewport can actually show.
-    for (const child of [...source.children]) {
-      if (!(child instanceof HTMLElement)) continue
-      const rect = child.getBoundingClientRect()
-      if (rect.bottom < viewportBounds.top - 12 || rect.top > viewportBounds.bottom + 12) continue
-      const item = child.cloneNode(true) as HTMLElement
-      Object.assign(item.style, {
-        position: 'absolute', left: `${rect.left - bounds.left - source.clientLeft}px`,
-        top: `${rect.top - bounds.top - source.clientTop}px`,
-        width: `${rect.width}px`, height: `${rect.height}px`, margin: '0',
-        contentVisibility: 'visible',
-      })
-      copy.append(item)
-    }
-  } else if (source.querySelector(repeated)) {
-    copy = source.cloneNode(false) as HTMLElement
-    for (const child of [...source.childNodes]) {
-      copy.append(child instanceof HTMLElement ? clonePageContent(child, viewportBounds) : child.cloneNode(true))
-    }
-  } else {
-    copy = source.cloneNode(true) as HTMLElement
-  }
-  // WAAPI state is not copied by cloneNode. Freeze a currently moving section
-  // in its on-screen state before cancelling an interrupted transition.
-  const style = getComputedStyle(source)
-  if (style.transform && style.transform !== 'none') copy.style.transform = style.transform
-  if (style.opacity) copy.style.opacity = style.opacity
-  return copy
-}
-
-function snapshotPage(viewport: HTMLElement) {
-  const page = viewport.querySelector<HTMLElement>('.library-view, .ipod-page')
-  if (!page || !page.getClientRects().length) return null
-  const viewportBounds = viewport.getBoundingClientRect()
-  const pageBounds = page.getBoundingClientRect()
-  const overlay = document.createElement('div')
-  overlay.className = 'page-exit-snapshot'
-  overlay.setAttribute('aria-hidden', 'true')
-  overlay.setAttribute('inert', '')
-  Object.assign(overlay.style, {
-    left: `${viewportBounds.left}px`, top: `${viewportBounds.top}px`,
-    width: `${viewportBounds.width}px`, height: `${viewportBounds.height}px`,
-  })
-  const motion = document.createElement('div')
-  motion.className = 'page-exit-snapshot__motion'
-  const copy = clonePageContent(page, viewportBounds)
-  // The fixed rail stays in the real page, outside the moving snapshot.
-  copy.querySelectorAll('.alphabet-index').forEach((element) => element.remove())
-  copy.querySelectorAll('[id]').forEach((element) => element.removeAttribute('id'))
-  copy.removeAttribute('id')
-  Object.assign(copy.style, {
-    position: 'absolute', left: `${pageBounds.left - viewportBounds.left}px`,
-    top: `${pageBounds.top - viewportBounds.top}px`, width: `${pageBounds.width}px`,
-    maxWidth: 'none', margin: '0', transform: 'none',
-  })
-  motion.append(copy)
-  overlay.append(motion)
-  document.body.append(overlay)
-  return { overlay, motion }
+  hidden: Array<{ element: HTMLElement; opacity: string }>
 }
 
 function reducedMotion() {
@@ -94,7 +16,7 @@ function reducedMotion() {
 function visibleAlbumArtwork(albumId: string) {
   const viewport = document.querySelector<HTMLElement>('.workspace-scroll')
   const bounds = viewport?.getBoundingClientRect()
-  return [...document.querySelectorAll<HTMLElement>('.album-card[data-layout-key]')]
+  return [...document.querySelectorAll<HTMLElement>('.workspace-scroll .album-card[data-layout-key]')]
     .filter((element) => element.dataset.layoutKey === `album:${albumId}`)
     .map((element) => element.querySelector<HTMLElement>('.album-card__art'))
     .find((element) => {
@@ -112,8 +34,7 @@ function snapshotArtwork(source: HTMLElement | null) {
   overlay.className = 'album-entry-artwork'
   overlay.setAttribute('aria-hidden', 'true')
   Object.assign(overlay.style, {
-    left: `${rect.left}px`, top: `${rect.top}px`,
-    width: `${rect.width}px`, height: `${rect.height}px`,
+    left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.width}px`, height: `${rect.height}px`,
     borderRadius: getComputedStyle(source).borderRadius,
   })
   const image = artwork.cloneNode(true) as HTMLElement
@@ -123,18 +44,27 @@ function snapshotArtwork(source: HTMLElement | null) {
   return overlay
 }
 
-export function createNavigationTransitions() {
-  let pageEntry: PageEntry | null = null
-  let albumEntry: AlbumEntry | null = null
+function hideArtwork(entry: AlbumEntry, element: HTMLElement) {
+  if (entry.hidden.some((hidden) => hidden.element === element)) return
+  entry.hidden.push({ element, opacity: element.style.opacity })
+  element.style.opacity = '0'
+}
 
-  function cancelPage() {
-    if (!pageEntry) return
-    const previous = pageEntry
-    pageEntry = null
-    previous.animations.forEach((animation) => animation.cancel())
-    previous.overlay?.remove()
-    previous.viewport.classList.remove('page-transition-exiting')
-  }
+function flyArtwork(entry: AlbumEntry, target: HTMLElement, duration: number) {
+  if (!entry.overlay) return false
+  const source = entry.overlay.getBoundingClientRect()
+  const destination = target.getBoundingClientRect()
+  if (!source.width || !source.height || !destination.width || !destination.height) return false
+  entry.animations.push(entry.overlay.animate([
+    { transform: 'translate(0,0) scale(1)' },
+    { transform: `translate(${destination.left - source.left}px, ${destination.top - source.top}px) scale(${destination.width / source.width}, ${destination.height / source.height})` },
+  ], { duration, easing: 'cubic-bezier(.33,0,.2,1)', fill: 'both' }))
+  return true
+}
+
+export function createNavigationTransitions() {
+  let albumEntry: AlbumEntry | null = null
+  let origin: { albumId: string; key: string } | null = null
 
   function cancelAlbum() {
     if (!albumEntry) return
@@ -142,114 +72,79 @@ export function createNavigationTransitions() {
     albumEntry = null
     previous.animations.forEach((animation) => animation.cancel())
     previous.overlay?.remove()
+    previous.hidden.forEach(({ element, opacity }) => { element.style.opacity = opacity })
     document.body.classList.remove('album-entry-pending')
   }
 
-  async function transitionPage(isCurrent: () => boolean) {
-    const skip = reducedMotion() || Boolean(albumEntry)
-    const viewport = document.querySelector<HTMLElement>('.workspace-scroll')
-    const snapshot = !skip && viewport ? snapshotPage(viewport) : null
-    cancelPage()
-    if (skip || !viewport) return
-    const entry: PageEntry = { viewport, overlay: snapshot?.overlay ?? null, animations: [] }
-    pageEntry = entry
-    viewport.classList.add('page-transition-exiting')
-    try {
-      const exit = snapshot?.motion.animate([
-        { transform: 'translateX(0)' },
-        { transform: 'translateX(-12px)' },
-      ], { duration: 110, easing: 'ease-in', fill: 'both' })
-      if (exit) {
-        entry.animations.push(exit)
-        // Attach the rejection handler immediately, including same-tick cancels.
-        void exit.finished.catch(() => {})
-      }
-      // The pre-navigation sync watcher runs before state assignments queue a
-      // Vue render. Yield once so nextTick can wait for that upcoming patch.
-      await Promise.resolve()
-      await nextTick()
-      if (exit) await Promise.allSettled([exit.finished])
-      if (pageEntry !== entry || !isCurrent()) return
-
-      // Sections move together; never transform the ancestor of the fixed rail.
-      for (const element of pageSections()) {
-        entry.animations.push(element.animate([
-          { transform: 'translateX(18px)' },
-          { transform: 'translateX(0)' },
-        ], { duration: 180, easing: 'cubic-bezier(.2,.78,.16,1)', fill: 'both' }))
-      }
-      viewport.classList.remove('page-transition-exiting')
-      entry.overlay?.remove()
-      entry.overlay = null
-      await Promise.allSettled(entry.animations.map((animation) => animation.finished))
-    } finally {
-      // Old cancelled work must not unhide or remove the next transition.
-      if (pageEntry === entry) cancelPage()
-    }
-  }
-
-  async function openAlbum(albumId: string, navigate: () => Promise<unknown>, isCurrent: () => boolean) {
-    cancelPage()
+  async function openAlbum(albumId: string, targetKey: string, originKey: string, navigate: () => Promise<unknown>, isCurrent: () => boolean) {
     cancelAlbum()
-    if (reducedMotion()) {
-      await navigate()
-      return
-    }
-    const entry: AlbumEntry = { albumId, animations: [], overlay: snapshotArtwork(visibleAlbumArtwork(albumId)) }
+    const source = visibleAlbumArtwork(albumId)
+    origin = source ? { albumId, key: originKey } : null
+    const reduced = reducedMotion()
+    const entry: AlbumEntry = { albumId, targetKey, direction: 'enter', animations: [], overlay: reduced ? null : snapshotArtwork(source), hidden: [] }
     albumEntry = entry
-    document.body.classList.add('album-entry-pending')
+    if (!reduced) {
+      document.body.classList.add('album-entry-pending')
+      if (source && entry.overlay) hideArtwork(entry, source)
+    }
     try {
-      const navigation = navigate()
-      const viewport = document.querySelector<HTMLElement>('.workspace-scroll')
-      if (viewport) viewport.scrollTop = 0
-      await navigation
+      await navigate()
       await nextTick()
-      if (albumEntry !== entry || !isCurrent()) return
-      const detail = [...document.querySelectorAll<HTMLElement>('.library-view[data-detail-album]')]
+      if (albumEntry !== entry || !isCurrent() || reduced) return
+      const detail = [...document.querySelectorAll<HTMLElement>('.workspace-scroll .library-view[data-detail-album]')]
         .find((element) => element.dataset.detailAlbum === albumId)
       const target = detail?.querySelector<HTMLElement>('.album-detail-heading__art')
       if (!detail || !target) return
-
-      if (entry.overlay) {
-        const sourceBounds = entry.overlay.getBoundingClientRect()
-        const targetBounds = target.getBoundingClientRect()
-        const animation = entry.overlay.animate([
-          { transform: 'translate(0,0) scale(1)' },
-          { transform: `translate(${targetBounds.left - sourceBounds.left}px, ${targetBounds.top - sourceBounds.top}px) scale(${targetBounds.width / sourceBounds.width}, ${targetBounds.height / sourceBounds.height})` },
-        ], { duration: 620, easing: 'cubic-bezier(.33,0,.2,1)', fill: 'both' })
-        entry.animations.push(animation)
-      } else {
-        entry.animations.push(target.animate([
-          { opacity: 0, transform: 'scale(.96)' },
-          { opacity: 1, transform: 'scale(1)' },
-        ], { duration: 480, easing: 'ease-out', fill: 'both' }))
-      }
-
+      if (!flyArtwork(entry, target, 620)) entry.animations.push(target.animate([
+        { opacity: 0, transform: 'scale(.96)' }, { opacity: 1, transform: 'scale(1)' },
+      ], { duration: 480, easing: 'ease-out', fill: 'both' }))
       const parts = [
         { element: detail.querySelector<HTMLElement>('.album-detail-heading__back'), delay: 0 },
         { element: detail.querySelector<HTMLElement>('.album-detail-heading__copy'), delay: 100 },
         { element: detail.querySelector<HTMLElement>(':scope > .track-list'), delay: 180 },
       ]
       for (const { element, delay } of parts) {
-        if (!element) continue
-        entry.animations.push(element.animate([
-          { opacity: 0, transform: 'translateY(12px)' },
-          { opacity: 1, transform: 'translateY(0)' },
+        if (element) entry.animations.push(element.animate([
+          { opacity: 0, transform: 'translateY(12px)' }, { opacity: 1, transform: 'translateY(0)' },
         ], { duration: 420, delay, easing: 'cubic-bezier(.2,.78,.16,1)', fill: 'both' }))
       }
       await Promise.allSettled(entry.animations.map((animation) => animation.finished))
     } finally {
-      // A cancelled old navigation must never reveal/clear a newer album entry.
+      if (albumEntry === entry) cancelAlbum()
+    }
+  }
+
+  async function returnAlbum(navigate: () => Promise<unknown>, isCurrent: () => boolean) {
+    const returning = origin
+    if (!returning) { await navigate(); return }
+    const reduced = reducedMotion()
+    const source = document.querySelector<HTMLElement>('.workspace-scroll .album-detail-heading__art')
+    // Capture the live flying cover before cancelling an interrupted entrance.
+    const overlay = reduced ? null : snapshotArtwork(albumEntry?.overlay ?? source)
+    cancelAlbum()
+    const entry: AlbumEntry = { albumId: returning.albumId, targetKey: returning.key, direction: 'return', animations: [], overlay, hidden: [] }
+    albumEntry = entry
+    if (source && overlay) hideArtwork(entry, source)
+    try {
+      await navigate()
+      await nextTick()
+      if (albumEntry !== entry || !isCurrent() || reduced) return
+      const target = visibleAlbumArtwork(returning.albumId)
+      if (!target) return
+      if (overlay) hideArtwork(entry, target)
+      flyArtwork(entry, target, 520)
+      await Promise.allSettled(entry.animations.map((animation) => animation.finished))
+    } finally {
       if (albumEntry === entry) cancelAlbum()
     }
   }
 
   return {
-    transitionPage,
-    openAlbum,
-    cancelPage,
-    cancelAlbum,
-    get albumId() { return albumEntry?.albumId ?? null },
-    cancel() { cancelPage(); cancelAlbum() },
+    openAlbum, returnAlbum, cancelAlbum,
+    get targetKey() { return albumEntry?.targetKey ?? null },
+    get direction() { return albumEntry?.direction ?? null },
+    get originKey() { return origin?.key ?? null },
+    get originAlbumId() { return origin?.albumId ?? null },
+    cancel() { cancelAlbum(); origin = null },
   }
 }

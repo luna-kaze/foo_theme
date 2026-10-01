@@ -4,7 +4,7 @@ import type { DisplayTrack } from '../types/music'
 import { formatTime } from '../utils/format'
 import ArtworkImage from './ArtworkImage.vue'
 import { isSameTrack, trackKey } from '../utils/track'
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onActivated, onBeforeUnmount, ref, watch } from 'vue'
 
 const props = defineProps<{
   tracks: DisplayTrack[]
@@ -31,6 +31,7 @@ const emit = defineEmits<{
 }>()
 
 const selected = ref(new Set<number>())
+const listRoot = ref<HTMLElement | null>(null)
 let anchorIndex = -1
 let wheelSelectionStart = -1
 let wheelSelectionFrame = 0
@@ -253,6 +254,7 @@ function selectAll(event: KeyboardEvent) {
 }
 
 function stopReorderDrag() {
+  const wasDragging = dragging.value
   if (dragging.value) emit('dragState', false)
   window.removeEventListener('pointermove', updateReorderDrag)
   window.removeEventListener('pointerup', finishReorderDrag)
@@ -281,6 +283,7 @@ function stopReorderDrag() {
   if (mergeTimer) clearTimeout(mergeTimer)
   mergeTimer = null
   dragList = null
+  if (wasDragging && listRoot.value?.isConnected && listRoot.value.getClientRects().length) publishSelection()
   dragging.value = false
   dragPreviewTrack.value = null
 }
@@ -329,7 +332,8 @@ function updateTrackDropTarget(clientX: number, clientY: number) {
     dropPlaylistIndex.value = null
     playlistDropIndicator.value = { left: bounds.left + 3, top: bounds.top + 2, width: Math.max(0, bounds.width - 6), height: Math.max(0, bounds.height - 4), visible: true }
     dropIndicator.value.visible = false
-    emit('playlistHover', playlistIndex === props.playlistIndex ? null : playlistIndex)
+    const browsingIndex = Number(document.querySelector<HTMLElement>('.workspace-scroll')?.dataset.browsingPlaylistIndex)
+    emit('playlistHover', playlistIndex === browsingIndex ? null : playlistIndex)
     return
   }
   targetPlaylist.value = null
@@ -348,7 +352,7 @@ function updateTrackDropTarget(clientX: number, clientY: number) {
   const viewport = targetList.closest<HTMLElement>('.workspace-scroll')
   const listBounds = targetList.getBoundingClientRect()
   const viewportBounds = viewport?.getBoundingClientRect()
-  const withinList = viewportBounds
+  const withinList = viewport?.dataset.routePending !== 'true' && viewportBounds
     && clientX >= listBounds.left
     && clientX <= listBounds.right
     && clientY >= Math.max(viewportBounds.top, listBounds.top)
@@ -534,13 +538,17 @@ onBeforeUnmount(() => {
   stopReorderDrag()
 })
 
+onActivated(() => {
+  if (!dragging.value && listRoot.value?.getClientRects().length) publishSelection()
+})
+
 function isCurrent(track: DisplayTrack, currentTrack: DisplayTrack | null) {
   return isSameTrack(track, currentTrack)
 }
 </script>
 
 <template>
-  <div class="track-list" :class="{ compact, reorderable, 'has-custom-column': customColumnLabel }" :data-playlist-index="playlistIndex" tabindex="-1" @keydown="selectAll" @wheel="selectWithWheel">
+  <div ref="listRoot" class="track-list" :class="{ compact, reorderable, 'has-custom-column': customColumnLabel }" :data-playlist-index="playlistIndex" tabindex="-1" @keydown="selectAll" @wheel="selectWithWheel">
     <div class="track-list__header">
       <span class="track-select"><input type="checkbox" aria-label="选择全部曲目" :checked="tracks.length > 0 && selected.size === tracks.length" :indeterminate="selected.size > 0 && selected.size < tracks.length" @click.stop @change="toggleAllSelection" /></span><span>#</span><span>标题</span><span>专辑</span><span>年份</span><span v-if="customColumnLabel">{{ customColumnLabel }}</span><span>时长</span><span />
     </div>

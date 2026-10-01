@@ -78,6 +78,7 @@ const state = reactive<PlayerUiState>({
 
 // Navigation animation is a visual effect, not a reason to replace the page.
 const routeNavigation = shallowRef<{ from: ViewRoute; to: ViewRoute; generation: number; animate: boolean } | null>(null)
+const routeReady = shallowRef<{ route: ViewRoute; generation: number } | null>(null)
 
 let initPromise: Promise<void> | null = null
 let subscriptions: Array<() => void> = []
@@ -1158,6 +1159,7 @@ async function navigate(route: ViewRoute, historyMode: 'push' | 'replace' | 'non
   } finally {
     if (generation === routeGeneration) {
       state.searchLoading = false
+      routeReady.value = { route: state.route, generation }
     }
   }
 }
@@ -2925,6 +2927,7 @@ export function useFoobar() {
   return {
     state,
     routeNavigation,
+    routeReady,
     filteredAlbums,
     libraryFilterOptions,
     pluginIntegrations,

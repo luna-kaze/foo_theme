@@ -58,6 +58,22 @@ export type ViewRoute =
   | { view: 'ipod' }
   | { view: 'radio'; nonce: number; snapshot?: DisplayTrack[] }
 
+export interface RouteSceneData {
+  key: string
+  route: ViewRoute
+  albums: AlbumCard[]
+  tracks: DisplayTrack[]
+  artists: ArtistCard[]
+  folders: LibraryFolderCard[]
+  stats: LibraryStats
+  selectedAlbum: AlbumCard | null
+  activePlaylist: PlaylistInfo | null
+  search: string
+  searchArtists: ArtistCard[]
+  loading: boolean
+  searchLoading: boolean
+}
+
 export interface DisplayQueueItem extends QueueItem {
   queueSource: 'explicit' | 'playlist'
   sourceIndex: number
