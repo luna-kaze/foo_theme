@@ -364,14 +364,10 @@ function updateTrackDropTarget(clientX: number, clientY: number) {
     return
   }
   updateAutoScroll(viewport, clientY)
-  const previewTop = clientY - dragOffsetY.value
   const rows = [...targetList.querySelectorAll<HTMLElement>('.track-row[data-reorder-index]')]
-  const lastRow = rows.at(-1)
-  const lastBounds = lastRow?.getBoundingClientRect()
-  // The pointer can reach the end while the lifted preview's top still lies
-  // inside the last row. Treat its lower half and the tail as the end boundary.
-  const atEnd = Boolean(lastBounds && clientY >= lastBounds.top + lastBounds.height / 2)
-  const row = atEnd ? undefined : rows.find((item) => previewTop < item.getBoundingClientRect().bottom)
+  // Use the same pointer coordinate for both the target row and its boundary.
+  // The lifted preview offset must not shift an upper-half drop to another row.
+  const row = rows.find((item) => clientY < item.getBoundingClientRect().bottom)
   const target = row ?? rows.at(-1)
   if (!target) {
     const header = targetList.querySelector<HTMLElement>('.track-list__header')
@@ -385,12 +381,12 @@ function updateTrackDropTarget(clientX: number, clientY: number) {
   const bounds = target.getBoundingClientRect()
   const index = Number(target.dataset.reorderIndex)
   if (!Number.isInteger(index) || index < 0) return
-  const afterLast = !row
+  const after = !row || clientY >= bounds.top + bounds.height / 2
   dropIndex.value = index
-  dropAfter.value = afterLast
+  dropAfter.value = after
   dropIndicator.value = {
     left: bounds.left + 11,
-    top: Math.max(viewportBounds.top + 3, Math.min(viewportBounds.bottom - 3, afterLast ? bounds.bottom : bounds.top)),
+    top: Math.max(viewportBounds.top + 3, Math.min(viewportBounds.bottom - 3, after ? bounds.bottom : bounds.top)),
     width: Math.max(0, bounds.width - 22),
     visible: true,
   }
