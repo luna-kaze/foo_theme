@@ -933,6 +933,7 @@ async function materializeRoute(route: ViewRoute): Promise<DisplayTrack[]> {
     return loadSearchTracks(route.query)
   }
   if (route.view === 'favourites') {
+    if (!state.connected) return state.tracks.filter((track) => favouriteTrackKeys.has(trackKey(track)))
     if (favouritePlaylistIndex == null) return []
     return getAllPlaylistTracks(favouritePlaylistIndex)
   }
@@ -1283,6 +1284,10 @@ async function selectLibraryFolder(folder: LibraryFolderCard, pushHistory = true
 
 async function loadFavourites(pushHistory = true) {
   await navigate({ view: 'favourites' }, pushHistory ? 'push' : 'none')
+}
+
+async function browseFavourites() {
+  await navigate({ view: 'favourites' }, 'none', false)
 }
 
 async function loadRadio(pushHistory = true) {
@@ -2571,6 +2576,47 @@ async function toggleFavourite(track: DisplayTrack) {
   }
 }
 
+let favouriteMutationQueue: Promise<unknown> = Promise.resolve()
+function setTracksFavourite(tracks: DisplayTrack[], favourite: boolean) {
+  const unique = [...new Map(tracks.map((track) => [trackKey(track), track])).values()]
+  const action = favouriteMutationQueue.catch(() => {}).then(async () => {
+    if (!unique.length) return
+    if (!state.connected) {
+      unique.forEach((track) => favourite ? favouriteTrackKeys.add(trackKey(track)) : favouriteTrackKeys.delete(trackKey(track)))
+      syncFavouriteFlags()
+      if (state.route.view === 'favourites') await navigate(state.route, 'none', false)
+      notify(favourite ? `已收藏 ${unique.length} 首曲目` : `已取消 ${unique.length} 首曲目的收藏`, 'success')
+      return
+    }
+    const playlistIndex = await ensureFavouritePlaylist()
+    if (playlistIndex == null) return
+    const current = await getAllPlaylistTracks(playlistIndex)
+    const currentKeys = new Set(current.map(trackKey))
+    const wantedKeys = new Set(unique.map(trackKey))
+    const additions = unique.filter((track) => !currentKeys.has(trackKey(track)))
+    const removals = current.filter((track) => wantedKeys.has(trackKey(track))).map((track) => track.sourceIndex).filter((index): index is number => index != null).sort((a, b) => b - a)
+    if (favourite ? !additions.length : !removals.length) {
+      await refreshFavouriteTrackKeys()
+      notify(favourite ? '所选曲目已在收藏中。' : '所选曲目已不在收藏中。', 'info')
+      return
+    }
+    // Suppress intermediate item events just like an insert transaction.
+    insertingPlaylistIndexes.add(playlistIndex)
+    try {
+      const result = await runAction(() => favourite
+        ? fb.playlist.add(playlistIndex, additions.map(playablePath))
+        : fb.playlist.removeTracks(playlistIndex, removals))
+      if (result) notify(favourite ? `已收藏 ${additions.length} 首曲目` : `已取消 ${unique.length} 首曲目的收藏`, 'success')
+    } finally {
+      insertingPlaylistIndexes.delete(playlistIndex)
+      await loadPlaylists()
+      if (state.route.view === 'favourites' || state.route.view === 'songs' && state.libraryFilters.favourite !== 'all') await navigate(state.route, 'none', false)
+    }
+  })
+  favouriteMutationQueue = action
+  return action
+}
+
 async function getTrackDetails(tracks: DisplayTrack[]): Promise<TrackDetails[]> {
   const paths = tracks.map(playablePath)
   const [metadataResult, playcountResult, replayGainResult] = await Promise.all([
@@ -2960,6 +3006,7 @@ export function useFoobar() {
     getArtistTracks,
     selectLibraryFolder,
     loadFavourites,
+    browseFavourites,
     loadRadio,
     playTrack,
     playTrackCollection,
@@ -3018,6 +3065,7 @@ export function useFoobar() {
     showFolderInExplorer,
     openTrackAlbum,
     toggleFavourite,
+    setTracksFavourite,
     setAlphabetIndexView,
     getTrackDetails,
     writeTrackMetadata,

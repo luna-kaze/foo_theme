@@ -13,6 +13,7 @@ const props = defineProps<{
   compact?: boolean
   reorderable?: boolean
   playlistIndex?: number
+  favourites?: boolean
   customColumnLabel?: string
 }>()
 
@@ -28,6 +29,8 @@ const emit = defineEmits<{
   playlistHover: [playlistIndex: number | null]
   dragState: [active: boolean]
   addToIpod: [tracks: DisplayTrack[]]
+  setFavourites: [tracks: DisplayTrack[], favourite: boolean]
+  favouritesHover: [hovering: boolean]
 }>()
 
 const selected = ref(new Set<number>())
@@ -57,9 +60,11 @@ const mergedPreview = ref(false)
 const targetPlaylist = ref<{ index: number; name: string } | null>(null)
 const targetIpod = ref(false)
 const targetTrash = ref(false)
+const targetFavourites = ref(false)
 const trashDropComplete = ref(false)
 const dragMovesTracks = ref(false)
 const dragSourcePlaylistIndex = ref<number | null>(null)
+const dragSourceFavourites = ref(false)
 const dragPointerId = ref<number | null>(null)
 const dropPlaylistIndex = ref<number | null>(null)
 const playlistDropIndicator = ref({ left: 0, top: 0, width: 0, height: 0, visible: false })
@@ -268,9 +273,11 @@ function stopReorderDrag() {
   targetPlaylist.value = null
   targetIpod.value = false
   targetTrash.value = false
+  targetFavourites.value = false
   dropPlaylistIndex.value = null
   dragMovesTracks.value = false
   dragSourcePlaylistIndex.value = null
+  dragSourceFavourites.value = false
   dragPointerId.value = null
   draggedTrackCount.value = 0
   draggedIndexes.value = new Set()
@@ -297,21 +304,44 @@ function updateReorderDrag(event: PointerEvent) {
 function updateTrackDropTarget(clientX: number, clientY: number) {
   dragX.value = clientX
   dragY.value = clientY
-  const playlistRow = document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>('.playlist-nav__item[data-playlist-index]')
-  const ipodTarget = document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>('[data-ipod-drop-target]')
-  const trashTarget = document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>('[data-track-trash-target]')
-  if (trashTarget && props.reorderable && props.playlistIndex != null) {
+  const hit = document.elementFromPoint(clientX, clientY)
+  const playlistRow = hit?.closest<HTMLElement>('.playlist-nav__item[data-playlist-index]')
+  const ipodTarget = hit?.closest<HTMLElement>('[data-ipod-drop-target]')
+  const trashTarget = hit?.closest<HTMLElement>('[data-track-trash-target]')
+  const favouriteTarget = hit?.closest<HTMLElement>('[data-favourites-drop-target]')
+  if (trashTarget && (dragSourceFavourites.value || props.reorderable && props.playlistIndex != null)) {
     stopAutoScroll()
     targetTrash.value = true
     targetIpod.value = false
     targetPlaylist.value = null
+    targetFavourites.value = false
     dropPlaylistIndex.value = null
     playlistDropIndicator.value.visible = false
     dropIndicator.value.visible = false
     emit('playlistHover', null)
+    emit('favouritesHover', false)
     return
   }
   targetTrash.value = false
+  targetFavourites.value = false
+  if (favouriteTarget) {
+    const sidebar = favouriteTarget.dataset.favouritesDropTarget === 'sidebar'
+    const viewport = favouriteTarget.closest<HTMLElement>('.workspace-scroll')
+    if (sidebar || viewport?.dataset.routePending !== 'true') {
+      stopAutoScroll()
+      targetFavourites.value = true
+      targetIpod.value = false
+      targetPlaylist.value = null
+      dropPlaylistIndex.value = null
+      clearTrackDropTarget()
+      const bounds = favouriteTarget.getBoundingClientRect()
+      playlistDropIndicator.value = { left: bounds.left + 3, top: bounds.top + 2, width: Math.max(0, bounds.width - 6), height: Math.max(0, bounds.height - 4), visible: sidebar }
+      emit('playlistHover', null)
+      emit('favouritesHover', sidebar)
+      return
+    }
+  }
+  emit('favouritesHover', false)
   if (ipodTarget) {
     stopAutoScroll()
     const bounds = ipodTarget.getBoundingClientRect()
@@ -402,22 +432,29 @@ function finishReorderDrag(event: PointerEvent) {
   const playlist = targetPlaylist.value
   const ipod = targetIpod.value
   const trash = targetTrash.value
+  const favourite = targetFavourites.value
+  const sourceFavourites = dragSourceFavourites.value
   const move = dragMovesTracks.value
   const sourcePlaylistIndex = dragSourcePlaylistIndex.value
   const destinationPlaylistIndex = dropPlaylistIndex.value ?? props.playlistIndex ?? null
   const foreignPlaylist = sourcePlaylistIndex != null && destinationPlaylistIndex != null && sourcePlaylistIndex !== destinationPlaylistIndex
   const externalSource = sourcePlaylistIndex == null
-  const tracks = (trash || ipod || foreignPlaylist || externalSource || (playlist && playlist.index !== sourcePlaylistIndex))
+  const tracks = (trash || favourite || ipod || foreignPlaylist || externalSource || (playlist && playlist.index !== sourcePlaylistIndex))
     ? draggedTracks.value
     : []
   const selectedIndexes = [...draggedIndexes.value].sort((a, b) => a - b)
   const moved = dragging.value && from >= 0 && to >= 0 && (selectedIndexes.length > 1 || from !== to)
   stopReorderDrag()
-  if (trash && tracks.length && sourcePlaylistIndex != null) {
+  if (trash && tracks.length && (sourceFavourites || sourcePlaylistIndex != null)) {
     trashDropComplete.value = true
     if (trashCompleteTimer) clearTimeout(trashCompleteTimer)
     trashCompleteTimer = setTimeout(() => { trashDropComplete.value = false }, 460)
-    emit('removeFromPlaylist', tracks, sourcePlaylistIndex)
+    if (sourceFavourites) emit('setFavourites', tracks, false)
+    else if (sourcePlaylistIndex != null) emit('removeFromPlaylist', tracks, sourcePlaylistIndex)
+    return
+  }
+  if (favourite && tracks.length) {
+    emit('setFavourites', tracks, true)
     return
   }
   if (ipod && tracks.length) {
@@ -455,6 +492,7 @@ function beginTrackDrag(index: number, event: PointerEvent) {
   dragIndex.value = index
   dragMovesTracks.value = event.shiftKey && Boolean(props.reorderable)
   dragSourcePlaylistIndex.value = props.playlistIndex ?? null
+  dragSourceFavourites.value = Boolean(props.favourites)
   dragPointerId.value = event.pointerId
   dropIndex.value = index
   draggedIndexes.value = selected.value.has(index) ? new Set(selected.value) : new Set([index])
@@ -589,13 +627,13 @@ function isCurrent(track: DisplayTrack, currentTrack: DisplayTrack | null) {
         <button aria-label="曲目操作" @keydown.stop @click.stop="openMenu(track, index, $event)"><MoreHorizontal :size="17" /></button>
       </span>
     </div>
-    <div v-if="reorderable && playlistIndex != null" class="track-list__tail" aria-hidden="true" />
+    <div v-if="favourites || reorderable && playlistIndex != null" class="track-list__tail" aria-hidden="true" />
     <Teleport to="body">
       <div v-if="dropIndicator.visible" class="track-drop-indicator" :style="dropIndicatorStyle"><i /></div>
       <div v-if="playlistDropIndicator.visible && !targetPlaylist" class="track-playlist-drop-target" :style="playlistDropIndicatorStyle" />
       <Transition name="track-trash-drop">
-        <div v-if="(dragging && reorderable && playlistIndex != null) || trashDropComplete" class="track-trash-drop" :class="{ 'is-active': targetTrash, 'is-complete': trashDropComplete }" data-track-trash-target>
-          <Trash2 :size="24" aria-label="拖到此处从播放列表移除" />
+        <div v-if="(dragging && (dragSourceFavourites || reorderable && playlistIndex != null)) || trashDropComplete" class="track-trash-drop" :class="{ 'is-active': targetTrash, 'is-complete': trashDropComplete }" data-track-trash-target>
+          <Trash2 :size="24" :aria-label="dragSourceFavourites ? '拖到此处取消收藏' : '拖到此处从播放列表移除'" />
         </div>
       </Transition>
       <div v-if="dragFragments.length" class="track-drag-fragments" :style="dragPreviewStyle">
@@ -604,15 +642,16 @@ function isCurrent(track: DisplayTrack, currentTrack: DisplayTrack | null) {
       <Transition name="track-drag-preview">
         <div v-if="dragging && dragPreviewTrack" class="track-drag-preview-stack" :style="dragPreviewStyle">
           <i v-for="layer in mergedPreview ? Math.min(draggedTrackCount - 1, 2) : 0" :key="layer" class="track-drag-preview-stack__layer" :style="{ '--layer': layer }" />
-          <div class="track-drag-preview" :class="{ 'is-playlist-target': targetPlaylist }">
+          <div class="track-drag-preview" :class="{ 'is-playlist-target': targetPlaylist || targetFavourites }">
             <span class="track-drag-preview__grip"><GripVertical :size="17" /></span>
             <span class="track-drag-preview__index">{{ dragIndex + 1 }}</span>
             <span class="track-drag-preview__title"><ArtworkImage :src="dragPreviewTrack.artworkUrl" :alt="`${dragPreviewTrack.album} 封面`" /><span><strong>{{ dragPreviewTrack.title || '未命名曲目' }}</strong><small>{{ dragPreviewTrack.artist || '未知艺人' }}</small></span></span>
             <span class="track-drag-preview__album">{{ dragPreviewTrack.album || '未知专辑' }}</span>
             <span class="track-drag-preview__year">{{ dragPreviewTrack.date?.slice(0, 4) || '—' }}</span>
             <span class="track-drag-preview__duration">{{ formatTime(dragPreviewTrack.duration) }}</span>
-            <span v-if="dragMovesTracks || draggedTrackCount > 1" class="track-drag-preview__badges">
-              <b v-if="dragMovesTracks" class="is-moving">移动中</b>
+            <span v-if="targetFavourites || dragMovesTracks || draggedTrackCount > 1" class="track-drag-preview__badges">
+              <b v-if="targetFavourites">添加收藏</b>
+              <b v-else-if="dragMovesTracks" class="is-moving">移动中</b>
               <b v-if="draggedTrackCount > 1">{{ draggedTrackCount }} 首曲目</b>
             </span>
           </div>

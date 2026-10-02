@@ -56,6 +56,8 @@ const ipodPlaylistConfirmation = ref<PlaylistInfo | null>(null)
 const trackDragRouteKey = ref<string | null>(null)
 const trackPlaylistHoverIndex = ref<number | null>(null)
 const trackPlaylistHoverPhase = ref<'selected' | 'waiting' | null>(null)
+const trackFavouritesHoverPhase = ref<'selected' | 'waiting' | null>(null)
+let hoveredFavourites = false
 let playlistHoverTimer: ReturnType<typeof setTimeout> | null = null
 let playlistHoverWaitTimer: ReturnType<typeof setTimeout> | null = null
 let hoveredPlaylistIndex: number | null = null
@@ -235,6 +237,8 @@ function handleTrackDragState(active: boolean) {
   hoveredPlaylistIndex = null
   trackPlaylistHoverIndex.value = null
   trackPlaylistHoverPhase.value = null
+  trackFavouritesHoverPhase.value = null
+  hoveredFavourites = false
   trackDragRouteKey.value = null
 }
 
@@ -258,6 +262,28 @@ function handleTrackPlaylistHover(playlistIndex: number | null) {
         window.dispatchEvent(new Event('foo-theme:track-drag-route-change'))
         void player.browsePlaylist(playlistIndex)
       }
+    }, 450)
+  }, 250)
+}
+
+function handleTrackFavouritesHover(hovering: boolean) {
+  if (hoveredFavourites === hovering) return
+  if (playlistHoverTimer) clearTimeout(playlistHoverTimer)
+  if (playlistHoverWaitTimer) clearTimeout(playlistHoverWaitTimer)
+  playlistHoverTimer = null
+  playlistHoverWaitTimer = null
+  hoveredFavourites = hovering
+  trackFavouritesHoverPhase.value = hovering ? 'selected' : null
+  if (!hovering || state.route.view === 'favourites') return
+  playlistHoverWaitTimer = setTimeout(() => {
+    playlistHoverWaitTimer = null
+    if (!hoveredFavourites) return
+    trackFavouritesHoverPhase.value = 'waiting'
+    playlistHoverTimer = setTimeout(() => {
+      playlistHoverTimer = null
+      if (!hoveredFavourites) return
+      window.dispatchEvent(new Event('foo-theme:track-drag-route-change'))
+      void player.browseFavourites()
     }, 450)
   }, 250)
 }
@@ -1004,6 +1030,7 @@ function onDrop(event: DragEvent) {
        :ipod-available="player.pluginIntegrations.dop.installed"
        :track-playlist-hover-index="trackPlaylistHoverIndex"
        :track-playlist-hover-phase="trackPlaylistHoverPhase"
+       :track-favourites-hover-phase="trackFavouritesHoverPhase"
       @navigate="navigatePrimary"
       @playlist="selectPrimaryPlaylist"
       @search="player.setSearch"
@@ -1072,6 +1099,7 @@ function onDrop(event: DragEvent) {
                 @move-to-playlist="player.moveTracksToPlaylist" @remove-from-playlist="player.removeTracksFromPlaylist"
                 @insert-into-playlist="player.insertTracksIntoPlaylist"
                 @playlist-hover="handleTrackPlaylistHover" @drag-state="handleTrackDragState"
+                @set-favourites="player.setTracksFavourite" @favourites-hover="handleTrackFavouritesHover"
                 @add-to-ipod="player.sendTracksToIpod"
                 @filter-facet-change="player.setLibraryFilterFacet" @filter-rule-add="player.addLibraryFilterRule"
                 @filter-rule-update="player.updateLibraryFilterRule" @filter-rule-remove="player.removeLibraryFilterRule"

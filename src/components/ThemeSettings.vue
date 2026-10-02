@@ -42,7 +42,7 @@ async function save() {
 <template>
   <Teleport to="body">
     <Transition name="theme-settings" appear>
-      <div class="modal-backdrop theme-settings-backdrop" @click.self="emit('close')">
+      <div class="modal-backdrop theme-settings-backdrop" @click.self="emit('close')" @contextmenu.prevent.stop>
         <section ref="root" class="theme-settings-panel" role="dialog" aria-modal="true" aria-labelledby="theme-settings-title">
           <header><span><Settings :size="21" /></span><div><p>FOOBAR2000 THEME</p><h2 id="theme-settings-title">主题设置</h2></div><button type="button" aria-label="关闭主题设置" @click="emit('close')"><X :size="19" /></button></header>
           <form @submit.prevent="save">

@@ -13,6 +13,7 @@ const props = defineProps<{
   ipodAvailable: boolean
   trackPlaylistHoverIndex: number | null
   trackPlaylistHoverPhase: 'selected' | 'waiting' | null
+  trackFavouritesHoverPhase: 'selected' | 'waiting' | null
 }>()
 
 const emit = defineEmits<{
@@ -222,7 +223,7 @@ onBeforeUnmount(() => {
 
     <div class="sidebar-spacer" />
     <div class="sidebar-shortcuts">
-      <button :class="{ active: view === 'favourites' }" @click="emit('favourites')"><Heart :size="17" /><span>收藏</span></button>
+      <button data-favourites-drop-target="sidebar" :class="{ active: view === 'favourites', 'is-track-drag-hover': trackFavouritesHoverPhase != null, 'is-track-drag-hover-waiting': trackFavouritesHoverPhase === 'waiting' }" @click="emit('favourites')"><Heart :size="17" /><span>收藏</span></button>
     </div>
     <Teleport to="body">
       <div v-if="dropIndicator.visible" class="playlist-drop-indicator" :style="indicatorStyle"><i /></div>

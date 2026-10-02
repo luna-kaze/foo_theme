@@ -106,6 +106,8 @@ const emit = defineEmits<{
   insertIntoPlaylist: [tracks: DisplayTrack[], sourcePlaylistIndex: number | null, destinationPlaylistIndex: number, targetIndex: number, after: boolean, move: boolean]
   playlistHover: [playlistIndex: number | null]
   dragState: [active: boolean]
+  setFavourites: [tracks: DisplayTrack[], favourite: boolean]
+  favouritesHover: [hovering: boolean]
   addToIpod: [tracks: DisplayTrack[]]
   albumSelection: [album: AlbumCard, selected: boolean]
   cancelAlbumSelection: []
@@ -114,7 +116,7 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <main ref="viewRoot" class="library-view" :aria-busy="view === 'search' && searchBusy" :data-detail-album="view === 'album' ? selectedAlbum?.id : undefined">
+  <main ref="viewRoot" class="library-view" :data-favourites-drop-target="view === 'favourites' ? 'view' : undefined" :aria-busy="view === 'search' && searchBusy" :data-detail-album="view === 'album' ? selectedAlbum?.id : undefined">
     <div v-if="loading || (searchLoading && view !== 'search')" class="library-loading">
       <span /><span /><span />
       <small>{{ searchLoading ? '正在搜索音乐库…' : '正在加载音乐…' }}</small>
@@ -235,6 +237,7 @@ const emit = defineEmits<{
       :is-playing="isPlaying"
       :reorderable="view === 'playlist' && !activePlaylist?.isLocked && !activePlaylist?.isAutoplaylist"
       :playlist-index="view === 'playlist' ? activePlaylist?.index : undefined"
+      :favourites="view === 'favourites'"
       :custom-column-label="customColumn.label"
       @play="(track, index) => emit('playTrack', track, index)"
       @menu="(track, index, event) => emit('trackMenu', track, index, event)"
@@ -246,6 +249,8 @@ const emit = defineEmits<{
       @insert-into-playlist="(selected, sourcePlaylistIndex, destinationPlaylistIndex, targetIndex, after, move) => emit('insertIntoPlaylist', selected, sourcePlaylistIndex, destinationPlaylistIndex, targetIndex, after, move)"
       @playlist-hover="emit('playlistHover', $event)"
       @drag-state="emit('dragState', $event)"
+      @set-favourites="(selected, favourite) => emit('setFavourites', selected, favourite)"
+      @favourites-hover="emit('favouritesHover', $event)"
       @add-to-ipod="emit('addToIpod', $event)"
     />
   </main>
