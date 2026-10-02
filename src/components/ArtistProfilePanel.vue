@@ -2,8 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { ExternalLink, ImagePlus, RefreshCw, RotateCcw } from '@lucide/vue'
 import ArtistPortrait from './ArtistPortrait.vue'
-import ArtistServiceSettings from './ArtistServiceSettings.vue'
-import { artistBiography, artistPortraitLink, artistPortraitSource, artistProfilesConnected, bindAppleArtist, chooseArtistPhoto, ensureArtistPortrait, getArtistProfile, loadOnlineArtistProfile, openArtistSource, resetArtistPhoto } from '../composables/useArtistProfiles'
+import { artistBiography, artistPortraitLink, artistPortraitSource, artistProfilesConnected, bindAppleArtist, chooseArtistPhoto, ensureArtistPortrait, getArtistProfile, loadOnlineArtistProfile, openArtistSource, resetArtistPhoto, searchArtistByName, setArtistSourcePreferences, type ArtistProfile } from '../composables/useArtistProfiles'
 
 const props = defineProps<{ name: string; trackCount: number; albumCount: number }>()
 const profile = computed(() => getArtistProfile(props.name))
@@ -11,11 +10,26 @@ const connected = computed(artistProfilesConnected)
 const portraitSource = computed(() => artistPortraitSource(profile.value))
 const portraitLink = computed(() => artistPortraitLink(profile.value))
 const biography = computed(() => artistBiography(profile.value))
-const appleUrl = ref('')
+const sourceOptionsOpen = ref(false)
+const alternateName = ref('')
 const expanded = ref(false)
 const actionBusy = ref(false)
 const actionError = ref('')
-watch(() => props.name, (name) => { expanded.value = false; void ensureArtistPortrait(name) }, { immediate: true })
+watch(() => props.name, (name) => { expanded.value = false; sourceOptionsOpen.value = false; alternateName.value = ''; void ensureArtistPortrait(name) }, { immediate: true })
+watch(() => profile.value.searchName, (name) => { alternateName.value = name }, { immediate: true })
+function changePicture(event: Event) {
+  const source = (event.target as HTMLSelectElement).value as ArtistProfile['picturePreference']
+  void action(async () => {
+    await setArtistSourcePreferences(props.name, source, profile.value.infoPreference)
+    if (source === 'manual' && !profile.value.manualImage) await chooseArtistPhoto(props.name)
+    else if (source === 'apple' && !profile.value.appleImage) await ensureArtistPortrait(props.name, { force: true })
+    else if (source === 'wikimedia' && !profile.value.onlineImage) await loadOnlineArtistProfile(props.name)
+  })
+}
+function changeInfo(event: Event) {
+  const source = (event.target as HTMLSelectElement).value as ArtistProfile['infoPreference']
+  void action(() => setArtistSourcePreferences(props.name, profile.value.picturePreference, source))
+}
 async function action(run: () => Promise<unknown>) {
   actionBusy.value = true
   actionError.value = ''
@@ -43,6 +57,17 @@ async function action(run: () => Promise<unknown>) {
         <button class="secondary-button" :disabled="!connected || actionBusy || profile.photoStatus === 'loading'" @click="action(() => ensureArtistPortrait(name, { force: true }))">{{ profile.photoStatus === 'loading' ? '照片获取中…' : '重新获取照片' }}</button>
         <button class="secondary-button" :disabled="!connected || actionBusy" @click="action(() => chooseArtistPhoto(name))"><ImagePlus :size="14" />选择照片</button>
         <button v-if="profile.manualImage" class="secondary-button" :disabled="actionBusy" @click="action(() => resetArtistPhoto(name))"><RotateCcw :size="14" />恢复自动照片</button>
+        <button class="secondary-button" :aria-expanded="sourceOptionsOpen" @click="sourceOptionsOpen = !sourceOptionsOpen">来源与匹配</button>
+      </div>
+      <div v-if="sourceOptionsOpen" class="artist-source-options">
+        <p>仅对“{{ name }}”生效</p>
+        <label><span>首选图片来源</span><select :value="profile.picturePreference" :disabled="!connected || actionBusy" @change="changePicture"><option value="auto">自动回退</option><option value="local">本地 Artist 图片</option><option value="apple">Apple Music</option><option value="wikimedia">Wikimedia Commons</option><option value="manual">手动照片</option></select></label>
+        <label><span>首选资料来源</span><select :value="profile.infoPreference" :disabled="!connected || actionBusy" @change="changeInfo"><option value="auto">自动回退</option><option value="lastfm">Last.fm</option><option value="wiki">Wikipedia / Wikidata</option><option value="apple">Apple Music</option></select></label>
+        <form @submit.prevent="action(() => searchArtistByName(name, alternateName))">
+          <label><span>使用其他名字搜索</span><input v-model="alternateName" type="text" maxlength="200" :placeholder="name" :disabled="!connected || actionBusy" /></label>
+          <div><button class="secondary-button" :disabled="!connected || actionBusy || !alternateName.trim()" type="submit">搜索并匹配</button></div>
+        </form>
+        <small>缺少首选内容时自动尝试其他来源。搜索名字只用于在线匹配，不会修改音乐文件标签。</small>
       </div>
     </div>
     <div class="artist-profile__information">
@@ -57,7 +82,6 @@ async function action(run: () => Promise<unknown>) {
       <div v-if="profile.photoStatus === 'ambiguous'" class="artist-profile__candidates">
         <button v-for="candidate in profile.appleCandidates" :key="candidate.id" :disabled="actionBusy" @click="action(() => bindAppleArtist(name, candidate.url))"><strong>{{ candidate.name }}</strong><span>Apple Music · {{ candidate.storefront.toUpperCase() }} · {{ candidate.genre }}</span></button>
       </div>
-      <details class="artist-profile__apple-binding"><summary>绑定 Apple Music 艺术家页面</summary><form @submit.prevent="action(() => bindAppleArtist(name, appleUrl))"><input v-model="appleUrl" type="url" placeholder="https://music.apple.com/jp/artist/..." :disabled="!connected" /><button class="secondary-button" :disabled="!connected || actionBusy || profile.photoStatus === 'loading'">绑定并获取照片</button></form></details>
       <section v-if="profile.lastfmStatus === 'ready'" class="artist-profile__lastfm">
         <p>Last.fm 平台统计：{{ profile.lastfmListeners.toLocaleString() }} 位听众 · {{ profile.lastfmPlaycount.toLocaleString() }} 次播放</p>
         <div v-if="profile.lastfmTags.length" class="artist-profile__genres"><span v-for="tag in profile.lastfmTags" :key="tag">{{ tag }}</span></div>
@@ -71,7 +95,6 @@ async function action(run: () => Promise<unknown>) {
         <button v-if="profile.lastfmUrl" @click="openArtistSource(profile.lastfmUrl)"><ExternalLink :size="12" />Powered by Last.fm</button>
         <span v-if="portraitSource === 'Wikimedia Commons'">{{ [profile.imageCredit, profile.imageLicense].filter(Boolean).join(' · ') }}</span>
       </footer>
-      <ArtistServiceSettings />
     </div>
   </section>
 </template>

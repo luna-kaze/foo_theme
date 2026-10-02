@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import { AlertCircle, CheckCircle2, FileMusic, Info } from '@lucide/vue'
 import AppSidebar from './components/AppSidebar.vue'
+import ThemeSettings from './components/ThemeSettings.vue'
 import AppTopbar from './components/AppTopbar.vue'
 import CreatePlaylistDialog from './components/CreatePlaylistDialog.vue'
 import RouteScene from './components/RouteScene.vue'
@@ -29,6 +30,7 @@ const miniMode = new URLSearchParams(window.location.search).get('mode') === 'mi
 const trackMenu = reactive({ open: false, track: null as DisplayTrack | null, tracks: [] as DisplayTrack[], index: -1, x: 0, y: 0 })
 const dragState = reactive({ active: false, depth: 0 })
 const queueOpen = ref(false)
+const themeSettingsOpen = ref(false)
 const outputDevices = ref<OutputDevice[]>([])
 const outputLoading = ref(false)
 const connectionLabel = ref('foobar2000')
@@ -492,10 +494,16 @@ function toggleQueue() {
 }
 
 function closeSecondaryUi() {
+  themeSettingsOpen.value = false
   state.nowPlayingOpen = false
   state.dialog = null
   trackMenu.open = false
   queueOpen.value = false
+}
+
+function openThemeSettings() {
+  closeSecondaryUi()
+  themeSettingsOpen.value = true
 }
 
 function navigatePrimary(view: ViewId) {
@@ -1006,6 +1014,7 @@ function onDrop(event: DragEvent) {
        @send-playlist-to-ipod="requestPlaylistIpodTransfer"
        @create-playlist="state.dialog = 'createPlaylist'"
       @favourites="showFavourites"
+      @theme-settings="openThemeSettings"
     />
 
     <div class="workspace">
@@ -1185,6 +1194,7 @@ function onDrop(event: DragEvent) {
 
     <FileOperationDialog v-if="fileDialog.open && fileDialog.track" :track="fileDialog.track" :mode="fileDialog.mode" :target="fileDialog.target" :busy="fileDialog.busy" @close="fileDialog.open = false" @rename="renameFile" @move="confirmMoveFile" @delete="deleteFile" />
 
+    <ThemeSettings v-if="themeSettingsOpen" :connected="state.connected" @close="themeSettingsOpen = false" />
     <div v-if="ipodPlaylistConfirmation" class="modal-backdrop" @click.self="ipodPlaylistConfirmation = null">
       <section class="create-playlist-dialog ipod-transfer-confirmation" role="dialog" aria-modal="true" aria-labelledby="ipod-transfer-title">
         <header><span><Info :size="20" /></span><div><strong id="ipod-transfer-title">发送曲目到 iPod</strong><small>{{ ipodPlaylistConfirmation.name }}</small></div></header>

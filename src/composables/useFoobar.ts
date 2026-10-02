@@ -1,4 +1,5 @@
 import { computed, reactive, shallowRef } from 'vue'
+import { pickImageFile } from '../utils/imagePicker'
 import fb, {
   type AlbumInfo,
   type ArtistInfo,
@@ -2654,9 +2655,9 @@ async function clearReplayGain(tracks: DisplayTrack[]) {
 async function embedTrackArtwork(track: DisplayTrack, type: 'front' | 'back' | 'disc' | 'artist' = 'front') {
   const path = localFilePath(track)
   if (!path) return false
-  const picked = await fb.dialog.openFile({ title: '选择封面图片', multiple: false, filters: ['图片文件|*.jpg;*.jpeg;*.png;*.webp'] })
-  if (picked.canceled || !picked.filePaths?.[0]) return false
-  const bytes = await fb.file.readBinary(picked.filePaths[0])
+  const picked = await pickImageFile('选择封面图片')
+  if (!picked) return false
+  const bytes = picked.bytes
   const result = await runAction(() => fb.metadata.embedArtworkBytes(path, bytes, { type, target: 'embedded' }))
   if (result) notify('封面已嵌入文件', 'success')
   return Boolean(result)

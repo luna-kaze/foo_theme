@@ -26,6 +26,7 @@ const emit = defineEmits<{
   playlistMenu: [playlist: PlaylistInfo, event: MouseEvent]
   reorderPlaylists: [order: number[]]
   sendPlaylistToIpod: [playlistIndex: number]
+  themeSettings: []
 }>()
 
 const draggingPlaylist = ref<PlaylistInfo | null>(null)
@@ -149,7 +150,7 @@ onBeforeUnmount(() => {
 <template>
   <aside class="sidebar">
     <div class="brand">
-      <span class="brand__mark"><img :src="foobarLogo" alt="" draggable="false" /></span>
+      <button class="brand__mark" type="button" title="双击打开主题设置" aria-label="主题设置：双击图标或按 Enter 打开" @dblclick.stop="emit('themeSettings')" @keydown.enter.prevent="emit('themeSettings')" @keydown.space.prevent="emit('themeSettings')"><img :src="foobarLogo" alt="" draggable="false" /></button>
       <span class="brand__name">foobar2000</span>
     </div>
 
