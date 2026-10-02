@@ -6,7 +6,7 @@ type AlbumEntry = {
   direction: 'enter' | 'return'
   animations: Animation[]
   overlay: HTMLElement | null
-  hidden: Array<{ element: HTMLElement; opacity: string }>
+  hidden: Array<{ element: HTMLElement; opacity: string; transform: string; transition: string }>
 }
 
 function reducedMotion() {
@@ -44,9 +44,13 @@ function snapshotArtwork(source: HTMLElement | null) {
   return overlay
 }
 
-function hideArtwork(entry: AlbumEntry, element: HTMLElement) {
+function hideArtwork(entry: AlbumEntry, element: HTMLElement, freezePosition = false) {
   if (entry.hidden.some((hidden) => hidden.element === element)) return
-  entry.hidden.push({ element, opacity: element.style.opacity })
+  entry.hidden.push({ element, opacity: element.style.opacity, transform: element.style.transform, transition: element.style.transition })
+  if (freezePosition) {
+    element.style.transition = 'none'
+    element.style.transform = 'none'
+  }
   element.style.opacity = '0'
 }
 
@@ -55,9 +59,11 @@ function flyArtwork(entry: AlbumEntry, target: HTMLElement, duration: number) {
   const source = entry.overlay.getBoundingClientRect()
   const destination = target.getBoundingClientRect()
   if (!source.width || !source.height || !destination.width || !destination.height) return false
+  const scaleX = destination.width / source.width
+  const radius = parseFloat(getComputedStyle(target).borderRadius) || 0
   entry.animations.push(entry.overlay.animate([
-    { transform: 'translate(0,0) scale(1)' },
-    { transform: `translate(${destination.left - source.left}px, ${destination.top - source.top}px) scale(${destination.width / source.width}, ${destination.height / source.height})` },
+    { transform: 'translate(0,0) scale(1)', borderRadius: entry.overlay.style.borderRadius },
+    { transform: `translate(${destination.left - source.left}px, ${destination.top - source.top}px) scale(${scaleX}, ${destination.height / source.height})`, borderRadius: `${radius / scaleX}px` },
   ], { duration, easing: 'cubic-bezier(.33,0,.2,1)', fill: 'both' }))
   return true
 }
@@ -72,7 +78,11 @@ export function createNavigationTransitions() {
     albumEntry = null
     previous.animations.forEach((animation) => animation.cancel())
     previous.overlay?.remove()
-    previous.hidden.forEach(({ element, opacity }) => { element.style.opacity = opacity })
+    previous.hidden.forEach(({ element, opacity, transform, transition }) => {
+      element.style.opacity = opacity
+      element.style.transform = transform
+      element.style.transition = transition
+    })
     document.body.classList.remove('album-entry-pending')
   }
 
@@ -126,12 +136,23 @@ export function createNavigationTransitions() {
     albumEntry = entry
     if (source && overlay) hideArtwork(entry, source)
     try {
+      if (!reduced) {
+        const detail = source?.closest<HTMLElement>('.library-view')
+        const outgoing = detail ? [...detail.querySelectorAll<HTMLElement>('.album-detail-heading__copy, .album-detail-heading__back, .track-list')].filter((element) => element.getClientRects().length) : []
+        const exits = outgoing.map((element) => element.animate([
+          { opacity: getComputedStyle(element).opacity, transform: getComputedStyle(element).transform },
+          { opacity: 0, transform: 'translateY(-6px)' },
+        ], { duration: 120, easing: 'ease-in', fill: 'both' }))
+        entry.animations.push(...exits)
+        await Promise.allSettled(exits.map((animation) => animation.finished))
+        if (albumEntry !== entry) return
+      }
       await navigate()
       await nextTick()
       if (albumEntry !== entry || !isCurrent() || reduced) return
       const target = visibleAlbumArtwork(returning.albumId)
       if (!target) return
-      if (overlay) hideArtwork(entry, target)
+      if (overlay) hideArtwork(entry, target, true)
       flyArtwork(entry, target, 520)
       await Promise.allSettled(entry.animations.map((animation) => animation.finished))
     } finally {
