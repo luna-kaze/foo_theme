@@ -19,9 +19,11 @@ import { menuIcons, showContextMenu, type ContextMenuItem } from './utils/contex
 import { isSameTrack, localFilePath, playablePath, trackKey } from './utils/track'
 import { createNavigationTransitions } from './utils/navigationTransition'
 import { groupAlphabetically } from './utils/alphabetIndex'
+import { artistPortraitUrl, chooseArtistPhoto, configureArtistProfiles, ensureLocalArtistProfile, loadOnlineArtistProfile, openArtistSource, resetArtistPhoto } from './composables/useArtistProfiles'
 
 const player = useFoobar()
 const { state, filteredAlbums, libraryFilterOptions } = player
+configureArtistProfiles({ connected: () => state.connected, tracks: () => state.tracks })
 const navigationTransitions = createNavigationTransitions()
 const miniMode = new URLSearchParams(window.location.search).get('mode') === 'mini'
 const trackMenu = reactive({ open: false, track: null as DisplayTrack | null, tracks: [] as DisplayTrack[], index: -1, x: 0, y: 0 })
@@ -787,7 +789,8 @@ async function openAlbumMenu(album: AlbumCard, event: MouseEvent) {
 
 async function openArtistMenu(artist: ArtistInfo, event: MouseEvent) {
   const tracks = await player.getArtistTracks(artist.name)
-  const cover = await loadMenuCover(tracks[0])
+  const profile = await ensureLocalArtistProfile(artist.name)
+  const cover = artistPortraitUrl(profile)
   const action = await openPopup([
     { id: 'artist:header', type: 'nowplaying', cover, title: artist.name, subtitle: `${artist.trackCount} 首曲目 · ${artist.albumCount} 张专辑` },
     { type: 'separator' },
@@ -797,6 +800,11 @@ async function openArtistMenu(artist: ArtistInfo, event: MouseEvent) {
     { id: 'artist:queue', label: '添加到队列', iconSvg: menuIcons.queue, enabled: tracks.length > 0 },
     { type: 'separator' },
     { id: 'artist:playlist', label: '添加到播放列表', iconSvg: menuIcons.playlist, enabled: tracks.length > 0 && state.playlists.length > 0, submenu: playlistSubmenu('artist:playlist') },
+    { type: 'separator' },
+    { id: 'artist:info', label: profile.updatedAt ? '刷新艺术家资料' : '获取在线艺术家资料', iconSvg: menuIcons.info, enabled: state.connected },
+    { id: 'artist:photo', label: '选择艺术家照片', iconSvg: menuIcons.album, enabled: state.connected },
+    { id: 'artist:reset-photo', label: '恢复自动艺术家照片', iconSvg: menuIcons.remove, enabled: state.connected && Boolean(profile.manualImage) },
+    { id: 'artist:source', label: '查看资料来源', iconSvg: menuIcons.info, enabled: Boolean(profile.sourceUrl) },
   ], event)
   if (!action) return
   if (action === 'artist:open') await player.selectArtist(artist.name)
@@ -804,6 +812,17 @@ async function openArtistMenu(artist: ArtistInfo, event: MouseEvent) {
   if (action === 'artist:shuffle') await player.playTrackCollection(tracks, true)
   if (action === 'artist:queue') await player.addTracksToQueue(tracks)
   if (action.startsWith('artist:playlist:')) await player.addTracksToPlaylist(tracks, Number(action.split(':').at(-1)))
+  if (action === 'artist:info') {
+    await player.selectArtist(artist.name)
+    await loadOnlineArtistProfile(artist.name)
+  }
+  try {
+    if (action === 'artist:photo') await chooseArtistPhoto(artist.name)
+    if (action === 'artist:reset-photo') await resetArtistPhoto(artist.name)
+  } catch (error) {
+    player.notify(error instanceof Error ? error.message : '未能更新艺术家照片。', 'error')
+  }
+  if (action === 'artist:source') await openArtistSource(profile.sourceUrl)
 }
 
 async function openFolderMenu(folder: LibraryFolderCard, event: MouseEvent) {

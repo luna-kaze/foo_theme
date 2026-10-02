@@ -5,6 +5,8 @@ import type { ArtistInfo, LibraryStats } from 'foo-webview-sdk'
 import type { AlbumCard, ArtistCard, DisplayTrack, LibraryFolderCard, ViewId, ViewRoute } from '../types/music'
 import AlbumGrid from './AlbumGrid.vue'
 import AlphabetIndexRail from './AlphabetIndexRail.vue'
+import ArtistPortrait from './ArtistPortrait.vue'
+import ArtistProfilePanel from './ArtistProfilePanel.vue'
 import TrackList from './TrackList.vue'
 import { useAlphabetGroups, useAlphabetNavigation } from '../utils/alphabetIndex'
 import { animateLayoutReorder } from '../utils/layoutTransition'
@@ -61,12 +63,11 @@ function formatSize(bytes: number) {
   return `${(bytes / 1024 ** index).toFixed(index > 2 ? 1 : 0)} ${units[index]}`
 }
 
-const artistArtwork = computed(() => {
-  const artwork: Record<string, string> = {}
-  props.albums.forEach((album) => {
-    if (!artwork[album.artist] && album.artworkUrl) artwork[album.artist] = album.artworkUrl
-  })
-  return artwork
+const artistAlbumCount = computed(() => {
+  const route = props.route
+  if (route.view !== 'artist') return 0
+  return props.artists.find((artist) => artist.name === route.artist)?.albumCount
+    ?? new Set(props.tracks.map((track) => `${track.album}\u0000${track.albumArtist || track.artist}`)).size
 })
 const artistGroups = useAlphabetGroups(() => props.artists, (artist) => artist.name, (artist) => artist.sortName ?? '')
 const orderedArtists = computed(() => artistGroups.value.flatMap((group) => group.items))
@@ -131,7 +132,7 @@ function openFolder(folder: LibraryFolderCard) {
             <header class="alphabet-group__heading" data-layout-chrome="heading"><strong>{{ group.letter }}</strong><span /></header>
             <div class="library-card-grid">
               <button v-for="artist in group.items" :key="artist.name" class="artist-browser-card" :data-layout-key="`artist:${artist.name}`" @click="emit('artist', artist.name)" @contextmenu.prevent.stop="emit('artistMenu', artist, $event)">
-                <span class="artist-browser-card__art" :style="artistArtwork[artist.name] ? { backgroundImage: `url(${artistArtwork[artist.name]})` } : {}"><i v-if="!artistArtwork[artist.name]">{{ artist.name.slice(0, 1).toLocaleUpperCase() }}</i></span>
+                <ArtistPortrait :name="artist.name" class="artist-browser-card__art" />
                 <strong>{{ artist.name }}</strong><small>{{ artist.trackCount }} 首曲目 · {{ artist.albumCount }} 张专辑</small>
               </button>
             </div>
@@ -141,7 +142,7 @@ function openFolder(folder: LibraryFolderCard) {
       </div>
       <section v-else class="library-card-grid">
         <button v-for="artist in orderedArtists" :key="artist.name" class="artist-browser-card" :data-layout-key="`artist:${artist.name}`" @click="emit('artist', artist.name)" @contextmenu.prevent.stop="emit('artistMenu', artist, $event)">
-          <span class="artist-browser-card__art" :style="artistArtwork[artist.name] ? { backgroundImage: `url(${artistArtwork[artist.name]})` } : {}"><i v-if="!artistArtwork[artist.name]">{{ artist.name.slice(0, 1).toLocaleUpperCase() }}</i></span>
+          <ArtistPortrait :name="artist.name" class="artist-browser-card__art" />
           <strong>{{ artist.name }}</strong><small>{{ artist.trackCount }} 首曲目 · {{ artist.albumCount }} 张专辑</small>
         </button>
       </section>
@@ -155,8 +156,13 @@ function openFolder(folder: LibraryFolderCard) {
     </template>
 
     <template v-else-if="route.view === 'artist' || route.view === 'folder'">
-      <section class="page-heading page-heading--row">
-        <div><button class="media-library-back" @click="emit('back')">返回</button><p class="eyebrow">{{ route.view === 'artist' ? '艺术家' : '文件夹' }}</p><h1>{{ route.view === 'artist' ? route.artist : folderSelectionMode ? `已选择 ${selectedFolderIds.length} 个文件夹` : route.name }}</h1><p>{{ tracks.length }} 首曲目<template v-if="route.view === 'folder'"> · {{ folders.length }} 个子文件夹</template></p></div>
+      <template v-if="route.view === 'artist'">
+        <button class="media-library-back" @click="emit('back')">返回</button>
+        <ArtistProfilePanel :name="route.artist" :track-count="tracks.length" :album-count="artistAlbumCount" />
+        <div class="artist-profile-playback"><button class="secondary-button" :disabled="!tracks.length" @click="emit('shuffle')"><Shuffle :size="17" />随机播放</button><button v-if="tracks.length" class="secondary-button" @click="emit('playTrack', tracks[0], 0)"><Play :size="17" />播放全部曲目</button></div>
+      </template>
+      <section v-else class="page-heading page-heading--row">
+        <div><button class="media-library-back" @click="emit('back')">返回</button><p class="eyebrow">文件夹</p><h1>{{ folderSelectionMode ? `已选择 ${selectedFolderIds.length} 个文件夹` : route.name }}</h1><p>{{ tracks.length }} 首曲目 · {{ folders.length }} 个子文件夹</p></div>
         <div class="page-heading__actions"><button v-if="route.view === 'folder' && folderSelectionMode" class="secondary-button" @click="emit('cancelFolderSelection')">退出选择</button><button class="secondary-button" @click="emit('shuffle')"><Shuffle :size="17" />随机播放</button><button v-if="tracks.length" class="round-play" aria-label="播放全部" @click="emit('playTrack', tracks[0], 0)"><Play :size="22" fill="currentColor" /></button></div>
       </section>
       <section v-if="route.view === 'folder' && folders.length" class="content-section media-library-subfolders"><div class="section-heading"><div><p class="eyebrow">当前目录</p><h2>子文件夹</h2></div></div><div class="library-card-grid library-card-grid--folders"><button v-for="folder in folders" :key="folderId(folder)" class="folder-browser-card" :class="{ selected: isFolderSelected(folder), 'selection-mode': folderSelectionMode }" @click="openFolder(folder)" @contextmenu.prevent.stop="emit('folderMenu', folder, $event)"><span><Folder :size="25" /></span><strong>{{ folder.name }}</strong><small>{{ folder.trackCount }} 首曲目</small><label class="folder-browser-card__select" @click.stop><input type="checkbox" :checked="isFolderSelected(folder)" :aria-label="`选择文件夹 ${folder.name}`" @change="emit('folderSelection', folder, ($event.target as HTMLInputElement).checked)"></label></button></div></section>

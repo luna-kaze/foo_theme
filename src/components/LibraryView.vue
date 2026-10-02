@@ -5,6 +5,7 @@ import type { AlbumCard, ArtistCard, DisplayTrack, LibraryFilterRule, ViewId } f
 import type { PlaylistInfo } from 'foo-webview-sdk'
 import AlbumGrid from './AlbumGrid.vue'
 import ArtworkImage from './ArtworkImage.vue'
+import ArtistPortrait from './ArtistPortrait.vue'
 import TrackList from './TrackList.vue'
 import LibraryFilterBar from './LibraryFilterBar.vue'
 import AlphabetIndexRail from './AlphabetIndexRail.vue'
@@ -39,7 +40,6 @@ const albumGroups = useAlphabetGroups(() => props.albums, (album) => album.name,
 const orderedAlbums = computed(() => albumGroups.value.flatMap((group) => group.items))
 const albumLetters = computed(() => albumGroups.value.map((group) => group.letter))
 const { activeLetter: activeAlbumLetter, registerGroup: registerAlbumGroup, jumpToLetter: jumpToAlbumLetter } = useAlphabetNavigation()
-const searchArtistArtwork = computed(() => Object.fromEntries(props.albums.filter((album) => album.artworkUrl).map((album) => [album.artist, album.artworkUrl])))
 const viewRoot = ref<HTMLElement | null>(null)
 const layoutAnimating = ref(false)
 let resultsActive = false
@@ -216,7 +216,7 @@ const emit = defineEmits<{
         <div class="section-heading"><div><p class="eyebrow">艺术家</p><h2>匹配的艺术家</h2></div><span>{{ searchArtists.length }}</span></div>
         <div class="library-card-grid search-artists__grid">
           <button v-for="artist in searchArtists" :key="artist.name" class="artist-browser-card" @click="emit('artist', artist.name)" @contextmenu.prevent.stop="emit('artistMenu', artist, $event)">
-            <span class="artist-browser-card__art" :style="searchArtistArtwork[artist.name] ? { backgroundImage: `url(${searchArtistArtwork[artist.name]})` } : {}"><i v-if="!searchArtistArtwork[artist.name]">{{ artist.name.slice(0, 1).toLocaleUpperCase() }}</i></span>
+            <ArtistPortrait :name="artist.name" class="artist-browser-card__art" />
             <strong>{{ artist.name }}</strong><small>{{ artist.trackCount }} 首曲目 · {{ artist.albumCount }} 张专辑</small>
           </button>
         </div>

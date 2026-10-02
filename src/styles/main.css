@@ -1081,6 +1081,46 @@ input[type="range"] {
 .folder-browser-card:hover { background: rgba(255,255,255,.065); border-color: rgba(231,99,97,.28); transform: translateY(-3px); }
 .artist-browser-card__art { display: grid; width: 100%; aspect-ratio: 1; margin-bottom: 13px; place-items: center; background: radial-gradient(circle at 70% 25%, #55495b, #27272c 68%); background-position: center; background-size: cover; border-radius: 50%; box-shadow: 0 14px 28px rgba(0,0,0,.22); }
 .artist-browser-card__art i { color: rgba(255,255,255,.72); font-size: clamp(30px, 5vw, 58px); font-style: normal; font-weight: 680; }
+.artist-portrait { position: relative; display: grid; place-items: center; overflow: hidden; aspect-ratio: 1; border-radius: 50%; background: radial-gradient(circle at 70% 25%, #55495b, #27272c 68%); }
+.artist-portrait > i { color: rgba(255,255,255,.72); font-size: clamp(34px, 5vw, 64px); font-style: normal; font-weight: 680; }
+.artist-portrait > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity 180ms ease; }
+.artist-portrait > img.is-loaded { opacity: 1; }
+.artist-profile { display: grid; grid-template-columns: 184px minmax(0,1fr); gap: 24px 30px; margin: 18px 0 24px; }
+.artist-profile__portrait { width: 184px; align-self: start; box-shadow: 0 20px 38px rgba(0,0,0,.28); }
+.artist-profile__copy h1 { margin: 0 0 8px; font-size: clamp(32px,4vw,52px); font-weight: 730; line-height: 1.12; letter-spacing: -1.3px; overflow-wrap: anywhere; }
+.artist-profile__canonical { margin: 0 0 8px; color: var(--text-muted); font-size: 12px; }
+.artist-profile__counts { margin: 0 0 12px; color: var(--text-muted); font-size: 12px; }
+.artist-profile__meta, .artist-profile__genres, .artist-profile__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.artist-profile__meta { color: var(--text-muted); font-size: 11px; }
+.artist-profile__genres { margin: 13px 0; }
+.artist-profile__genres > span { padding: 4px 9px; border: 1px solid var(--line); border-radius: 20px; color: #b9b4be; font-size: 10px; }
+.artist-profile__actions { margin-top: 16px; gap: 8px; }
+.artist-profile__information { grid-column: 1 / -1; padding-top: 17px; border-top: 1px solid var(--line); }
+.artist-profile__bio { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; margin: 0; color: #b8b3bc; font-size: 12px; line-height: 1.85; white-space: pre-line; }
+.artist-profile__bio.is-expanded { display: block; }
+.artist-profile__placeholder { margin: 0; color: var(--text-muted); font-size: 12px; line-height: 1.8; }
+.artist-profile__text-button { margin-top: 9px; padding: 0; color: var(--accent); font-size: 11px; }
+.artist-profile__message { color: var(--text-muted); font-size: 11px; line-height: 1.7; }
+.artist-profile__candidates { display: grid; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); gap: 9px; margin-top: 14px; }
+.artist-profile__candidates > button { display: grid; gap: 6px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 9px; text-align: left; background: rgba(255,255,255,.025); }
+.artist-profile__candidates > button:hover { background: rgba(255,255,255,.055); }
+.artist-profile__candidates strong { font-size: 12px; }
+.artist-profile__candidates span { color: var(--text-muted); font-size: 10px; line-height: 1.5; }
+.artist-profile__sources { display: flex; flex-wrap: wrap; gap: 9px 14px; align-items: center; margin-top: 13px; color: var(--text-muted); font-size: 9.5px; line-height: 1.6; }
+.artist-profile__sources button { display: inline-flex; align-items: center; gap: 5px; padding: 0; color: var(--text-muted); font-size: 9.5px; }
+.artist-profile__sources button:hover { color: var(--text); }
+.artist-profile-playback { display: flex; gap: 10px; margin-bottom: 24px; }
+.artist-profile__actions .is-spinning { animation: artist-profile-spin 1300ms linear infinite; }
+@keyframes artist-profile-spin { to { transform: rotate(360deg); } }
+@media (max-width: 700px) {
+  .artist-profile { grid-template-columns: 112px minmax(0,1fr); gap: 18px; }
+  .artist-profile__portrait { width: 112px; }
+  .artist-profile__copy h1 { font-size: 30px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .artist-portrait > img { transition: none; }
+  .artist-profile__actions .is-spinning { animation: none; }
+}
 .artist-browser-card strong,
 .folder-browser-card strong { display: block; overflow: hidden; font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
 .artist-browser-card small,
