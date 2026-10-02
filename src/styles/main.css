@@ -1111,11 +1111,27 @@ input[type="range"] {
 .artist-profile__sources button:hover { color: var(--text); }
 .artist-profile-playback { display: flex; gap: 10px; margin-bottom: 24px; }
 .artist-profile__actions .is-spinning { animation: artist-profile-spin 1300ms linear infinite; }
+.artist-profile__apple-binding, .artist-services-settings { margin-top: 16px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 9px; color: var(--text-muted); font-size: 11px; }
+.artist-profile__apple-binding summary, .artist-services-settings summary { cursor: pointer; color: #bab4c0; }
+.artist-profile__apple-binding form { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 12px; }
+.artist-profile__apple-binding input { flex: 1; min-width: 190px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 7px; background: #202025; color: var(--text); }
+.artist-services-settings form { display: grid; gap: 14px; margin-top: 16px; }
+.artist-services-settings label { display: grid; grid-template-columns: 180px minmax(0,1fr); align-items: center; gap: 12px; }
+.artist-services-settings input:not([type="checkbox"]), .artist-services-settings select { width: 100%; min-width: 0; padding: 9px 11px; border: 1px solid var(--line); border-radius: 7px; background: #202025; color: var(--text); }
+.artist-services-settings .artist-services-settings__check { display: flex; gap: 9px; }
+.artist-services-settings input[type="checkbox"] { accent-color: var(--accent); }
+.artist-services-settings p { margin: 0; font-size: 10px; line-height: 1.7; }
+.artist-services-settings form > div { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.artist-profile__lastfm { margin-top: 17px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--text-muted); font-size: 11px; }
+.artist-profile__similar { display: flex; flex-wrap: wrap; align-items: center; gap: 9px 12px; }
+.artist-profile__similar button { padding: 0; color: #c1bac9; font-size: 11px; }
+.artist-profile__similar button:hover { color: var(--accent); }
 @keyframes artist-profile-spin { to { transform: rotate(360deg); } }
 @media (max-width: 700px) {
   .artist-profile { grid-template-columns: 112px minmax(0,1fr); gap: 18px; }
   .artist-profile__portrait { width: 112px; }
   .artist-profile__copy h1 { font-size: 30px; }
+  .artist-services-settings label { grid-template-columns: 1fr; gap: 8px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .artist-portrait > img { transition: none; }
