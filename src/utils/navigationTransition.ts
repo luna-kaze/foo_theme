@@ -1,4 +1,8 @@
-import { nextTick } from 'vue'
+import { nextTick, shallowRef } from 'vue'
+
+// Read by AlbumGrid before the returning scene's first paint, including a
+// cache miss. DOM-only hiding after scroll restoration is two frames too late.
+export const albumReturnTarget = shallowRef<string | null>(null)
 
 type AlbumEntry = {
   albumId: string
@@ -83,6 +87,7 @@ export function createNavigationTransitions() {
     if (!albumEntry) return
     const previous = albumEntry
     albumEntry = null
+    albumReturnTarget.value = null
     previous.animations.forEach((animation) => animation.cancel())
     previous.cleanups.forEach((cleanup) => cleanup())
     previous.overlay?.remove()
@@ -148,6 +153,7 @@ export function createNavigationTransitions() {
     cancelAlbum()
     const entry: AlbumEntry = { albumId: returning.albumId, targetKey: returning.key, direction: 'return', animations: [], overlay, hidden: [], cleanups: [] }
     albumEntry = entry
+    if (!reduced) albumReturnTarget.value = returning.albumId
     if (source && overlay) hideArtwork(entry, source)
     try {
       if (!reduced) {

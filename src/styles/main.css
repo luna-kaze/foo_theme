@@ -2069,6 +2069,7 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 
 .album-entry-artwork { position: fixed; z-index: 10000; pointer-events: none; overflow: hidden; transform-origin: top left; box-shadow: 0 22px 48px rgba(0,0,0,.33); }
 .album-entry-artwork > .artwork-image { width: 100%; height: 100%; border-radius: inherit; }
+.album-card.is-album-return-target .album-card__art { opacity: 0; }
 .album-entry-pending .library-view[data-detail-album] .album-detail-heading__art,
 .album-entry-pending .library-view[data-detail-album] .album-detail-heading__copy,
 .album-entry-pending .library-view[data-detail-album] .album-detail-heading__back,
