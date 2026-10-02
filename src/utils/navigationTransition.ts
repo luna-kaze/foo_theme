@@ -7,24 +7,31 @@ type AlbumEntry = {
   animations: Animation[]
   overlay: HTMLElement | null
   hidden: Array<{ element: HTMLElement; opacity: string; transform: string; transition: string }>
+  cleanups: Array<() => void>
 }
 
 function reducedMotion() {
   return globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
 }
 
-function visibleAlbumArtwork(albumId: string) {
-  const viewport = document.querySelector<HTMLElement>('.workspace-scroll')
-  const bounds = viewport?.getBoundingClientRect()
+function albumArtwork(albumId: string) {
   return [...document.querySelectorAll<HTMLElement>('.workspace-scroll .album-card[data-layout-key]')]
     .filter((element) => element.dataset.layoutKey === `album:${albumId}`)
     .map((element) => element.querySelector<HTMLElement>('.album-card__art'))
     .find((element) => {
       if (!element || !element.getClientRects().length) return false
-      const rect = element.getBoundingClientRect()
-      return rect.width > 0 && (!bounds || rect.top >= bounds.top - 8 && rect.bottom <= bounds.bottom + 8)
+      return element.getBoundingClientRect().width > 0
     }) ?? null
 }
+
+function fullyVisible(element: HTMLElement | null) {
+  if (!element) return false
+  const bounds = document.querySelector<HTMLElement>('.workspace-scroll')?.getBoundingClientRect()
+  const rect = element.getBoundingClientRect()
+  return rect.width > 0 && rect.height > 0 && (!bounds || rect.top >= bounds.top && rect.bottom <= bounds.bottom && rect.left >= bounds.left && rect.right <= bounds.right)
+}
+
+function nextFrame() { return new Promise<void>((resolve) => requestAnimationFrame(() => resolve())) }
 
 function snapshotArtwork(source: HTMLElement | null) {
   const artwork = source?.querySelector<HTMLElement>('.artwork-image')
@@ -70,13 +77,14 @@ function flyArtwork(entry: AlbumEntry, target: HTMLElement, duration: number) {
 
 export function createNavigationTransitions() {
   let albumEntry: AlbumEntry | null = null
-  let origin: { albumId: string; key: string } | null = null
+  let origin: { albumId: string; key: string; scrollTop: number; cardOffset: number | null } | null = null
 
   function cancelAlbum() {
     if (!albumEntry) return
     const previous = albumEntry
     albumEntry = null
     previous.animations.forEach((animation) => animation.cancel())
+    previous.cleanups.forEach((cleanup) => cleanup())
     previous.overlay?.remove()
     previous.hidden.forEach(({ element, opacity, transform, transition }) => {
       element.style.opacity = opacity
@@ -88,10 +96,15 @@ export function createNavigationTransitions() {
 
   async function openAlbum(albumId: string, targetKey: string, originKey: string, navigate: () => Promise<unknown>, isCurrent: () => boolean) {
     cancelAlbum()
-    const source = visibleAlbumArtwork(albumId)
-    origin = source ? { albumId, key: originKey } : null
+    const source = albumArtwork(albumId)
+    const viewport = document.querySelector<HTMLElement>('.workspace-scroll')
+    const card = source?.closest<HTMLElement>('.album-card')
+    origin = source && viewport ? {
+      albumId, key: originKey, scrollTop: viewport.scrollTop,
+      cardOffset: card ? card.getBoundingClientRect().top - viewport.getBoundingClientRect().top : null,
+    } : null
     const reduced = reducedMotion()
-    const entry: AlbumEntry = { albumId, targetKey, direction: 'enter', animations: [], overlay: reduced ? null : snapshotArtwork(source), hidden: [] }
+    const entry: AlbumEntry = { albumId, targetKey, direction: 'enter', animations: [], overlay: !reduced && fullyVisible(source) ? snapshotArtwork(source) : null, hidden: [], cleanups: [] }
     albumEntry = entry
     if (!reduced) {
       document.body.classList.add('album-entry-pending')
@@ -130,9 +143,10 @@ export function createNavigationTransitions() {
     const reduced = reducedMotion()
     const source = document.querySelector<HTMLElement>('.workspace-scroll .album-detail-heading__art')
     // Capture the live flying cover before cancelling an interrupted entrance.
-    const overlay = reduced ? null : snapshotArtwork(albumEntry?.overlay ?? source)
+    const flightSource = albumEntry?.overlay ?? source
+    const overlay = !reduced && fullyVisible(flightSource) ? snapshotArtwork(flightSource) : null
     cancelAlbum()
-    const entry: AlbumEntry = { albumId: returning.albumId, targetKey: returning.key, direction: 'return', animations: [], overlay, hidden: [] }
+    const entry: AlbumEntry = { albumId: returning.albumId, targetKey: returning.key, direction: 'return', animations: [], overlay, hidden: [], cleanups: [] }
     albumEntry = entry
     if (source && overlay) hideArtwork(entry, source)
     try {
@@ -149,11 +163,46 @@ export function createNavigationTransitions() {
       }
       await navigate()
       await nextTick()
-      if (albumEntry !== entry || !isCurrent() || reduced) return
-      const target = visibleAlbumArtwork(returning.albumId)
+      if (albumEntry !== entry || !isCurrent()) return
+      const viewport = document.querySelector<HTMLElement>('.workspace-scroll')
+      if (viewport) {
+        const scrollBehavior = viewport.style.scrollBehavior
+        const overflowAnchor = viewport.style.overflowAnchor
+        viewport.style.scrollBehavior = 'auto'
+        viewport.style.overflowAnchor = 'none'
+        const interrupt = () => { if (albumEntry === entry) cancelAlbum() }
+        viewport.addEventListener('wheel', interrupt, { passive: true })
+        viewport.addEventListener('touchmove', interrupt, { passive: true })
+        window.addEventListener('resize', interrupt)
+        entry.cleanups.push(() => {
+          viewport.style.scrollBehavior = scrollBehavior
+          viewport.style.overflowAnchor = overflowAnchor
+          viewport.removeEventListener('wheel', interrupt)
+          viewport.removeEventListener('touchmove', interrupt)
+          window.removeEventListener('resize', interrupt)
+        })
+        // A cached page can initially have a clamped scroll range. Restore
+        // again after activation/layout, then reconcile the actual clicked card.
+        viewport.scrollTop = returning.scrollTop
+        await nextFrame()
+        if (albumEntry !== entry || !isCurrent()) return
+        viewport.scrollTop = returning.scrollTop
+        const card = albumArtwork(returning.albumId)?.closest<HTMLElement>('.album-card')
+        if (card && returning.cardOffset != null) viewport.scrollTop += card.getBoundingClientRect().top - viewport.getBoundingClientRect().top - returning.cardOffset
+        await nextFrame()
+        if (albumEntry !== entry || !isCurrent()) return
+      }
+      const target = albumArtwork(returning.albumId)
       if (!target) return
-      if (overlay) hideArtwork(entry, target, true)
-      flyArtwork(entry, target, 520)
+      if (reduced) return
+      if (overlay && fullyVisible(target)) {
+        hideArtwork(entry, target, true)
+        flyArtwork(entry, target, 520)
+      } else {
+        overlay?.remove()
+        entry.overlay = null
+        entry.animations.push(target.animate([{ opacity: .82 }, { opacity: 1 }], { duration: 180, easing: 'ease-out', fill: 'both' }))
+      }
       await Promise.allSettled(entry.animations.map((animation) => animation.finished))
     } finally {
       if (albumEntry === entry) cancelAlbum()
@@ -166,6 +215,7 @@ export function createNavigationTransitions() {
     get direction() { return albumEntry?.direction ?? null },
     get originKey() { return origin?.key ?? null },
     get originAlbumId() { return origin?.albumId ?? null },
+    get originScrollTop() { return origin?.scrollTop ?? 0 },
     cancel() { cancelAlbum(); origin = null },
   }
 }

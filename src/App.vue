@@ -158,7 +158,9 @@ function saveSceneScroll() {
 
 function enterScene() {
   const viewport = document.querySelector<HTMLElement>('.workspace-scroll')
-  if (viewport) viewport.scrollTop = navigationTransitions.direction === 'enter' ? 0 : sceneScrollPositions.get(displayedScene.value.key) ?? 0
+  if (viewport) viewport.scrollTop = navigationTransitions.direction === 'enter' ? 0
+    : navigationTransitions.direction === 'return' && navigationTransitions.originKey === displayedScene.value.key ? navigationTransitions.originScrollTop
+    : sceneScrollPositions.get(displayedScene.value.key) ?? 0
 }
 
 function finishSceneLeave() {
