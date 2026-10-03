@@ -4,7 +4,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { DisplayQueueItem } from '../types/music'
 import { formatTime } from '../utils/format'
 
-const props = defineProps<{ queue: DisplayQueueItem[]; playbackOrder: number }>()
+const props = defineProps<{ queue: DisplayQueueItem[]; playbackOrder: number; shuffleEnabled: boolean; shufflePending: boolean; shuffleSourceName: string }>()
 const randomMode = computed(() => props.playbackOrder >= 3)
 const repeatTrack = computed(() => props.playbackOrder === 2)
 const repeatPlaylist = computed(() => props.playbackOrder === 1)
@@ -32,8 +32,9 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onPointerDown)
 
 <template>
   <aside ref="root" class="immersive-queue-card queue-popover" aria-label="播放队列" @pointerdown.stop>
-    <header><div><span>{{ randomMode ? '随机播放' : repeatTrack ? '单曲循环' : repeatPlaylist ? '列表循环' : '接下来播放' }}</span><small>{{ randomMode ? '顺序不可预测' : repeatTrack ? '当前曲目将重复' : repeatPlaylist ? '列表结束后从头播放' : `${queue.length} 首` }}</small></div><button aria-label="关闭队列" @click="emit('close')"><X :size="17" /></button></header>
-    <div v-if="randomMode" class="queue-popover__random"><Shuffle :size="17" /><span><strong>随机播放中</strong><small>后续曲目由 foobar2000 随机选择；显式加入的队列仍会显示在下方。</small></span></div>
+    <header><div><span>{{ shuffleEnabled ? '随机播放顺序' : randomMode ? '宿主随机播放' : repeatTrack ? '单曲循环' : repeatPlaylist ? '列表循环' : '接下来播放' }}</span><small>{{ shuffleEnabled ? shuffleSourceName : randomMode ? '宿主顺序不可预测' : repeatTrack ? '当前曲目将重复' : repeatPlaylist ? '列表结束后从头播放' : `${queue.length} 首` }}</small></div><button aria-label="关闭队列" @click="emit('close')"><X :size="17" /></button></header>
+    <div v-if="shuffleEnabled" class="queue-popover__random"><Shuffle :size="17" /><span><strong>{{ shufflePending ? '隐藏随机歌单待接管' : '隐藏随机歌单播放中' }}</strong><small>{{ shufflePending ? '当前曲继续播放，用户显式队列优先，随后进入下方随机顺序。' : '下方曲目按隐藏歌单的实际顺序播放。' }}</small></span></div>
+    <div v-else-if="randomMode" class="queue-popover__random"><Shuffle :size="17" /><span><strong>宿主随机播放中</strong><small>主题随机开关使用明确的隐藏歌单顺序；宿主模式由 foobar2000 决定。</small></span></div>
     <div v-else-if="repeatTrack" class="queue-popover__random"><Repeat1 :size="17" /><span><strong>单曲循环中</strong><small>当前曲目播放结束后会再次播放；显式队列不会被伪装成普通后续顺序。</small></span></div>
     <div v-else-if="repeatPlaylist" class="queue-popover__random"><Repeat :size="17" /><span><strong>列表循环中</strong><small>到达列表末尾后会从第一首继续播放。</small></span></div>
     <div v-if="queue.length" class="immersive-queue-card__items">

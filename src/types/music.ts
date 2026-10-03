@@ -31,6 +31,9 @@ export interface DisplayTrack extends TrackInfo {
   playCount?: number
   lastPlayed?: string
   isFavourite?: boolean
+  playbackId?: string
+  playbackPlaylistIndex?: number
+  playbackPlaceholder?: boolean
 }
 
 export interface LibraryFolderCard {
@@ -146,6 +149,11 @@ export interface PlayerUiState {
   volume: number
   muted: boolean
   playbackOrder: number
+  shuffleEnabled: boolean
+  shufflePending: boolean
+  shuffleBusy: boolean
+  shuffleRevision: number
+  shuffleSourceName: string
   nowPlayingOpen: boolean
   isFullscreen: boolean
   nowPlayingTab: NowPlayingTab

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
-import { ChevronLeft, ChevronRight, Eye, EyeOff, Heart, Layers3, LocateFixed, Mic2, Rows3, X } from '@lucide/vue'
+import { ChevronLeft, ChevronRight, Eye, EyeOff, Heart, Layers3, LocateFixed, Mic2, Rows3, Shuffle, X } from '@lucide/vue'
 import type { DisplayTrack, ParsedLyric } from '../types/music'
 import { formatTime } from '../utils/format'
 import ArtworkImage from './ArtworkImage.vue'
@@ -20,6 +20,11 @@ const props = defineProps<{
   playbackTracks: DisplayTrack[]
   playbackTrackIndex: number
   fullscreen: boolean
+  shuffleEnabled: boolean
+  shufflePending: boolean
+  shuffleBusy: boolean
+  shuffleRevision: number
+  shuffleSourceName: string
 }>()
 
 const emit = defineEmits<{
@@ -29,6 +34,8 @@ const emit = defineEmits<{
   seekResume: [position: number]
   favourite: [track: DisplayTrack]
   playTrack: [track: DisplayTrack]
+  shuffle: []
+  reshuffle: []
 }>()
 
 const mode = ref<'standard' | 'coverflow'>('standard')
@@ -93,6 +100,11 @@ type CoverflowItem = {
   idle: boolean
   key: string
 }
+const orderReflowing = ref(false)
+const outgoingCovers = ref<Array<CoverflowItem & { index: number; leaving: boolean }>>([])
+let orderAnimations: Animation[] = []
+let orderRequest = 0
+let previousDeck: CoverflowItem[] = []
 
 const coverflowItems = computed<CoverflowItem[]>(() => {
   if (props.playbackTracks.length) return props.playbackTracks.map((track, index) => ({
@@ -100,7 +112,7 @@ const coverflowItems = computed<CoverflowItem[]>(() => {
     artwork: index === props.playbackTrackIndex ? props.artwork || track.artworkUrl || '' : track.artworkUrl || '',
     current: index === props.playbackTrackIndex,
     idle: false,
-    key: `playlist:${track.sourceIndex ?? index}:${trackKey(track)}`,
+    key: track.playbackId ?? `playlist:${track.sourceIndex ?? index}:${trackKey(track)}`,
   }))
   return [{
     track: props.track,
@@ -113,7 +125,53 @@ const coverflowItems = computed<CoverflowItem[]>(() => {
 const visibleCoverflowItems = computed(() => {
   const start = Math.max(0, coverflowIndex.value - 3)
   const end = Math.min(coverflowItems.value.length, coverflowIndex.value + 4)
-  return coverflowItems.value.slice(start, end).map((item, offset) => ({ ...item, index: start + offset }))
+  const visible = coverflowItems.value.slice(start, end).map((item, offset) => ({ ...item, index: start + offset, leaving: false }))
+  const keys = new Set(visible.map((item) => item.key))
+  return [...visible, ...outgoingCovers.value.filter((item) => !keys.has(item.key))]
+})
+
+function cancelOrderAnimation() {
+  orderRequest += 1
+  orderAnimations.forEach((animation) => animation.cancel())
+  orderAnimations = []
+  outgoingCovers.value = []
+  orderReflowing.value = false
+}
+watch(coverflowItems, (items) => { if (!orderReflowing.value) previousDeck = [...items] }, { immediate: true, flush: 'post' })
+watch(() => props.shuffleRevision, async () => {
+  if (!props.open || mode.value !== 'coverflow' || modeTransition.value) return
+  const poses = new Map<string, { transform: string; opacity: string; offset: number }>()
+  coverflowView.value?.querySelectorAll<HTMLElement>('[data-cover-key]').forEach((element) => {
+    const style = getComputedStyle(element)
+    poses.set(element.dataset.coverKey!, { transform: style.transform, opacity: style.opacity, offset: Number(element.style.getPropertyValue('--cover-offset')) })
+  })
+  const old = [...previousDeck, ...outgoingCovers.value]
+  cancelOrderAnimation()
+  const request = orderRequest
+  coverflowIndex.value = Math.max(0, props.playbackTrackIndex)
+  if (globalThis.matchMedia('(prefers-reduced-motion: reduce)').matches) { previousDeck = [...coverflowItems.value]; return }
+  outgoingCovers.value = old.filter((item, index, all) => poses.has(item.key) && all.findIndex((other) => other.key === item.key) === index).map((item) => ({ ...item, current: false, index: coverflowIndex.value + poses.get(item.key)!.offset, leaving: true }))
+  orderReflowing.value = true
+  await nextTick()
+  if (request !== orderRequest || !coverflowView.value?.isConnected) return
+  const animations = [...coverflowView.value.querySelectorAll<HTMLElement>('[data-cover-key]')].map((element) => {
+    const oldPose = poses.get(element.dataset.coverKey!)
+    const end = getComputedStyle(element)
+    const leaving = element.classList.contains('is-order-leaving')
+    const startTransform = oldPose?.transform || `${end.transform} translateY(18px) scale(.94)`
+    return element.animate([
+      { transform: startTransform, opacity: oldPose?.opacity ?? '0' },
+      { transform: leaving ? `${end.transform} translateY(18px)` : end.transform, opacity: leaving ? 0 : Number(end.opacity) },
+    ], { duration: 640, easing: 'cubic-bezier(.25,.65,.2,1)', fill: 'both' })
+  })
+  orderAnimations = animations
+  await Promise.allSettled(animations.map((animation) => animation.finished))
+  if (request !== orderRequest) return
+  animations.forEach((animation) => animation.cancel())
+  orderAnimations = []
+  outgoingCovers.value = []
+  previousDeck = [...coverflowItems.value]
+  orderReflowing.value = false
 })
 const coverflowArtworkDecodeCache = new Map<string, Promise<void>>()
 
@@ -381,6 +439,7 @@ function coverflowIndexAtPointer(event: PointerEvent) {
 }
 
 function handleCoverflowPointer(event: PointerEvent) {
+  if (orderReflowing.value) return
   if (event.button !== 0) return
   const now = performance.now()
   const elapsed = now - lastCoverflowPointer.time
@@ -399,6 +458,7 @@ function handleCoverflowPointer(event: PointerEvent) {
 
 async function setMode(nextMode: 'standard' | 'coverflow') {
   if (mode.value === nextMode || modeTransition.value) return
+  cancelOrderAnimation()
   lastCoverflowPointer = { index: -1, time: 0, x: 0, y: 0 }
   cancelTonearm()
   if (nextMode === 'coverflow') {
@@ -472,7 +532,7 @@ watch(() => props.artwork || props.track?.artworkUrl || '', (artwork) => {
   if (standardCover.value.key === key) standardCover.value.artwork = artwork
 })
 watch(() => props.playbackTrackIndex, (index) => {
-  if (index >= 0) coverflowIndex.value = index
+  if (index >= 0 && !orderReflowing.value) coverflowIndex.value = index
 })
 watch(lyricsVisible, (visible) => {
   if (visible) {
@@ -484,6 +544,7 @@ watch(() => [props.open, mode.value] as const, () => void nextTick(() => scrollT
 watch(coverflowPreloadSources, preloadCoverflowArtwork, { immediate: true })
 watch(() => props.open, (open) => {
   if (open) return
+  cancelOrderAnimation()
   if (modeTimer) clearTimeout(modeTimer)
   if (standardCoverTimer) clearTimeout(standardCoverTimer)
   modeTimer = null
@@ -500,6 +561,7 @@ watch(() => coverflowItems.value.length, (length) => {
 })
 
 onBeforeUnmount(() => {
+  cancelOrderAnimation()
   coverflowArtworkDecodeCache.clear()
   if (resumeTimer) clearTimeout(resumeTimer)
   if (modeTimer) clearTimeout(modeTimer)
@@ -530,6 +592,8 @@ onBeforeUnmount(() => {
           <button type="button" :class="{ active: mode === 'coverflow' }" aria-label="Coverflow" @pointerdown.stop @click.stop="setMode('coverflow')"><Layers3 :size="17" /><span>Coverflow</span></button>
         </div>
         <div class="immersive-toolbar__actions">
+          <button class="immersive-tool" :class="{ active: shuffleEnabled }" :disabled="shuffleBusy" @click="emit('shuffle')"><Shuffle :size="18" /><span>{{ shuffleEnabled ? '关闭随机' : '随机播放' }}</span></button>
+          <button v-if="shuffleEnabled" class="immersive-tool" :disabled="shuffleBusy" @click="emit('reshuffle')"><Shuffle :size="16" /><span>重新随机</span></button>
           <button v-if="mode === 'standard'" class="immersive-tool" :aria-label="lyricsVisible ? '隐藏歌词' : '显示歌词'" @click="lyricsVisible = !lyricsVisible">
             <EyeOff v-if="lyricsVisible" :size="18" /><Eye v-else :size="18" /><span>{{ lyricsVisible ? '隐藏歌词' : '显示歌词' }}</span>
           </button>
@@ -595,14 +659,15 @@ onBeforeUnmount(() => {
         </section>
       </div>
 
-      <section v-else key="coverflow" class="coverflow" @wheel.prevent="onCoverflowWheel">
+      <section v-else key="coverflow" class="coverflow" :class="{ 'is-order-reflowing': orderReflowing }" @wheel.prevent="onCoverflowWheel">
         <div ref="coverflowView" class="coverflow__viewport" @pointerup.stop.prevent="handleCoverflowPointer">
           <button
             v-for="item in visibleCoverflowItems"
             :key="item.key"
             :data-cover-index="item.index"
+            :data-cover-key="item.key"
             class="coverflow-card"
-            :class="{ active: item.index === coverflowIndex, current: item.current || item.idle, idle: item.idle }"
+            :class="{ active: !item.leaving && item.index === coverflowIndex, current: item.current || item.idle, idle: item.idle, 'is-order-leaving': item.leaving }"
             :style="{ '--cover-offset': item.index - coverflowIndex, '--cover-distance': Math.abs(item.index - coverflowIndex), '--cover-image': item.artwork ? `url(${item.artwork})` : 'none' }"
             @keydown.enter.prevent="activateCoverflow(item.index)"
           >
@@ -617,6 +682,7 @@ onBeforeUnmount(() => {
         <button v-if="!idleCoverflow" class="coverflow__arrow coverflow__arrow--left" :disabled="coverflowIndex === 0" aria-label="上一张封面" @click="moveCoverflow(-1)"><ChevronLeft :size="22" /><span>上一张</span></button>
         <button v-if="!idleCoverflow" class="coverflow__arrow coverflow__arrow--right" :disabled="coverflowIndex >= coverflowItems.length - 1" aria-label="下一张封面" @click="moveCoverflow(1)"><ChevronRight :size="22" /><span>下一张</span></button>
         <div v-if="selectedCoverflow" class="coverflow__copy">
+          <small v-if="shuffleEnabled" class="coverflow__shuffle-info">{{ shuffleSourceName }} · {{ shufflePending ? '随机顺序待下一曲接管，用户队列优先' : '隐藏歌单随机顺序' }}</small>
           <p>{{ selectedCoverflow.idle ? (selectedCoverflow.track ? '未加入播放列表' : '当前没有播放') : selectedCoverflow.current ? '正在播放' : `播放列表第 ${(selectedCoverflow.track?.sourceIndex ?? coverflowIndex) + 1} 首` }}</p>
           <h1>{{ selectedCoverflow.track?.title || standardCover.album || '当前没有播放' }}</h1>
           <span v-if="selectedCoverflow.track">{{ selectedCoverflow.track.artist }} · {{ selectedCoverflow.track.album }}</span>

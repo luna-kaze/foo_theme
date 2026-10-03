@@ -1,5 +1,6 @@
 import { computed, reactive, shallowRef } from 'vue'
 import { pickImageFile } from '../utils/imagePicker'
+import { shuffleIndices } from '../utils/shuffleOrder'
 import fb, {
   type AlbumInfo,
   type ArtistInfo,
@@ -60,6 +61,11 @@ const state = reactive<PlayerUiState>({
   volume: 64,
   muted: false,
   playbackOrder: 0,
+  shuffleEnabled: false,
+  shufflePending: false,
+  shuffleBusy: false,
+  shuffleRevision: 0,
+  shuffleSourceName: '',
   nowPlayingOpen: false,
   isFullscreen: false,
   nowPlayingTab: 'lyrics',
@@ -115,14 +121,258 @@ const playbackOrders = [
   { index: 0, mode: 'default' as const, label: '默认播放顺序' },
   { index: 1, mode: 'repeat-playlist' as const, label: '循环播放列表' },
   { index: 2, mode: 'repeat-track' as const, label: '单曲循环' },
-  { index: 3, mode: 'random' as const, label: '随机播放' },
-  { index: 4, mode: 'shuffle-tracks' as const, label: '随机音轨' },
-  { index: 5, mode: 'shuffle-albums' as const, label: '随机专辑' },
-  { index: 6, mode: 'shuffle-folders' as const, label: '随机文件夹' },
 ]
 const customColumnValues = new Map<string, string>()
 let exactAlbumArtwork = new Map<string, string>()
 let namedAlbumArtwork = new Map<string, string | null>()
+
+type ShuffleSession = { name: string; index: number; sourceName: string; base: DisplayTrack[]; tracks: DisplayTrack[]; pending: boolean; bridgeIndex: number | null }
+let shuffleSession: ShuffleSession | null = null
+const shuffleSnapshots = new Map<string, DisplayTrack[]>()
+let shuffleSerial = 0
+let shuffleWork: Promise<unknown> = Promise.resolve()
+const shuffleConfigKey = 'foo-theme.shuffle-session.v1'
+
+async function saveShuffleSession() {
+  if (!state.connected) return
+  const session = shuffleSession
+  if (!session) return
+  const positions = new Map(session.tracks.map((track, index) => [track.playbackId, index]))
+  try { await fb.config.set(shuffleConfigKey, {
+    enabled: state.shuffleEnabled, name: session.name, sourceName: session.sourceName,
+    bridgeIndex: session.bridgeIndex, pending: session.pending,
+    originalOrder: session.base.map((track) => positions.get(track.playbackId) ?? -1),
+    paths: session.tracks.map(trackKey), ids: session.tracks.map((track) => track.playbackId ?? ''),
+  }) } catch { /* Session persistence never interrupts an already prepared decoder/queue. */ }
+}
+
+async function restoreShuffleSession() {
+  try {
+    const response = await fb.config.get(shuffleConfigKey)
+    const saved = response.value as { enabled?: boolean; name?: string; sourceName?: string; bridgeIndex?: number | null; pending?: boolean; originalOrder?: number[]; paths?: string[]; ids?: string[] } | null
+    if (!saved?.enabled || !saved.name || !saved.originalOrder || !saved.paths || !saved.ids) return
+    const owner = await getOwnerId()
+    if (!saved.name.startsWith('随机播放 ') || !saved.name.endsWith(`[foo-theme:${owner}]`)) return
+    const index = await shadowIndex(saved.name)
+    if (index < 0) return
+    const tracks = await getAllPlaylistTracks(index)
+    if (tracks.length !== saved.paths.length || tracks.some((track, position) => trackKey(track) !== saved.paths![position])) return
+    if (saved.originalOrder.length !== tracks.length || new Set(saved.originalOrder).size !== tracks.length || saved.originalOrder.some((position) => position < 0 || position >= tracks.length)) return
+    const ordered = tracks.map((track, position) => ({ ...track, playbackId: saved.ids![position] || track.playbackId }))
+    const playing = await fb.player.getPlayingPlaylist()
+    const pending = playing.playlist !== index
+    const queued = pending ? await fb.queue.get() : null
+    if (pending && !queued?.items.some((item) => item.playlist === index && item.playlistItem === saved.bridgeIndex)) return
+    shuffleSession = { name: saved.name, index, sourceName: saved.sourceName || '随机曲目集合', base: saved.originalOrder.map((position) => ordered[position]), tracks: ordered, pending, bridgeIndex: pending ? saved.bridgeIndex ?? null : null }
+    shuffleSnapshots.set(saved.name, shuffleSession.base)
+    state.shuffleEnabled = true; state.shufflePending = pending; state.shuffleSourceName = shuffleSession.sourceName
+  } catch { /* A stale session never changes the host's current playback. */ }
+}
+
+async function shadowIndex(name: string) {
+  return (await fb.playlist.getAll()).find((playlist) => playlist.name === name)?.index ?? -1
+}
+
+async function removeShuffleBridge(session = shuffleSession) {
+  if (!session || session.bridgeIndex == null || !state.connected) return
+  const index = await shadowIndex(session.name)
+  if (index < 0) return
+  const queue = await fb.queue.get()
+  const position = queue.items.findIndex((item) => item.playlist === index && item.playlistItem === session.bridgeIndex)
+  if (position >= 0) await fb.queue.remove(position)
+  session.bridgeIndex = null
+}
+
+function showShuffleWindow(session: ShuffleSession, actualPlaylist: number, actualIndex: number, current: DisplayTrack | null) {
+  session.tracks = session.tracks.map((track, sourceIndex) => ({ ...track, sourceIndex, playbackPlaylistIndex: session.index }))
+  const inside = actualPlaylist === session.index && (state.connected || actualIndex >= 0)
+  session.pending = !inside
+  state.shufflePending = session.pending
+  if (inside) {
+    session.bridgeIndex = null
+    setPlaybackWindow(attachArtwork(session.tracks), Math.max(0, actualIndex), session.index, actualPlaylist)
+  } else if (current) {
+    const oldCurrent = state.playbackTracks[state.playbackTrackIndex]
+    const currentId = oldCurrent && isSameTrack(oldCurrent, current) ? oldCurrent.playbackId ?? `continuing:${trackKey(current)}` : `continuing:${trackKey(current)}`
+    const anchor = session.tracks.findIndex((track) => track.playbackId === currentId)
+    if (anchor >= 0) setPlaybackWindow(attachArtwork(session.tracks), anchor, session.index, actualPlaylist)
+    else {
+      const virtual = { ...current, playbackId: currentId, playbackPlaceholder: true, playbackPlaylistIndex: actualPlaylist }
+      const next = session.bridgeIndex ?? 0
+      state.playbackTracks = [virtual, ...attachArtwork(session.tracks.slice(next, next + 60)).map((track, offset) => ({ ...track, sourceIndex: next + offset, playbackPlaylistIndex: session.index }))]
+      state.playbackTrackIndex = 0
+      state.playingPlaylistIndex = actualPlaylist
+    }
+  } else {
+    setPlaybackWindow(attachArtwork(session.tracks), 0, session.index, actualPlaylist)
+  }
+}
+
+function shuffleTransaction(action: () => Promise<void>) {
+  const task = shuffleWork.catch(() => {}).then(async () => {
+    state.shuffleBusy = true
+    try { await action() } catch (error) { notify(error instanceof Error ? error.message : '无法调整随机播放。', 'error') }
+    finally { state.shuffleBusy = false }
+  })
+  shuffleWork = task
+  return task
+}
+
+async function cleanShuffleSnapshots() {
+  if (!state.connected) return
+  const [playing, queue, playlists] = await Promise.all([fb.player.getPlayingPlaylist(), fb.queue.get(), fb.playlist.getAll()])
+  const queued = new Set(queue.items.map((item) => item.playlist))
+  const disposable = playlists.filter((playlist) => shuffleSnapshots.has(playlist.name) && playlist.name !== shuffleSession?.name && playlist.index !== playing.playlist && !queued.has(playlist.index)).sort((a, b) => b.index - a.index)
+  for (const playlist of disposable) {
+    const result = await fb.playlist.remove(playlist.index)
+    if (result.success !== false) shuffleSnapshots.delete(playlist.name)
+  }
+  if (shuffleSession) shuffleSession.index = await shadowIndex(shuffleSession.name)
+}
+
+async function prepareShuffle(tracks: DisplayTrack[], sourceName: string) {
+  if (!tracks.length) throw new Error('没有可随机播放的曲目。')
+  const previous = shuffleSession
+  const id = ++shuffleSerial
+  const base = tracks.map((track, index) => ({ ...track, playbackPlaceholder: false, playbackId: track.playbackId ?? `shuffle:${id}:${index}:${trackKey(track)}` }))
+  let current = state.currentTrack
+  let actualPlaylist = state.playingPlaylistIndex
+  let actualIndex = -1
+  if (state.connected) {
+    const [playing, position] = await Promise.all([fb.player.getPlayingPlaylist(), fb.player.getCurrentTrackIndex(true)])
+    actualPlaylist = playing.playlist ?? -1
+    actualIndex = position.index ?? -1
+    if (position.track) current = normalizeTrack(position.track)
+  }
+  if (base.length === 1 && current && isSameTrack(base[0], current) && state.playbackState !== 'stopped') {
+    notify('只有当前这一首曲目，已保持原播放。', 'info')
+    return
+  }
+  const currentId = state.playbackTracks[state.playbackTrackIndex]?.playbackId
+  let anchor = currentId ? base.findIndex((track) => track.playbackId === currentId) : -1
+  if (anchor < 0 && current) {
+    const matches = base.map((track, index) => isSameTrack(track, current) ? index : -1).filter((index) => index >= 0)
+    if (matches.length === 1) anchor = matches[0]
+    else if (actualIndex >= 0 && base[actualIndex] && isSameTrack(base[actualIndex], current)) anchor = actualIndex
+    if (anchor >= 0 && currentId) base[anchor].playbackId = currentId
+  }
+  const order = shuffleIndices(base.length, state.playbackState !== 'stopped' ? anchor : -1)
+  let ordered = order.map((index) => base[index])
+  const session: ShuffleSession = { name: `随机播放 ${id} [foo-theme:demo]`, index: -1, sourceName, base, tracks: ordered, pending: true, bridgeIndex: null }
+  if (state.connected) {
+    const ownerId = await getOwnerId()
+    session.name = `随机播放 ${crypto.randomUUID()} [foo-theme:${ownerId}]`
+    const created = await fb.playlist.create(session.name)
+    if (!Number.isInteger(created.index) || created.index < 0) throw new Error('无法创建随机播放副本。')
+    session.index = created.index
+    shuffleSnapshots.set(session.name, base)
+    try {
+      const added = await fb.playlist.add(session.index, ordered.map(playablePath))
+      if (added.success === false || added.addedCount !== ordered.length) throw new Error('随机播放副本未完整建立，已保留原播放。')
+      const copied = await getAllPlaylistTracks(session.index)
+      if (copied.length !== ordered.length || copied.some((track, index) => trackKey(track) !== trackKey(ordered[index]))) throw new Error('随机副本曲目顺序不一致，已保留原播放。')
+      // Re-check the live item after asynchronous copying; it may have ended.
+      const [playing, position, playback] = await Promise.all([fb.player.getPlayingPlaylist(), fb.player.getCurrentTrackIndex(true), fb.player.getState()])
+      actualPlaylist = playing.playlist ?? -1
+      actualIndex = position.index ?? -1
+      current = position.track ? normalizeTrack(position.track) : state.currentTrack
+      const ids = current ? ordered.map((track, index) => isSameTrack(track, current) ? index : -1).filter((index) => index >= 0) : []
+      let liveAnchor = ids.length === 1 ? ids[0] : -1
+      if (previous && actualPlaylist === await shadowIndex(previous.name)) {
+        const liveId = previous.tracks[actualIndex]?.playbackId
+        if (liveId) liveAnchor = ordered.findIndex((track) => track.playbackId === liveId)
+      }
+      if (liveAnchor > 0 && playback.state !== 'stopped') {
+        const remap = [liveAnchor, ...ordered.map((_, index) => index).filter((index) => index !== liveAnchor)]
+        const reordered = await fb.playlist.reorder(session.index, remap)
+        if (reordered.success === false) throw new Error(reordered.error || '无法完成随机副本。')
+        ordered = remap.map((index) => ordered[index])
+      }
+      session.tracks = ordered.map((track, index) => ({ ...track, sourceIndex: index, playbackPlaylistIndex: session.index }))
+      const nativeOrder = state.playbackOrder === 1 ? 1 : 0
+      const mode = await fb.player.setOrder(nativeOrder)
+      if (mode.success === false) throw new Error(mode.error || '无法设置播放顺序。')
+      state.playbackOrder = nativeOrder
+      if (playback.state !== 'stopped' && current) {
+        const headIsCurrent = isSameTrack(session.tracks[0], current)
+        session.bridgeIndex = headIsCurrent && session.tracks.length > 1 ? 1 : headIsCurrent ? null : 0
+        if (session.bridgeIndex != null) {
+          const bridge = await fb.queue.add({ playlist: session.index, track: session.bridgeIndex })
+          if (bridge.success === false) throw new Error(bridge.error || '无法登记随机下一曲。')
+        }
+      } else {
+        const started = await fb.playlist.playTrack(session.index, 0)
+        if (started.success === false) throw new Error(started.error || '无法播放随机副本。')
+        actualPlaylist = session.index
+        actualIndex = 0
+      }
+    } catch (error) {
+      await removeShuffleBridge(session)
+      const playing = await fb.player.getPlayingPlaylist()
+      if (playing.playlist !== session.index) { await fb.playlist.remove(session.index); shuffleSnapshots.delete(session.name) }
+      throw error
+    }
+    await removeShuffleBridge(previous)
+  } else {
+    session.tracks = ordered.map((track, index) => ({ ...track, sourceIndex: index, playbackPlaylistIndex: -1 }))
+    session.bridgeIndex = anchor >= 0 && state.playbackState !== 'stopped' ? ordered.length > 1 ? 1 : null : 0
+    if (state.playbackState === 'stopped') {
+      state.currentTrack = session.tracks[0]; state.position = 0; state.duration = session.tracks[0].duration
+      state.isPlaying = true; state.playbackState = 'playing'; actualIndex = 0
+    }
+  }
+  shuffleSession = session
+  state.shuffleEnabled = true
+  state.shuffleSourceName = sourceName
+  showShuffleWindow(session, actualPlaylist, actualIndex, current)
+  state.shuffleRevision += 1
+  if (state.connected) { await cleanShuffleSnapshots(); await loadPlaylists(); await loadPlaybackSequence(true); await loadQueue() }
+  await saveShuffleSession()
+  notify(session.pending ? '随机顺序已准备，用户队列优先，下一曲进入隐藏歌单。' : '已更新随机播放顺序。', 'success')
+}
+
+function toggleShuffle() {
+  return shuffleTransaction(async () => {
+    if (state.shuffleEnabled) {
+      const session = shuffleSession
+      await removeShuffleBridge(session)
+      if (session && state.connected) {
+        const [playing, index] = await Promise.all([fb.player.getPlayingPlaylist(), shadowIndex(session.name)])
+        if (playing.playlist === index && index >= 0) {
+          const order = session.base.map((track) => session.tracks.findIndex((item) => item.playbackId === track.playbackId))
+          if (order.some((position) => position < 0)) throw new Error('隐藏歌单已变化，无法恢复顺序。')
+          const result = await fb.playlist.reorder(index, order)
+          if (result.success === false) throw new Error(result.error || '无法恢复顺序。')
+          session.tracks = order.map((position, sourceIndex) => ({ ...session.tracks[position], sourceIndex }))
+        }
+      }
+      state.shuffleEnabled = false; state.shufflePending = false; state.shuffleRevision += 1
+      if (state.connected) await loadPlaybackSequence(true)
+      else if (session) {
+        session.tracks = session.base
+        const index = Math.max(0, session.base.findIndex((track) => isSameTrack(track, state.currentTrack)))
+        setPlaybackWindow(session.base, index, -1)
+      }
+      if (state.connected) await loadQueue()
+      await saveShuffleSession()
+      notify('已关闭随机播放，当前曲继续播放。')
+    } else if (shuffleSession && state.connected && (await fb.player.getPlayingPlaylist()).playlist === await shadowIndex(shuffleSession.name)) {
+      await prepareShuffle(shuffleSession.base, shuffleSession.sourceName)
+    } else if (state.connected) {
+      const playing = await fb.player.getPlayingPlaylist()
+      const index = playing.playlist ?? -1
+      if (index >= 0) {
+        const name = (await fb.playlist.getAll()).find((playlist) => playlist.index === index)?.name ?? '当前播放列表'
+        await prepareShuffle(await getAllPlaylistTracks(index), name)
+      } else await prepareShuffle(state.visibleTracks, '当前曲目集合')
+    } else await prepareShuffle(state.playbackTracks.length ? state.playbackTracks : state.visibleTracks, '当前曲目集合')
+  })
+}
+
+function reshuffle() {
+  if (!shuffleSession) return toggleShuffle()
+  return shuffleTransaction(() => prepareShuffle(shuffleSession!.base, shuffleSession!.sourceName))
+}
 
 export type PluginId = 'converter' | 'freedb' | 'dop'
 export type PluginContextAction = { commandId: number; label: string }
@@ -481,6 +731,7 @@ function isThemeInternalPlaylist(playlist: PlaylistInfo, ownerId: string) {
   return playlist.name === `正在播放 [foo-theme:${ownerId}]`
     || playlist.name === `收藏 [foo-theme:${ownerId}]`
     || playlist.name === '[WebView Queue]'
+    || playlist.name.startsWith('随机播放 ') && playlist.name.endsWith(`[foo-theme:${ownerId}]`)
 }
 
 async function loadQueue() {
@@ -494,6 +745,17 @@ async function loadQueue() {
     artworkUrl: artworkByAlbum.get(albumKey({ name: item.album, artist: item.albumArtist || item.artist })) || '',
   }))
   let upcoming: DisplayQueueItem[] = []
+  if (state.shuffleEnabled && shuffleSession) {
+    shuffleSession.index = await shadowIndex(shuffleSession.name)
+    const playing = await fb.player.getPlayingPlaylist()
+    const current = await fb.player.getCurrentTrackIndex()
+    const start = playing.playlist === shuffleSession.index ? (current.index ?? -1) + 1 : shuffleSession.bridgeIndex ?? 0
+    const planned = shuffleSession.tracks.slice(start, start + 100).map((track, offset) => ({ ...track, queueSource: 'playlist' as const, playlist: shuffleSession!.index, playlistItem: start + offset, sourceIndex: start + offset }))
+    // The bridge is an internal scheduling item, not a duplicated user entry.
+    const userQueue = explicit.filter((item) => !(shuffleSession!.pending && item.playlist === shuffleSession!.index && item.playlistItem === shuffleSession!.bridgeIndex))
+    if (generation === queueGeneration) state.queue = [...userQueue, ...attachArtwork(planned).map((track, index) => ({ ...planned[index], ...track }))]
+    return
+  }
   try {
     const [playing, current] = await Promise.all([
       fb.player.getPlayingPlaylist(),
@@ -523,26 +785,39 @@ async function loadQueue() {
   if (generation === queueGeneration) state.queue = [...explicit, ...upcoming]
 }
 
-function setPlaybackWindow(tracks: DisplayTrack[], currentIndex: number, playlistIndex: number) {
+function setPlaybackWindow(tracks: DisplayTrack[], currentIndex: number, playlistIndex: number, actualPlaylistIndex = playlistIndex) {
   const start = Math.max(0, currentIndex - 30)
-  state.playbackTracks = tracks.slice(start, start + 61).map((track, offset) => ({ ...track, sourceIndex: start + offset }))
+  state.playbackTracks = tracks.slice(start, start + 61).map((track, offset) => ({ ...track, sourceIndex: start + offset, playbackPlaylistIndex: track.playbackPlaylistIndex ?? playlistIndex, playbackId: track.playbackId ?? `playlist:${playlistIndex}:${start + offset}:${trackKey(track)}` }))
   state.playbackTrackIndex = currentIndex - start
-  state.playingPlaylistIndex = playlistIndex
+  state.playingPlaylistIndex = actualPlaylistIndex
 }
 
-async function loadPlaybackSequence() {
+async function loadPlaybackSequence(force = false) {
   const generation = ++playbackSequenceGeneration
   const [playing, current] = await Promise.all([fb.player.getPlayingPlaylist(), fb.player.getCurrentTrackIndex(true)])
   if (generation !== playbackSequenceGeneration) return
   const playlistIndex = playing.playlist
   const currentIndex = current.index
+  if (state.shuffleEnabled && shuffleSession) {
+    const session = shuffleSession
+    session.index = state.connected ? await shadowIndex(session.name) : -1
+    if (generation !== playbackSequenceGeneration) return
+    if (session.index >= 0 && (session.pending || playlistIndex === session.index)) {
+      showShuffleWindow(session, playlistIndex ?? -1, currentIndex ?? -1, current.track ? normalizeTrack(current.track) : state.currentTrack)
+      return
+    }
+    if (session.index < 0 || !session.pending && playlistIndex !== session.index) {
+      await removeShuffleBridge(session)
+      state.shuffleEnabled = false; state.shufflePending = false
+    }
+  }
   if (playlistIndex == null || currentIndex == null || playlistIndex < 0 || currentIndex < 0) {
     state.playbackTracks = state.currentTrack ? [{ ...state.currentTrack, sourceIndex: 0 }] : []
     state.playbackTrackIndex = state.currentTrack ? 0 : -1
     state.playingPlaylistIndex = -1
     return
   }
-  if (state.playingPlaylistIndex === playlistIndex) {
+  if (!force && state.playingPlaylistIndex === playlistIndex) {
     const existingIndex = state.playbackTracks.findIndex((track) => track.sourceIndex === currentIndex)
     if (existingIndex >= 0 && (!current.track || isSameTrack(state.playbackTracks[existingIndex], normalizeTrack(current.track)))) {
       state.playbackTrackIndex = existingIndex
@@ -553,7 +828,9 @@ async function loadPlaybackSequence() {
   const start = Math.max(0, Math.min(currentIndex - 30, Math.max(0, count - 61)))
   const tracks = await fb.playlist.getTracks(playlistIndex, start, Math.min(61, count - start))
   if (generation !== playbackSequenceGeneration) return
-  state.playbackTracks = attachArtwork(tracks.map((track, offset) => ({ ...normalizeTrack(track), sourceIndex: start + offset })))
+  const shadow = shuffleSession && playlistIndex === await shadowIndex(shuffleSession.name) ? shuffleSession.tracks : null
+  if (generation !== playbackSequenceGeneration) return
+  state.playbackTracks = attachArtwork(tracks.map((track, offset) => ({ ...normalizeTrack(track), sourceIndex: start + offset, playbackPlaylistIndex: playlistIndex, playbackId: shadow?.[start + offset]?.playbackId ?? `playlist:${playlistIndex}:${start + offset}:${trackKey(normalizeTrack(track))}` })))
   state.playbackTrackIndex = currentIndex - start
   state.playingPlaylistIndex = playlistIndex
 }
@@ -620,7 +897,7 @@ function bindEvents() {
   const onPlaylistItemsChanged = (event: { playlist: number }) => {
     if (insertingPlaylistIndexes.has(event.playlist)) return
     if (state.route.view === 'playlist' && state.route.playlistIndex === event.playlist) refreshSafely(refreshActivePlaylist)
-    if (state.playingPlaylistIndex === event.playlist) refreshSafely(loadPlaybackSequence)
+    if (state.playingPlaylistIndex === event.playlist) refreshSafely(() => loadPlaybackSequence(true))
     const refreshFavouriteView = event.playlist === favouritePlaylistIndex && (state.route.view === 'favourites' || (state.route.view === 'songs' && state.libraryFilters.favourite !== 'all'))
     refreshSafely(async () => {
       await loadPlaylists()
@@ -831,6 +1108,7 @@ async function initialize() {
       state.volume = volume.volume
       state.muted = volume.muted
       state.playbackOrder = order.order
+      await restoreShuffleSession()
       await Promise.allSettled([loadQueue(), syncCurrentTrack(), loadPlaybackSequence(), navigate(state.route, 'none')])
       if (library.status === 'rejected' || playlists.status === 'rejected') notify('部分 foobar2000 数据无法加载。', 'error')
       state.error = ''
@@ -1315,6 +1593,7 @@ async function playTrack(track: DisplayTrack, index?: number) {
 
   const route = state.route
   if (route.view === 'playlist') {
+    if (state.shuffleEnabled) { await removeShuffleBridge(); state.shuffleEnabled = false; state.shufflePending = false }
     const resolvedIndex = await resolvePlaylistTrackIndex(route.playlistIndex, track, track.sourceIndex ?? index)
     if (resolvedIndex == null) return
     const result = await runAction(() => fb.playlist.playTrack(route.playlistIndex, resolvedIndex))
@@ -1388,6 +1667,7 @@ async function ensureOwnedPlaybackPlaylist() {
 }
 
 async function playGeneratedCollection(tracks: DisplayTrack[], playIndex = 0, random = false, message?: string) {
+  if (random) return shuffleTransaction(() => prepareShuffle(tracks, message ?? '当前曲目集合'))
   const requestedIndex = Number.isInteger(playIndex) ? playIndex : 0
   const entries = tracks.map((track, originalIndex) => ({ originalIndex, path: playablePath(track) })).filter((item) => item.path)
   const mappedPlayIndex = entries.findIndex((item) => item.originalIndex === requestedIndex)
@@ -1399,26 +1679,11 @@ async function playGeneratedCollection(tracks: DisplayTrack[], playIndex = 0, ra
     const latest = playlists.find((playlist) => playlist.name === context.name)
     const matches = playlists.filter((playlist) => playlist.name === context.name)
     if (!latest || matches.length !== 1 || latest.isLocked || latest.isAutoplaylist) throw new Error('主题播放上下文已变化，已停止以保护播放列表。')
-    const previousOrder = random ? await fb.player.getOrder() : null
-    let orderChanged = false
-    try {
-      if (random) {
-        const order = await fb.player.setOrder('random')
-        if (!order.success) throw new Error(order.error || '无法启用随机播放。')
-        orderChanged = true
-      }
-      const result = await fb.playlist.replaceAllAndPlay({ playlist: latest.index, paths: entries.map((item) => item.path), playIndex: mappedPlayIndex })
-      if (result.success === false) throw new Error(result.error || '无法播放所选集合。')
-      setPlaybackWindow(entries.map((entry) => tracks[entry.originalIndex]), mappedPlayIndex, latest.index)
-      if (random) state.playbackOrder = 3
-      return result
-    } catch (error) {
-      if (orderChanged && previousOrder) {
-        await fb.player.setOrder(previousOrder.order)
-        state.playbackOrder = previousOrder.order
-      }
-      throw error
-    }
+    if (state.shuffleEnabled) { await removeShuffleBridge(); state.shuffleEnabled = false; state.shufflePending = false }
+    const result = await fb.playlist.replaceAllAndPlay({ playlist: latest.index, paths: entries.map((item) => item.path), playIndex: mappedPlayIndex })
+    if (result.success === false) throw new Error(result.error || '无法播放所选集合。')
+    setPlaybackWindow(entries.map((entry) => tracks[entry.originalIndex]), mappedPlayIndex, latest.index)
+    return result
   }, message)
 }
 
@@ -1427,7 +1692,7 @@ async function playTrackCollection(tracks: DisplayTrack[], random = false) {
     notify('所选文件夹没有可播放的曲目。', 'info')
     return
   }
-  await playGeneratedCollection(tracks, random ? Math.floor(Math.random() * tracks.length) : 0, random, random ? '已随机播放所选文件夹' : undefined)
+  await playGeneratedCollection(tracks, 0, random, random ? '所选曲目集合' : undefined)
 }
 
 async function resolvePlaylistTrackIndex(playlistIndex: number, track: DisplayTrack, hintedIndex?: number) {
@@ -1448,7 +1713,7 @@ async function getAllPlaylistTracks(playlistIndex: number) {
   const tracks: DisplayTrack[] = []
   for (let start = 0; start < count; start += 1000) {
     const page = await fb.playlist.getTracks(playlistIndex, start, Math.min(1000, count - start))
-    tracks.push(...page.map((track, offset) => ({ ...normalizeTrack(track), sourceIndex: start + offset })))
+    tracks.push(...page.map((track, offset) => ({ ...normalizeTrack(track), sourceIndex: start + offset, playbackId: `playlist:${playlistIndex}:${start + offset}:${trackKey(normalizeTrack(track))}`, playbackPlaylistIndex: playlistIndex })))
   }
   return tracks
 }
@@ -1491,11 +1756,7 @@ async function shuffleAlbum(album: AlbumCard) {
     notify('此专辑没有可播放的曲目。', 'info')
     return
   }
-  if (!state.connected) {
-    await playTrack(tracks[Math.floor(Math.random() * tracks.length)])
-    return
-  }
-  await playGeneratedCollection(tracks, Math.floor(Math.random() * tracks.length), true, '已随机播放专辑')
+  await shuffleTransaction(() => prepareShuffle(tracks, album.name))
 }
 
 async function queueAlbum(album: AlbumCard) {
@@ -1530,8 +1791,13 @@ async function addAlbumToPlaylist(album: AlbumCard, playlistIndex: number) {
 async function playPlaylist(playlistIndex: number, shuffled = false) {
   const playlist = state.playlists.find((item) => item.index === playlistIndex)
   if (!playlist) return
+  if (shuffled) {
+    const tracks = state.connected ? await getAllPlaylistTracks(playlistIndex) : state.tracks
+    await shuffleTransaction(() => prepareShuffle(tracks, playlist.name))
+    return
+  }
   if (!state.connected) {
-    const tracks = shuffled ? [...state.tracks].sort(() => Math.random() - 0.5) : state.tracks
+    const tracks = state.tracks
     if (tracks[0]) await playTrack(tracks[0])
     return
   }
@@ -1539,12 +1805,8 @@ async function playPlaylist(playlistIndex: number, shuffled = false) {
     notify('此播放列表为空。', 'info')
     return
   }
-  if (!shuffled) {
-    await runAction(() => fb.playlist.playTrack(playlistIndex, 0))
-    return
-  }
-  if (!await setRandomOrder()) return
-  await runAction(() => fb.playlist.playTrack(playlistIndex, Math.floor(Math.random() * playlist.trackCount)), '已启用原生随机播放')
+  if (state.shuffleEnabled) { await removeShuffleBridge(); state.shuffleEnabled = false; state.shufflePending = false }
+  await runAction(() => fb.playlist.playTrack(playlistIndex, 0))
 }
 
 async function duplicatePlaylist(playlistIndex: number) {
@@ -1727,29 +1989,9 @@ async function shuffleCurrent() {
     notify('没有可随机播放的曲目。', 'info')
     return
   }
-  if (!state.connected) {
-    await playTrack(state.visibleTracks[Math.floor(Math.random() * state.visibleTracks.length)])
-    return
-  }
   const route = state.route
-  if (route.view === 'playlist') {
-    if (!await setRandomOrder()) return
-    const track = state.visibleTracks[Math.floor(Math.random() * state.visibleTracks.length)]
-    const index = await resolvePlaylistTrackIndex(route.playlistIndex, track, track.sourceIndex)
-    if (index == null) return
-    await runAction(() => fb.playlist.playTrack(route.playlistIndex, index), '已启用原生随机播放')
-  } else {
-    await playGeneratedCollection(state.visibleTracks, Math.floor(Math.random() * state.visibleTracks.length), true, '已启用原生随机播放')
-  }
-}
-
-async function setRandomOrder() {
-  const previous = state.playbackOrder
-  const result = await runAction(() => fb.player.setOrder('random'))
-  if (result) state.playbackOrder = 3
-  else state.playbackOrder = previous
-  await loadQueue()
-  return result
+  const name = route.view === 'playlist' ? route.playlistName : route.view === 'album' ? route.albumName : route.view === 'artist' ? route.artist : '当前曲目集合'
+  await shuffleTransaction(() => prepareShuffle(state.visibleTracks, name))
 }
 
 async function togglePlayback() {
@@ -1767,6 +2009,15 @@ async function togglePlayback() {
 
 async function next() {
   if (state.connected) await runAction(() => fb.player.next())
+  else if (state.shuffleEnabled && shuffleSession) {
+    const session = shuffleSession
+    const index = session.pending ? session.bridgeIndex ?? 0 : (state.playbackTracks[state.playbackTrackIndex]?.sourceIndex ?? -1) + 1
+    const track = session.tracks[index % session.tracks.length]
+    state.currentTrack = track; state.currentArtwork = track.artworkUrl ?? ''; state.position = 0; state.duration = track.duration
+    state.isPlaying = true; state.playbackState = 'playing'
+    session.pending = false; state.shufflePending = false
+    setPlaybackWindow(session.tracks, index % session.tracks.length, -1)
+  }
   else if (state.tracks.length) {
     const current = state.tracks.findIndex((track) => isSameTrack(track, state.currentTrack))
     await playTrack(state.tracks[(current + 1) % state.tracks.length])
@@ -1820,8 +2071,9 @@ async function syncPlaybackCapabilities() {
 }
 
 async function playPlaybackTrack(track: DisplayTrack) {
+  if (track.playbackPlaceholder) return togglePlayback()
   if (!state.connected) return playTrack(track)
-  const playlistIndex = state.playingPlaylistIndex
+  const playlistIndex = track.playbackPlaylistIndex ?? state.playingPlaylistIndex
   const trackIndex = track.sourceIndex
   if (playlistIndex < 0 || trackIndex == null || trackIndex < 0) return
   const candidate = await fb.playlist.getTracks(playlistIndex, trackIndex, 1)
@@ -1830,6 +2082,7 @@ async function playPlaybackTrack(track: DisplayTrack) {
     await loadPlaybackSequence()
     return
   }
+  if (state.shuffleEnabled) await removeShuffleBridge()
   await runAction(() => fb.playlist.playTrack(playlistIndex, trackIndex))
 }
 
@@ -2833,7 +3086,13 @@ async function clearQueue() {
   if (!state.queue.length) return
   if (!state.connected) state.queue = []
   else {
-    await runAction(() => fb.queue.clear(), '播放队列已清空')
+    if (state.shuffleEnabled && shuffleSession?.pending && shuffleSession.bridgeIndex != null) {
+      const index = await shadowIndex(shuffleSession.name)
+      const queue = await fb.queue.get()
+      const removals = queue.items.map((item, position) => item.playlist === index && item.playlistItem === shuffleSession!.bridgeIndex ? -1 : position).filter((position) => position >= 0).reverse()
+      for (const position of removals) await runAction(() => fb.queue.remove(position))
+      notify('用户播放队列已清空，随机接管仍保留。')
+    } else await runAction(() => fb.queue.clear(), '播放队列已清空')
     await loadQueue()
   }
 }
@@ -3041,6 +3300,8 @@ export function useFoobar() {
     toggleWindowMaximize,
     closeWindow,
     shuffleCurrent,
+    toggleShuffle,
+    reshuffle,
     togglePlayback,
     next,
     previous,
