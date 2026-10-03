@@ -154,7 +154,6 @@ export interface PlayerUiState {
   volume: number
   muted: boolean
   playbackOrder: number
-  shuffleEnabled: boolean
   shufflePending: boolean
   shuffleStaged: boolean
   shuffleBusy: boolean

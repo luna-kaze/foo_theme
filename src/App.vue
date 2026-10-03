@@ -1094,6 +1094,7 @@ function onDrop(event: DragEvent) {
                 @folder-selection="setFolderSelection" @cancel-folder-selection="cancelFolderSelection"
                 @open-album="openPrimaryAlbum" @album-menu="openAlbumMenu" @play-album="player.playAlbum"
                 @play-track="handlePlayTrack" @track-menu="openTrackMenu" @shuffle="player.shuffleCurrent"
+                @play-collection="player.playCurrentCollection"
                 @open-files="player.openFiles" @open-folder="player.openFolder" @clear-search="clearPrimarySearch"
                 @selection="selectedTracks = $event" @add-to-playlist="player.addTracksToPlaylist"
                 @move-to-playlist="player.moveTracksToPlaylist" @remove-from-playlist="player.removeTracksFromPlaylist"
@@ -1126,7 +1127,7 @@ function onDrop(event: DragEvent) {
       :playback-tracks="state.playbackTracks"
       :playback-plan-ids="state.playbackPlanIds"
       :playback-track-index="state.playbackTrackIndex"
-      :shuffle-enabled="state.shuffleEnabled"
+      :shuffle-busy="state.shuffleBusy"
       :shuffle-pending="state.shufflePending"
       :shuffle-staged="state.shuffleStaged"
       :shuffle-source-name="state.shuffleSourceName"
@@ -1137,6 +1138,8 @@ function onDrop(event: DragEvent) {
       @seek-resume="player.seekAndPlay"
       @favourite="player.toggleFavourite"
       @play-track="player.playPlaybackTrack"
+      @shuffle="player.shufflePlaybackPlan"
+      @restore-order="player.restorePlaybackPlan"
     />
 
     <Transition name="queue-card">
@@ -1144,7 +1147,6 @@ function onDrop(event: DragEvent) {
         v-if="queueOpen"
         :queue="state.queue"
         :playback-order="state.playbackOrder"
-        :shuffle-enabled="state.shuffleEnabled"
         :shuffle-pending="state.shufflePending"
         :shuffle-staged="state.shuffleStaged"
         :shuffle-source-name="state.shuffleSourceName"
@@ -1167,7 +1169,6 @@ function onDrop(event: DragEvent) {
       :muted="state.muted"
       :can-seek="state.canSeek"
       :playback-order="state.playbackOrder"
-      :shuffle-enabled="state.shuffleEnabled"
       :shuffle-busy="state.shuffleBusy"
       :shuffle-pending="state.shufflePending"
       :shuffle-staged="state.shuffleStaged"

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { ListMusic, Maximize2, Mic2, Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Volume1, Volume2, VolumeX } from '@lucide/vue'
+import { ListMusic, Maximize2, Mic2, Pause, Play, Repeat, Repeat1, SkipBack, SkipForward, Volume1, Volume2, VolumeX } from '@lucide/vue'
 import type { DisplayTrack } from '../types/music'
 import { formatTime } from '../utils/format'
 import ArtworkImage from './ArtworkImage.vue'
@@ -16,7 +16,6 @@ const props = defineProps<{
   muted: boolean
   canSeek: boolean
   playbackOrder: number
-  shuffleEnabled: boolean
   shuffleBusy: boolean
   shufflePending: boolean
   shuffleStaged: boolean
@@ -26,7 +25,7 @@ const props = defineProps<{
 
 const seekPreview = ref<number | null>(null)
 const shownPosition = computed(() => seekPreview.value ?? props.position)
-const modeLabel = computed(() => props.shuffleEnabled ? '随机播放' : ['默认播放', '列表循环', '单曲循环'][props.playbackOrder] || '默认播放')
+const modeLabel = computed(() => ['默认播放', '列表循环', '单曲循环'][props.playbackOrder] || '默认播放')
 const modeTitle = computed(() => `${modeLabel.value} · 点击切换下一模式${props.shuffleStaged ? ' · 修改待应用' : props.shufflePending ? ' · 计划待下一曲接管' : ''}`)
 
 function previewSeek(event: Event) {
@@ -97,9 +96,8 @@ const emit = defineEmits<{
     </div>
 
     <div class="player-actions">
-      <button :class="{ active: shuffleEnabled || playbackOrder !== 0 }" :disabled="shuffleBusy" :aria-label="modeTitle" :title="modeTitle" @click="emit('order')">
-        <Shuffle v-if="shuffleEnabled" :size="17" />
-        <Repeat1 v-else-if="playbackOrder === 2" :size="17" />
+      <button :class="{ active: playbackOrder !== 0 }" :disabled="shuffleBusy" :aria-label="modeTitle" :title="modeTitle" @click="emit('order')">
+        <Repeat1 v-if="playbackOrder === 2" :size="17" />
         <Repeat v-else :size="17" />
       </button>
       <button :class="{ active: nowPlayingOpen }" aria-label="沉浸播放" @click="emit('immersive')"><Mic2 :size="17" /></button>

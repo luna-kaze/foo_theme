@@ -62,7 +62,6 @@ const state = reactive<PlayerUiState>({
   volume: 64,
   muted: false,
   playbackOrder: 0,
-  shuffleEnabled: false,
   shufflePending: false,
   shuffleStaged: false,
   shuffleBusy: false,
@@ -127,8 +126,7 @@ const playbackWorkspace = createPlaybackWorkspace({
   connected: () => state.connected, owner: getOwnerId, tracks: getAllPlaylistTracks, notify,
   publish: () => {
     state.shuffleBusy = playbackWorkspace.status.busy
-    if (playbackWorkspace.status.ready) state.playbackOrder = playbackWorkspace.status.mode === 3 ? 0 : playbackWorkspace.status.mode
-    state.shuffleEnabled = playbackWorkspace.status.ready && playbackWorkspace.status.mode === 3
+    if (playbackWorkspace.status.ready) state.playbackOrder = playbackWorkspace.status.mode
     state.shufflePending = playbackWorkspace.status.pending
     state.shuffleStaged = playbackWorkspace.status.staged
     state.shuffleSourceName = playbackWorkspace.status.ready ? playbackWorkspace.status.sourceName : ''
@@ -162,10 +160,10 @@ async function syncWorkspaceProjection() {
         state.duration = current.duration
         state.position = 0
       }
-      state.queue = snapshot.order.slice(snapshot.index + 1).map((track, index) => ({ ...track, sourceIndex: track.sourceIndex ?? index, queueSource: track.playbackQueued ? 'explicit' : 'playlist' }))
+      const editor = playbackWorkspace.projection(playbackWorkspace.demoIndex(), true) ?? snapshot
+      state.queue = editor.order.slice(editor.index + 1).map((track, index) => ({ ...track, sourceIndex: track.sourceIndex ?? index, queueSource: track.playbackQueued ? 'explicit' : 'playlist' }))
     }
   }
-  state.shuffleEnabled = playbackWorkspace.status.ready && playbackWorkspace.status.mode === 3
   state.shufflePending = playbackWorkspace.status.pending
   state.shuffleStaged = playbackWorkspace.status.staged
   state.shuffleSourceName = playbackWorkspace.status.ready ? playbackWorkspace.status.sourceName : ''
@@ -174,14 +172,15 @@ async function syncWorkspaceProjection() {
 
 async function ensurePlaybackWorkspace() {
   if (playbackWorkspace.status.ready) return true
+  if (state.playbackState === 'stopped' && !state.currentTrack) return false
   if (state.connected) {
     const playing = await fb.player.getPlayingPlaylist()
     const index = playing.playlist ?? -1
     if (index < 0) return false
     const name = (await fb.playlist.getAll()).find((playlist) => playlist.index === index)?.name ?? ''
-    await playbackWorkspace.adopt(await getAllPlaylistTracks(index), index, name)
+    await playbackWorkspace.adopt(await getAllPlaylistTracks(index), index, name, name, 0, currentPlaybackMode())
   } else if (state.currentTrack) {
-    await playbackWorkspace.adopt(state.playbackTracks.length ? state.playbackTracks : [state.currentTrack], -1, 'demo:A', '当前曲目集合', Math.max(0, state.playbackTrackIndex))
+    await playbackWorkspace.adopt(state.playbackTracks.length ? state.playbackTracks : [state.currentTrack], -1, 'demo:A', '当前曲目集合', Math.max(0, state.playbackTrackIndex), currentPlaybackMode())
   }
   return playbackWorkspace.status.ready
 }
@@ -567,7 +566,7 @@ async function loadQueue() {
   if (playbackWorkspace.status.ready) {
     await playbackWorkspace.sync()
     const current = await fb.player.getCurrentTrackIndex()
-    const snapshot = playbackWorkspace.projection(current.index ?? -1)
+    const snapshot = playbackWorkspace.projection(current.index ?? -1, true)
     const bridge = playbackWorkspace.bridge()
     const bridgePlaylist = bridge ? (await fb.playlist.getAll()).find((playlist) => playlist.name === bridge.name)?.index : -1
     const planned: DisplayQueueItem[] = snapshot?.order.slice(snapshot.index + 1, snapshot.index + 101).map((track, index) => ({ ...track, sourceIndex: track.sourceIndex ?? index, queueSource: track.playbackQueued ? 'explicit' as const : 'playlist' as const, playlist: track.playbackPlaylistIndex, playlistItem: track.sourceIndex })) ?? []
@@ -583,7 +582,7 @@ async function loadQueue() {
     ])
     const playlistIndex = playing.playlist
     const currentIndex = current.index
-    if (![2, 3, 4, 5, 6].includes(state.playbackOrder) && playlistIndex != null && currentIndex != null && playlistIndex >= 0 && currentIndex >= 0) {
+    if (state.playbackState !== 'stopped' && ![2, 3, 4, 5, 6].includes(state.playbackOrder) && playlistIndex != null && currentIndex != null && playlistIndex >= 0 && currentIndex >= 0) {
       const count = (await fb.playlist.getCount(playlistIndex)).count
       const remaining = await fb.playlist.getTracks(playlistIndex, currentIndex + 1, Math.min(100, Math.max(0, count - currentIndex - 1)))
       const wrapped = state.playbackOrder === 1 && remaining.length < 100
@@ -622,6 +621,10 @@ async function loadPlaybackSequence(force = false) {
   if (playbackWorkspace.status.ready) {
     await syncWorkspaceProjection()
     if (playbackWorkspace.status.ready) return
+  }
+  if (state.playbackState === 'stopped' && !state.currentTrack) {
+    state.playbackTracks = []; state.playbackPlanIds = []; state.playbackTrackIndex = -1; state.playingPlaylistIndex = -1
+    return
   }
   if (playlistIndex == null || currentIndex == null || playlistIndex < 0 || currentIndex < 0) {
     state.playbackTracks = state.currentTrack ? [{ ...state.currentTrack, sourceIndex: 0 }] : []
@@ -676,7 +679,15 @@ async function loadLyrics(request: number, key: string, path: string) {
 
 async function syncCurrentTrack(track?: TrackInfo | PlaybackTrackChangedPayload | null) {
   const request = ++mediaRequest
-  const nextTrack = track === undefined ? await fb.player.getCurrentTrack() : track
+  let nextTrack = track === undefined ? state.playbackState === 'stopped' ? null : await fb.player.getCurrentTrack() : track
+  if (track === undefined && !nextTrack && state.playbackState !== 'stopped') {
+    const position = await fb.player.getCurrentTrackIndex(true)
+    nextTrack = position.track ?? null
+    if (!nextTrack && playbackWorkspace.status.ready) {
+      const snapshot = playbackWorkspace.projection(position.index ?? -1)
+      nextTrack = snapshot?.order[snapshot.index] ?? null
+    }
+  }
   if (request !== mediaRequest) return
   const normalized = nextTrack ? attachArtwork([normalizeTrack(nextTrack)])[0] : null
   state.currentTrack = normalized
@@ -922,7 +933,8 @@ async function initialize() {
       state.muted = volume.muted
       state.playbackOrder = order.order
       await playbackWorkspace.restore()
-      await Promise.allSettled([loadQueue(), syncCurrentTrack(), loadPlaybackSequence(), navigate(state.route, 'none')])
+      await syncCurrentTrack()
+      await Promise.allSettled([loadQueue(), loadPlaybackSequence(), navigate(state.route, 'none')])
       if (library.status === 'rejected' || playlists.status === 'rejected') notify('部分 foobar2000 数据无法加载。', 'error')
       state.error = ''
       void fb.ui.setTitle('foobar2000').catch(() => undefined)
@@ -1455,11 +1467,16 @@ async function playGeneratedCollection(tracks: DisplayTrack[], playIndex = 0, ra
   const entries = tracks.map((track, originalIndex) => ({ originalIndex, path: playablePath(track) })).filter((item) => item.path)
   const mappedPlayIndex = entries.findIndex((item) => item.originalIndex === requestedIndex)
   if (!entries.length || mappedPlayIndex < 0) { notify('所选集合没有可播放路径。', 'info'); return false }
-  const started = await playbackWorkspace.start(entries.map((entry) => tracks[entry.originalIndex]), mappedPlayIndex, message || state.selectedAlbum?.name || '当前曲目集合', random ? 3 : currentPlaybackMode())
+  const started = await playbackWorkspace.start(entries.map((entry) => tracks[entry.originalIndex]), mappedPlayIndex, message || state.selectedAlbum?.name || '当前曲目集合', currentPlaybackMode(), random)
   if (!started) return false
   if (!state.connected) { state.position = 0; state.isPlaying = true; state.playbackState = 'playing' }
   await refreshWorkspace()
   return true
+}
+
+async function playCurrentCollection() {
+  if (state.route.view === 'playlist') return playPlaylist(state.route.playlistIndex)
+  await playGeneratedCollection(state.visibleTracks)
 }
 
 async function playTrackCollection(tracks: DisplayTrack[], random = false) {
@@ -1565,7 +1582,7 @@ async function playPlaylist(playlistIndex: number, shuffled = false) {
   }
   if (!state.connected) {
     const tracks = state.tracks
-    if (tracks[0]) await playTrack(tracks[0])
+    if (tracks[0]) await playGeneratedCollection(tracks, 0, false, playlist.name)
     return
   }
   if (!playlist.trackCount) {
@@ -1871,19 +1888,30 @@ async function toggleMute() {
 }
 
 function currentPlaybackMode(): PlaybackMode {
-  return state.shuffleEnabled ? 3 : Math.max(0, Math.min(2, state.playbackOrder)) as PlaybackMode
+  return [0, 1, 2].includes(state.playbackOrder) ? state.playbackOrder as PlaybackMode : 0
 }
 
 async function cyclePlaybackOrder() {
-  const current = state.shuffleEnabled ? 3 : Math.min(2, state.playbackOrder)
-  const mode = ((current + 1) % 4) as PlaybackMode
-  if (await ensurePlaybackWorkspace()) { if (!await playbackWorkspace.reorder(mode)) return; await refreshWorkspace() }
-  else {
-    if (!await playbackWorkspace.setMode(mode)) return
-  }
-  state.playbackOrder = mode === 3 ? 0 : mode
-  state.shuffleEnabled = mode === 3
-  notify(['默认播放', '列表循环', '单曲循环', '随机播放'][mode])
+  const mode = ((currentPlaybackMode() + 1) % 3) as PlaybackMode
+  await ensurePlaybackWorkspace()
+  if (!await playbackWorkspace.setMode(mode)) return
+  await refreshWorkspace()
+  state.playbackOrder = mode
+  notify(['默认播放', '列表循环', '单曲循环'][mode])
+}
+
+async function shufflePlaybackPlan() {
+  if (!await ensurePlaybackWorkspace()) { notify('请先选择曲目建立播放工作集。', 'info'); return }
+  if (!await playbackWorkspace.shuffle()) return
+  await refreshWorkspace()
+  notify(state.shuffleStaged ? '最新随机计划已更新，等待安全提交。' : '已随机重排待播放曲目', 'success')
+}
+
+async function restorePlaybackPlan() {
+  if (!await ensurePlaybackWorkspace()) return
+  if (!await playbackWorkspace.restoreOrder()) return
+  await refreshWorkspace()
+  notify(state.shuffleStaged ? '原序计划已更新，等待安全提交。' : '已恢复工作集原始顺序', 'success')
 }
 
 async function createPlaylist(name: string) {
@@ -3028,6 +3056,7 @@ export function useFoobar() {
     queueAlbum,
     addAlbumToPlaylist,
     playPlaylist,
+    playCurrentCollection,
     duplicatePlaylist,
     clearPlaylist,
     removePlaylist,
@@ -3052,6 +3081,8 @@ export function useFoobar() {
     toggleWindowMaximize,
     closeWindow,
     shuffleCurrent,
+    shufflePlaybackPlan,
+    restorePlaybackPlan,
     togglePlayback,
     next,
     previous,

@@ -83,6 +83,7 @@ const emit = defineEmits<{
   navigate: [view: ViewId]
   playAlbum: [album: AlbumCard]
   playTrack: [track: DisplayTrack, index: number]
+  playCollection: []
   openAlbum: [album: AlbumCard]
   shuffle: []
   back: []
@@ -128,7 +129,7 @@ const emit = defineEmits<{
         <h1>晚上好。</h1>
         <p class="hero__copy">从上次离开的地方继续，或重新发现音乐库中的精彩内容。</p>
         <div class="hero__actions">
-          <button v-if="tracks.length" class="primary-button" @click="emit('playTrack', tracks[0], 0)"><Play :size="17" fill="currentColor" /> 播放</button>
+          <button v-if="tracks.length" class="primary-button" @click="emit('playCollection')"><Play :size="17" fill="currentColor" /> 播放</button>
           <button v-if="tracks.length" class="secondary-button" @click="emit('shuffle')"><Shuffle :size="17" /> 随机播放全部</button>
           <button v-else class="primary-button" :disabled="importing" @click="emit('openFiles')"><FileMusic :size="17" /> 打开音乐</button>
         </div>
@@ -206,7 +207,7 @@ const emit = defineEmits<{
         <div class="page-heading__actions">
           <button v-if="view === 'radio'" class="secondary-button" @click="emit('navigate', 'radio')"><Radio :size="17" /> 换一批</button>
           <button v-else-if="tracks.length && view !== 'search'" class="secondary-button" @click="emit('shuffle')"><Shuffle :size="17" /> 随机播放</button>
-          <button v-if="tracks.length" class="round-play" aria-label="播放全部" @click="emit('playTrack', tracks[0], 0)"><Play :size="22" fill="currentColor" /></button>
+          <button v-if="tracks.length" class="round-play" aria-label="播放全部" @click="emit('playCollection')"><Play :size="22" fill="currentColor" /></button>
         </div>
       </section>
       <LibraryFilterBar v-if="view === 'songs'" :filters="libraryFilters" :options="filterOptions" :result-count="tracks.length" @facet-change="(key, value) => emit('filterFacetChange', key, value)" @rule-add="emit('filterRuleAdd')" @rule-update="(id, patch) => emit('filterRuleUpdate', id, patch)" @rule-remove="emit('filterRuleRemove', $event)" @clear="emit('clearFilters')" />

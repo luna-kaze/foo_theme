@@ -12,11 +12,12 @@ function fixture() {
   const lists = [{ name: 'Source', tracks: [...source] }]
   const queue = [], calls = [], errors = []
   const preferences = new Map()
-  let playing = -1, current = -1, stopAfter = false, failAdd = false
+  let playing = -1, current = -1, stopAfter = false, failAdd = false, consumeOnRemove = false, failRemove = false, failQueueAdd = false
   let playback = { state: 'paused', position: 43 }
   const fb = {
     config: { get: async key => ({ value: preferences.get(key) }), set: async (key, value) => { preferences.set(key, structuredClone(value)); return { success: true } } },
     player: {
+      getState: async () => ({ state: playback.state }),
       getPlayingPlaylist: async () => ({ playlist: playing }),
       getCurrentTrackIndex: async () => ({ index: current }),
       getStopAfterCurrent: async () => ({ enabled: stopAfter }),
@@ -25,6 +26,9 @@ function fixture() {
       next: async () => { calls.push(['next']); advance() },
     },
     playlist: {
+      getActive: async () => ({ index: 0, name: 'Source', trackCount: lists[0].tracks.length }),
+      getCount: async index => ({ count: lists[index].tracks.length }),
+      getTracks: async (index, offset = 0, count = 1000) => lists[index].tracks.slice(offset, offset + count).map(track => ({ ...track })),
       getAll: async () => lists.map((list, index) => ({ name: list.name, index, trackCount: list.tracks.length })),
       create: async name => { lists.push({ name, tracks: [] }); return { index: lists.length - 1 } },
       clear: async index => {
@@ -41,8 +45,12 @@ function fixture() {
     },
     queue: {
       get: async () => ({ items: queue.map(item => ({ ...item })) }),
-      add: async ({ playlist, track }) => { queue.push({ playlist, playlistItem: track }); return { success: true } },
-      remove: async index => { queue.splice(index, 1); return { success: true } },
+      add: async ({ playlist, track }) => { if (failQueueAdd) { failQueueAdd = false; return { success: false } } queue.push({ playlist, playlistItem: track }); return { success: true } },
+      remove: async index => {
+        if (failRemove) { failRemove = false; return { success: false } }
+        if (consumeOnRemove) { consumeOnRemove = false; advance(); return { success: true } }
+        queue.splice(index, 1); return { success: true }
+      },
     },
   }
   function advance() {
@@ -55,7 +63,16 @@ function fixture() {
   runInNewContext(compiled.outputFiles[0].text, { module, exports: module.exports, require: id => id === 'foo-webview-sdk' ? { ...fb, __esModule: true, default: fb } : require(id), crypto: { randomUUID }, console })
   const create = () => module.exports.createPlaybackWorkspace({ connected: () => true, owner: async () => 'test-owner', tracks: async index => lists[index].tracks.map(track => ({ ...track })), publish() {}, notify: message => errors.push(message) })
   const workspace = create()
-  return { workspace, create, lists, queue, calls, errors, advance, pause: () => { playback = { state: 'paused', position: 43 } }, live: () => ({ playing, current, playback, stopAfter }), fail: () => { failAdd = true }, order: () => workspace.projection(current) }
+  return {
+    workspace, create, lists, queue, calls, errors, advance, sdk: fb,
+    pause: () => { playback = { state: 'paused', position: 43 } },
+    live: () => ({ playing, current, playback, stopAfter }), fail: () => { failAdd = true },
+    race: () => { consumeOnRemove = true }, failRemoval: () => { failRemove = true }, failRegistration: () => { failQueueAdd = true },
+    stop: () => { playing = -1; current = -1; playback = { state: 'stopped', position: 0 } },
+    protect: () => { const reference = { playlist: queue[0].playlist, playlistItem: 0 }; queue.push(reference); return reference },
+    release: reference => { queue.splice(queue.indexOf(reference), 1) },
+    order: () => workspace.projection(current), editor: () => workspace.projection(current, true),
+  }
 }
 
 {
@@ -69,13 +86,9 @@ function fixture() {
   const original = [...f.lists[0].tracks]
   f.lists[0].tracks.reverse()
   assert.equal(await w.add([source[5]]), true)
-  const committed = f.order().order.map(track => track.playbackId)
-  const queuedIndex = f.queue[0].playlist
-  const queuedContents = f.lists[queuedIndex].tracks.map(track => track.path)
   assert.equal(await w.add([source[0]], true), true)
-  assert.equal(w.status.staged, true)
-  assert.deepEqual([...f.order().order.map(track => track.playbackId)], [...committed], 'uncommitted edits do not animate or replace the visible plan')
-  assert.deepEqual(f.lists[queuedIndex].tracks.map(track => track.path), queuedContents)
+  assert.equal(w.status.staged, false)
+  assert.equal(f.order().order[f.order().index + 1].title, source[0].title, 'consecutive edits replace the standby plan immediately')
   assert.equal(f.queue.length, 1)
   assert.equal(f.live().playing, decoder)
   assert.deepEqual(f.live().playback, { state: 'paused', position: 43 })
@@ -85,7 +98,7 @@ function fixture() {
   assert.equal(f.order().order[f.order().index].title, source[0].title, 'manual Next applies the latest next-insert')
   assert.equal(w.status.staged, false)
   assert.equal(f.lists.length, 3, 'only two fixed buffers are created')
-  console.log('PASS: source isolation, duplicate identity, paused decoder, guarded buffer, deferred visibility and latest manual Next')
+  console.log('PASS: source isolation, duplicate identity, paused decoder, safe re-registration and latest manual Next')
 }
 
 {
@@ -93,8 +106,10 @@ function fixture() {
   await w.start(source, 1, 'Source')
   f.pause()
   await w.add([source[5]])
+  const blocker = f.protect()
   await w.add([source[0]], true)
   const revision = w.status.revision
+  f.release(blocker)
   f.advance()
   assert.equal(await w.sync(), true)
   assert.equal(w.status.staged, false)
@@ -113,18 +128,20 @@ function fixture() {
   const f = fixture(), w = f.workspace
   await w.start(source, 2, 'Source')
   f.pause()
-  await w.reorder(3)
-  assert.equal(w.status.mode, 3)
+  await w.shuffle()
+  assert.equal(w.status.mode, 0)
   assert.equal(f.calls.at(-1)[1], 0, 'shuffle uses explicit default-order playback')
-  await w.reorder(2)
+  const shuffled = f.order().order.map(track => track.playbackId)
+  await w.setMode(2)
+  assert.deepEqual([...f.order().order.map(track => track.playbackId)], [...shuffled], 'repeat-one changes policy without rearranging the plan')
   assert.equal(f.queue.length, 0, 'repeat-one cancels the theme next bridge')
   assert.equal(w.status.mode, 2)
   await w.add([source[0]], true)
   assert.equal(w.status.staged, false, 'unreferenced repeat-one buffer can accept new edits')
-  await w.reorder(0)
+  await w.setMode(0)
   assert.equal(f.queue.length, 1)
   assert.deepEqual(f.live().playback, { state: 'paused', position: 43 })
-  console.log('PASS: explicit shuffle, repeat-one edits and resume of queued handover')
+  console.log('PASS: shuffle action is independent of playback policy; repeat-one and next registration remain editable')
 }
 
 {
@@ -160,12 +177,16 @@ function fixture() {
   const f = fixture(), w = f.workspace
   await w.start(source, 1, 'Source')
   await w.add([source[5]])
+  const blocker = f.protect()
   await w.add([source[0]], true)
   const restored = f.create()
   await restored.restore()
   assert.equal(restored.status.ready, true)
   assert.equal(restored.status.staged, true)
-  assert.equal(f.queue.length, 1, 'restore does not duplicate registration')
+  assert.equal(f.queue.length, 2, 'restore does not duplicate registration')
+  const editor = restored.projection(f.live().current, true)
+  assert.equal(editor.order[editor.index + 1].title, source[0].title)
+  f.release(blocker)
   f.advance(); await restored.sync()
   const snapshot = restored.projection(f.live().current)
   assert.equal(snapshot.order[snapshot.index + 1].title, source[0].title)
@@ -224,19 +245,19 @@ function fixture() {
   assert.equal(f.queue.length, 0)
   assert.equal(await w.next(), true)
   assert.equal(f.order().order[f.order().index].title, source[0].title)
-  assert.equal(await w.reorder(1), true)
+  assert.equal(await w.setMode(1), true)
   assert.equal(f.queue.length, 0, 'unchanged loop switch does not copy or schedule unnecessarily')
   console.log('PASS: manual Next escapes repeat-one and unchanged list-loop switches avoid copies')
 }
 
 {
   const f = fixture(), w = f.workspace
-  assert.equal(await w.setMode(3), true)
-  assert.equal(await w.start(source, 3, 'Source'), true)
-  assert.equal(w.status.mode, 3)
+  assert.equal(await w.setMode(1), true)
+  assert.equal(await w.start(source, 3, 'Source', 1, true), true)
+  assert.equal(w.status.mode, 1)
   assert.equal(f.order().order[f.order().index].title, source[3].title)
   assert.equal(f.order().index, 0)
-  console.log('PASS: mode selected before playback applies to the new isolated workset')
+  console.log('PASS: random collection start retains the independent list-loop playback policy')
 }
 
 {
@@ -256,11 +277,12 @@ function fixture() {
 
 for (const mode of [0, 1]) {
   const f = fixture(), w = f.workspace
-  await w.start(source, 3, 'Source', 3)
+  await w.start(source, 3, 'Source', 0, true)
   f.pause()
   const anchorId = f.order().order[0].playbackId
   f.lists[0].tracks.reverse()
-  assert.equal(await w.reorder(mode), true)
+  assert.equal(await w.restoreOrder(), true)
+  assert.equal(await w.setMode(mode), true)
   const snapshot = f.order()
   assert.deepEqual([...snapshot.order.map(track => track.path)], source.map(track => track.path), 'restore sorts the entire workset, including the shuffled prefix')
   assert.equal(snapshot.index, 3)
@@ -273,10 +295,12 @@ for (const mode of [0, 1]) {
 
 for (const manual of [false, true]) {
   const f = fixture(), w = f.workspace
-  await w.start(source, 3, 'Source', 3)
+  await w.start(source, 3, 'Source', 0, true)
   await w.add([source[5]])
-  await w.reorder(0)
+  const blocker = f.protect()
+  await w.restoreOrder()
   assert.equal(w.status.staged, true)
+  f.release(blocker)
   if (manual) await w.next()
   else { f.advance(); await w.sync() }
   const snapshot = f.order()
@@ -287,12 +311,225 @@ for (const manual of [false, true]) {
 
 {
   const f = fixture(), w = f.workspace
-  await w.start(source, 3, 'Source', 3)
+  await w.start(source, 3, 'Source', 0, true)
   const removed = f.order().order.find(track => track.title === source[1].title)
   await w.remove([removed.playbackId])
-  await w.reorder(1)
+  await w.restoreOrder()
+  await w.setMode(1)
   await w.next()
   assert.ok(!f.order().order.some(track => track.playbackId === removed.playbackId), 'restore retains explicit removals')
   assert.deepEqual([...f.order().order.map(track => track.path)], source.filter(track => track.title !== source[1].title).map(track => track.path))
   console.log('PASS: full source-order restoration retains deleted plan occurrences')
+}
+
+for (const mode of [0, 1, 2]) {
+  const f = fixture(), w = f.workspace
+  await w.start(source, 1, 'Source', mode)
+  f.pause()
+  await w.add([source[5]])
+  await w.add([source[0]], true)
+  let snapshot = f.editor()
+  const addedId = snapshot.order[snapshot.index + 1].playbackId
+  assert.equal(await w.remove([addedId]), true)
+  assert.ok(!f.editor().order.some(track => track.playbackId === addedId))
+  await w.add([source[4]], true)
+  const nextId = f.editor().order[f.editor().index + 1].playbackId
+  const movedId = f.editor().order.find(track => track.title === source[3].title).playbackId
+  await w.moveNext(movedId)
+  assert.equal(f.editor().order[f.editor().index + 1].playbackId, movedId)
+  await w.remove([movedId])
+  assert.equal(f.editor().order[f.editor().index + 1].playbackId, nextId)
+  assert.equal(w.status.staged, false)
+  assert.equal(w.status.mode, mode)
+  assert.equal(f.queue.length, mode === 2 ? 0 : 1)
+  assert.deepEqual(f.live().playback, { state: 'paused', position: 43 })
+  await w.next()
+  assert.equal(f.order().order[f.order().index].playbackId, nextId)
+  console.log(`PASS: uninterrupted add-next / delete / append / move / delete sequence in playback policy ${mode}`)
+}
+
+{
+  const f = fixture(), w = f.workspace
+  await w.start(source, 1, 'Source')
+  await w.add([source[5]])
+  const blocker = f.protect()
+  const committed = f.order().order.map(track => track.playbackId)
+  const clears = f.calls.filter(call => call[0] === 'clear').length
+  await w.add([source[0]], true)
+  const id = f.editor().order[f.editor().index + 1].playbackId
+  assert.equal(f.editor().order[f.editor().index + 1].title, source[0].title)
+  await w.remove([id])
+  assert.ok(!f.editor().order.some(track => track.playbackId === id))
+  await w.add([source[4]], true)
+  const moved = f.editor().order.find(track => track.title === source[3].title)
+  await w.moveNext(moved.playbackId)
+  assert.equal(f.editor().order[f.editor().index + 1].playbackId, moved.playbackId)
+  assert.deepEqual([...f.order().order.map(track => track.playbackId)], [...committed], 'Coverflow keeps the committed order while the editor changes')
+  assert.equal(f.calls.filter(call => call[0] === 'clear').length, clears, 'external buffer references prevent all writes')
+  assert.equal(w.status.staged, true)
+  f.release(blocker); await w.sync()
+  assert.equal(w.status.staged, false)
+  await w.next()
+  assert.equal(f.order().order[f.order().index].playbackId, moved.playbackId)
+  console.log('PASS: protected native references do not freeze the editor; latest edits commit when released')
+}
+
+{
+  const f = fixture(), w = f.workspace
+  await w.start(source, 1, 'Source')
+  await w.add([source[5]])
+  f.race()
+  assert.equal(await w.add([source[0]], true), true, f.errors.join('; '))
+  assert.equal(f.order().order[f.order().index].title, source[2].title, 'a concurrently consumed next item is the new decoder anchor')
+  assert.equal(f.order().order[f.order().index + 1].title, source[0].title)
+  assert.equal(f.calls.filter(call => call[0] === 'play').length, 1)
+  assert.equal(f.queue.length, 1)
+  await w.next()
+  assert.equal(f.order().order[f.order().index].title, source[0].title)
+  console.log('PASS: handover during bridge withdrawal swaps buffers without clearing the new decoder')
+}
+
+for (const failure of ['failRemoval', 'failRegistration']) {
+  const f = fixture(), w = f.workspace
+  await w.start(source, 1, 'Source')
+  await w.add([source[5]])
+  f.pause()
+  const before = f.order().order.map(track => track.playbackId)
+  const beforeBridge = { ...f.queue[0] }
+  f[failure]()
+  assert.equal(await w.add([source[0]], true), false)
+  assert.deepEqual([...f.order().order.map(track => track.playbackId)], [...before])
+  assert.deepEqual(f.queue, [beforeBridge])
+  assert.deepEqual(f.live().playback, { state: 'paused', position: 43 })
+  assert.equal(await w.add([source[4]], true), true)
+  assert.equal(f.editor().order[f.editor().index + 1].title, source[4].title)
+  console.log(`PASS: ${failure} leaves/restores the previous complete schedule and supports retry`)
+}
+
+for (const mode of [0, 1, 2]) {
+  const f = fixture(), w = f.workspace
+  await w.start(source, 2, 'Source', mode)
+  const prefix = f.order().order.slice(0, 3).map(track => track.playbackId)
+  f.pause()
+  await w.shuffle()
+  assert.deepEqual([...f.order().order.slice(0, 3).map(track => track.playbackId)], [...prefix])
+  assert.equal(w.status.mode, mode)
+  const shuffled = f.order().order.map(track => track.playbackId)
+  await w.setMode((mode + 1) % 3)
+  assert.deepEqual([...f.order().order.map(track => track.playbackId)], [...shuffled], 'bottom mode changes never restore or reshuffle order')
+  await w.restoreOrder()
+  assert.deepEqual([...f.order().order.map(track => track.path)], source.map(track => track.path))
+  assert.equal(w.status.mode, (mode + 1) % 3)
+  assert.deepEqual(f.live().playback, { state: 'paused', position: 43 })
+  console.log(`PASS: shuffle / bottom mode / restore-order separation for playback policy ${mode}`)
+}
+
+{
+  const f = fixture(), w = f.workspace
+  await w.start(source, 0, 'Source')
+  f.pause()
+  f.lists[0].tracks.splice(2, 1)
+  f.lists[0].tracks.push(source[1])
+  assert.equal(await w.start(f.lists[0].tracks, 0, 'Source'), true)
+  assert.deepEqual([...f.order().order.map(track => track.path)], f.lists[0].tracks.map(track => track.path))
+  assert.equal(f.order().order[0].title, source[0].title)
+  assert.equal(f.calls.filter(call => call[0] === 'play').length, 2, 'an explicit collection restart is not a same-track pause toggle')
+  console.log('PASS: explicit source reload includes edits even when the first song is still current')
+}
+
+{
+  const f = fixture(), w = f.workspace
+  await w.start(source, 1, 'Source')
+  await w.add([source[5]])
+  f.queue.push({ playlist: 0, playlistItem: 4 })
+  f.stop()
+  const restored = f.create()
+  await restored.restore()
+  assert.equal(restored.status.ready, false)
+  assert.equal(restored.status.sourceName, '')
+  assert.equal(restored.projection(-1), null)
+  assert.deepEqual(f.queue, [{ playlist: 0, playlistItem: 4 }], 'only the stale theme scheduling item is removed')
+  assert.equal(f.calls.filter(call => call[0] === 'play').length, 1)
+  console.log('PASS: stopped restart discards stale plan context without resuming playback or clearing external queue')
+}
+
+{
+  const f = fixture(), w = f.workspace
+  await w.start(source, 2, 'Source')
+  f.pause()
+  const before = f.order().order.map(track => track.playbackId)
+  const restored = f.create()
+  await restored.restore()
+  assert.equal(restored.status.ready, true)
+  const snapshot = restored.projection(f.live().current)
+  assert.deepEqual([...snapshot.order.map(track => track.playbackId)], [...before])
+  assert.equal(snapshot.order[snapshot.index].title, source[2].title)
+  assert.deepEqual(f.live().playback, { state: 'paused', position: 43 })
+  console.log('PASS: a live paused session restores the same current occurrence without restart')
+}
+
+{
+  const f = fixture(), w = f.workspace
+  await w.seed([source[0], source[1]])
+  f.stop()
+  const restored = f.create()
+  await restored.restore()
+  assert.equal(restored.status.ready, true, 'a deliberately prepared stopped queue is distinct from a stale playback session')
+  assert.equal(restored.projection(-1).order.length, 2)
+  assert.equal(f.calls.filter(call => call[0] === 'play').length, 0)
+  assert.equal(f.queue.length, 1)
+  console.log('PASS: stopped seed queue remains available without a false current track or decoder start')
+}
+
+{
+  const bundled = await build({ entryPoints: ['src/composables/useFoobar.ts'], bundle: true, platform: 'node', format: 'cjs', write: false, external: ['foo-webview-sdk', 'vue'] })
+  const f = fixture()
+  await f.sdk.playlist.playTrack(0, 0)
+  f.lists[0].tracks.splice(2, 1)
+  f.lists[0].tracks.push(source[1])
+  const module = { exports: {} }
+  runInNewContext(bundled.outputFiles[0].text, {
+    module, exports: module.exports,
+    require: id => id === 'foo-webview-sdk' ? { ...f.sdk, __esModule: true, default: f.sdk } : require(id),
+    crypto: { randomUUID }, console, URL, URLSearchParams, performance,
+    window: { location: { search: '', href: 'https://theme.test/' } },
+    setTimeout: () => 0, clearTimeout() {},
+  })
+  const player = module.exports.useFoobar()
+  player.state.connected = true
+  player.state.currentTrack = source[0]
+  player.state.playbackState = 'paused'
+  player.state.route = { view: 'playlist', playlistIndex: 0, playlistName: 'Source' }
+  player.state.playlists = [{ index: 0, name: 'Source', trackCount: source.length }]
+  assert.equal(await player.playCurrentCollection(), undefined)
+  assert.equal(f.calls.filter(call => call[0] === 'play').length, 2, 'the real red-button handler rebuilds rather than toggling the same first song')
+  assert.deepEqual([...player.state.playbackTracks.map(track => track.path)], f.lists[0].tracks.map(track => track.path))
+  await player.shufflePlaybackPlan()
+  const shuffled = player.state.playbackTracks.map(track => track.playbackId)
+  for (const mode of [1, 2, 0]) {
+    await player.cyclePlaybackOrder()
+    assert.equal(player.state.playbackOrder, mode)
+    assert.deepEqual([...player.state.playbackTracks.map(track => track.playbackId)], [...shuffled])
+  }
+  assert.equal('shuffleEnabled' in player.state, false)
+  console.log('PASS: real playlist red-button handler reloads edited source; bottom cycles exactly three policies without reordering')
+}
+
+{
+  const f = fixture(), w = f.workspace
+  await w.start(source, source.length - 1, 'Source', 1)
+  await w.clear()
+  const ids = f.order().order.map(track => track.playbackId)
+  assert.equal(f.queue[0].playlistItem, 0)
+  await w.setMode(0)
+  assert.equal(f.queue.length, 0, 'default at the plan end cancels a previously registered loop restart')
+  assert.equal(f.live().stopAfter, true)
+  await w.setMode(2)
+  assert.equal(f.queue.length, 0)
+  assert.equal(f.live().stopAfter, false)
+  await w.setMode(1)
+  assert.equal(f.queue.length, 1)
+  assert.equal(f.queue[0].playlistItem, 0)
+  assert.deepEqual([...f.order().order.map(track => track.playbackId)], [...ids])
+  console.log('PASS: policy changes at the plan end cancel/restore loop scheduling without changing the workset')
 }
