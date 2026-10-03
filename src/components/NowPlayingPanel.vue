@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
-import { ChevronLeft, ChevronRight, Eye, EyeOff, Heart, Layers3, LocateFixed, Mic2, Rows3, Shuffle, X } from '@lucide/vue'
+import { ChevronLeft, ChevronRight, Eye, EyeOff, Heart, Layers3, LocateFixed, Mic2, Rows3, X } from '@lucide/vue'
 import type { DisplayTrack, ParsedLyric } from '../types/music'
 import { formatTime } from '../utils/format'
 import ArtworkImage from './ArtworkImage.vue'
@@ -22,7 +22,7 @@ const props = defineProps<{
   fullscreen: boolean
   shuffleEnabled: boolean
   shufflePending: boolean
-  shuffleBusy: boolean
+  shuffleStaged: boolean
   shuffleRevision: number
   shuffleSourceName: string
 }>()
@@ -34,8 +34,6 @@ const emit = defineEmits<{
   seekResume: [position: number]
   favourite: [track: DisplayTrack]
   playTrack: [track: DisplayTrack]
-  shuffle: []
-  reshuffle: []
 }>()
 
 const mode = ref<'standard' | 'coverflow'>('standard')
@@ -592,8 +590,6 @@ onBeforeUnmount(() => {
           <button type="button" :class="{ active: mode === 'coverflow' }" aria-label="Coverflow" @pointerdown.stop @click.stop="setMode('coverflow')"><Layers3 :size="17" /><span>Coverflow</span></button>
         </div>
         <div class="immersive-toolbar__actions">
-          <button class="immersive-tool" :class="{ active: shuffleEnabled }" :disabled="shuffleBusy" @click="emit('shuffle')"><Shuffle :size="18" /><span>{{ shuffleEnabled ? '关闭随机' : '随机播放' }}</span></button>
-          <button v-if="shuffleEnabled" class="immersive-tool" :disabled="shuffleBusy" @click="emit('reshuffle')"><Shuffle :size="16" /><span>重新随机</span></button>
           <button v-if="mode === 'standard'" class="immersive-tool" :aria-label="lyricsVisible ? '隐藏歌词' : '显示歌词'" @click="lyricsVisible = !lyricsVisible">
             <EyeOff v-if="lyricsVisible" :size="18" /><Eye v-else :size="18" /><span>{{ lyricsVisible ? '隐藏歌词' : '显示歌词' }}</span>
           </button>
@@ -682,7 +678,7 @@ onBeforeUnmount(() => {
         <button v-if="!idleCoverflow" class="coverflow__arrow coverflow__arrow--left" :disabled="coverflowIndex === 0" aria-label="上一张封面" @click="moveCoverflow(-1)"><ChevronLeft :size="22" /><span>上一张</span></button>
         <button v-if="!idleCoverflow" class="coverflow__arrow coverflow__arrow--right" :disabled="coverflowIndex >= coverflowItems.length - 1" aria-label="下一张封面" @click="moveCoverflow(1)"><ChevronRight :size="22" /><span>下一张</span></button>
         <div v-if="selectedCoverflow" class="coverflow__copy">
-          <small v-if="shuffleEnabled" class="coverflow__shuffle-info">{{ shuffleSourceName }} · {{ shufflePending ? '随机顺序待下一曲接管，用户队列优先' : '隐藏歌单随机顺序' }}</small>
+          <small v-if="shuffleSourceName" class="coverflow__shuffle-info">{{ shuffleSourceName }} · {{ shuffleStaged ? '修改待应用，当前显示已提交计划' : shufflePending ? '计划待下一曲接管' : shuffleEnabled ? '随机播放工作集' : '播放工作集' }}</small>
           <p>{{ selectedCoverflow.idle ? (selectedCoverflow.track ? '未加入播放列表' : '当前没有播放') : selectedCoverflow.current ? '正在播放' : `播放列表第 ${(selectedCoverflow.track?.sourceIndex ?? coverflowIndex) + 1} 首` }}</p>
           <h1>{{ selectedCoverflow.track?.title || standardCover.album || '当前没有播放' }}</h1>
           <span v-if="selectedCoverflow.track">{{ selectedCoverflow.track.artist }} · {{ selectedCoverflow.track.album }}</span>

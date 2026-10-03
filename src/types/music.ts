@@ -34,6 +34,7 @@ export interface DisplayTrack extends TrackInfo {
   playbackId?: string
   playbackPlaylistIndex?: number
   playbackPlaceholder?: boolean
+  playbackQueued?: boolean
 }
 
 export interface LibraryFolderCard {
@@ -82,6 +83,9 @@ export interface DisplayQueueItem extends QueueItem {
   queueSource: 'explicit' | 'playlist'
   sourceIndex: number
   artworkUrl?: string
+  playbackId?: string
+  playbackPlaylistIndex?: number
+  playbackQueued?: boolean
 }
 
 export interface ParsedLyric {
@@ -151,6 +155,7 @@ export interface PlayerUiState {
   playbackOrder: number
   shuffleEnabled: boolean
   shufflePending: boolean
+  shuffleStaged: boolean
   shuffleBusy: boolean
   shuffleRevision: number
   shuffleSourceName: string

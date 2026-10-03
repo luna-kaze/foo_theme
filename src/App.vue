@@ -1127,7 +1127,7 @@ function onDrop(event: DragEvent) {
       :playback-track-index="state.playbackTrackIndex"
       :shuffle-enabled="state.shuffleEnabled"
       :shuffle-pending="state.shufflePending"
-      :shuffle-busy="state.shuffleBusy"
+      :shuffle-staged="state.shuffleStaged"
       :shuffle-revision="state.shuffleRevision"
       :shuffle-source-name="state.shuffleSourceName"
       :fullscreen="state.isFullscreen"
@@ -1137,8 +1137,6 @@ function onDrop(event: DragEvent) {
       @seek-resume="player.seekAndPlay"
       @favourite="player.toggleFavourite"
       @play-track="player.playPlaybackTrack"
-      @shuffle="player.toggleShuffle"
-      @reshuffle="player.reshuffle"
     />
 
     <Transition name="queue-card">
@@ -1148,6 +1146,7 @@ function onDrop(event: DragEvent) {
         :playback-order="state.playbackOrder"
         :shuffle-enabled="state.shuffleEnabled"
         :shuffle-pending="state.shufflePending"
+        :shuffle-staged="state.shuffleStaged"
         :shuffle-source-name="state.shuffleSourceName"
         @close="queueOpen = false"
         @play="player.playQueueItem"
@@ -1171,6 +1170,7 @@ function onDrop(event: DragEvent) {
       :shuffle-enabled="state.shuffleEnabled"
       :shuffle-busy="state.shuffleBusy"
       :shuffle-pending="state.shufflePending"
+      :shuffle-staged="state.shuffleStaged"
       :now-playing-open="state.nowPlayingOpen"
       :queue-open="queueOpen"
       @toggle="player.togglePlayback"
@@ -1180,7 +1180,6 @@ function onDrop(event: DragEvent) {
       @volume="player.setVolume"
       @mute="player.toggleMute"
       @order="player.cyclePlaybackOrder"
-      @shuffle="player.toggleShuffle"
       @immersive="openNowPlaying"
       @queue="toggleQueue"
       @menu="(track, event) => openTrackMenu(track, -1, event)"

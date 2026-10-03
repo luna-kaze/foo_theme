@@ -19,12 +19,15 @@ const props = defineProps<{
   shuffleEnabled: boolean
   shuffleBusy: boolean
   shufflePending: boolean
+  shuffleStaged: boolean
   nowPlayingOpen: boolean
   queueOpen: boolean
 }>()
 
 const seekPreview = ref<number | null>(null)
 const shownPosition = computed(() => seekPreview.value ?? props.position)
+const modeLabel = computed(() => props.shuffleEnabled ? '随机播放' : ['默认播放', '列表循环', '单曲循环'][props.playbackOrder] || '默认播放')
+const modeTitle = computed(() => `${modeLabel.value} · 点击切换下一模式${props.shuffleStaged ? ' · 修改待应用' : props.shufflePending ? ' · 计划待下一曲接管' : ''}`)
 
 function previewSeek(event: Event) {
   seekPreview.value = Number((event.target as HTMLInputElement).value)
@@ -48,7 +51,6 @@ const emit = defineEmits<{
   volume: [volume: number]
   mute: []
   order: []
-  shuffle: []
   immersive: []
   queue: []
   menu: [track: DisplayTrack, event: MouseEvent]
@@ -95,9 +97,9 @@ const emit = defineEmits<{
     </div>
 
     <div class="player-actions">
-      <button :class="{ active: shuffleEnabled }" :disabled="shuffleBusy" :aria-label="shuffleEnabled ? '关闭随机播放' : '开启随机播放'" :title="shufflePending ? '随机歌单待下一曲接管，用户队列优先' : shuffleEnabled ? '随机播放已开启' : '开启随机播放'" @click="emit('shuffle')"><Shuffle :size="17" /></button>
-      <button :class="{ active: playbackOrder !== 0 }" aria-label="切换顺序、列表循环或单曲循环" @click="emit('order')">
-        <Repeat1 v-if="playbackOrder === 2" :size="17" />
+      <button :class="{ active: shuffleEnabled || playbackOrder !== 0 }" :disabled="shuffleBusy" :aria-label="modeTitle" :title="modeTitle" @click="emit('order')">
+        <Shuffle v-if="shuffleEnabled" :size="17" />
+        <Repeat1 v-else-if="playbackOrder === 2" :size="17" />
         <Repeat v-else :size="17" />
       </button>
       <button :class="{ active: nowPlayingOpen }" aria-label="沉浸播放" @click="emit('immersive')"><Mic2 :size="17" /></button>
