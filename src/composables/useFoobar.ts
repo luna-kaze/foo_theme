@@ -48,6 +48,7 @@ const state = reactive<PlayerUiState>({
   queue: [],
   currentTrack: null,
   playbackTracks: [],
+  playbackPlanIds: [],
   playbackTrackIndex: -1,
   playingPlaylistIndex: -1,
   currentArtwork: '',
@@ -147,6 +148,7 @@ async function syncWorkspaceProjection() {
       const current = position.track ? normalizeTrack(position.track) : state.currentTrack!
       const anchor = { ...current, playbackId: `continuing:${state.playingPlaylistIndex}:${position.index}:${trackKey(current)}`, playbackPlaceholder: true }
       state.playbackTracks = [anchor, ...attachArtwork(snapshot.order.slice(snapshot.index + 1, snapshot.index + 61))]
+      state.playbackPlanIds = [anchor.playbackId, ...snapshot.order.map((track) => track.playbackId!)]
       state.playbackTrackIndex = 0
     } else if (snapshot) setPlaybackWindow(attachArtwork(snapshot.order), snapshot.index, snapshot.order[0]?.playbackPlaylistIndex ?? -1, state.playingPlaylistIndex)
   } else {
@@ -398,6 +400,7 @@ function useDemoData() {
   state.queue = mockQueue.map((item, sourceIndex) => ({ ...item, queueSource: 'explicit', sourceIndex }))
   state.currentTrack = state.tracks[0] ?? null
   state.playbackTracks = state.tracks.slice(0, 61).map((track, sourceIndex) => ({ ...track, sourceIndex }))
+  state.playbackPlanIds = state.playbackTracks.map((track, index) => `playlist:${index}:${trackKey(track)}`)
   state.playbackTrackIndex = state.currentTrack ? 0 : -1
   state.playingPlaylistIndex = -1
   state.currentArtwork = state.currentTrack?.artworkUrl ?? ''
@@ -603,6 +606,7 @@ async function loadQueue() {
 }
 
 function setPlaybackWindow(tracks: DisplayTrack[], currentIndex: number, playlistIndex: number, actualPlaylistIndex = playlistIndex) {
+  state.playbackPlanIds = tracks.map((track, index) => track.playbackId ?? `playlist:${playlistIndex}:${index}:${trackKey(track)}`)
   const start = Math.max(0, currentIndex - 30)
   state.playbackTracks = tracks.slice(start, start + 61).map((track, offset) => ({ ...track, sourceIndex: start + offset, playbackPlaylistIndex: track.playbackPlaylistIndex ?? playlistIndex, playbackId: track.playbackId ?? `playlist:${playlistIndex}:${start + offset}:${trackKey(track)}` }))
   state.playbackTrackIndex = currentIndex - start
@@ -621,6 +625,7 @@ async function loadPlaybackSequence(force = false) {
   }
   if (playlistIndex == null || currentIndex == null || playlistIndex < 0 || currentIndex < 0) {
     state.playbackTracks = state.currentTrack ? [{ ...state.currentTrack, sourceIndex: 0 }] : []
+    state.playbackPlanIds = state.playbackTracks.map((track, index) => `playlist:${index}:${trackKey(track)}`)
     state.playbackTrackIndex = state.currentTrack ? 0 : -1
     state.playingPlaylistIndex = -1
     return
@@ -638,6 +643,7 @@ async function loadPlaybackSequence(force = false) {
   if (generation !== playbackSequenceGeneration) return
   if (generation !== playbackSequenceGeneration) return
   state.playbackTracks = attachArtwork(tracks.map((track, offset) => ({ ...normalizeTrack(track), sourceIndex: start + offset, playbackPlaylistIndex: playlistIndex, playbackId: `playlist:${playlistIndex}:${start + offset}:${trackKey(normalizeTrack(track))}` })))
+  state.playbackPlanIds = state.playbackTracks.map((track) => track.playbackId!)
   state.playbackTrackIndex = currentIndex - start
   state.playingPlaylistIndex = playlistIndex
 }

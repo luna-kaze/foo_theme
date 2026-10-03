@@ -140,6 +140,7 @@ export interface PlayerUiState {
   queue: DisplayQueueItem[]
   currentTrack: DisplayTrack | null
   playbackTracks: DisplayTrack[]
+  playbackPlanIds: string[]
   playbackTrackIndex: number
   playingPlaylistIndex: number
   currentArtwork: string

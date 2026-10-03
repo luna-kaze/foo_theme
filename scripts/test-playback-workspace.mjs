@@ -253,3 +253,46 @@ function fixture() {
   assert.equal(f.order().order[f.order().index].title, source[2].title)
   console.log('PASS: failed source replacement restores the previously registered complete plan')
 }
+
+for (const mode of [0, 1]) {
+  const f = fixture(), w = f.workspace
+  await w.start(source, 3, 'Source', 3)
+  f.pause()
+  const anchorId = f.order().order[0].playbackId
+  f.lists[0].tracks.reverse()
+  assert.equal(await w.reorder(mode), true)
+  const snapshot = f.order()
+  assert.deepEqual([...snapshot.order.map(track => track.path)], source.map(track => track.path), 'restore sorts the entire workset, including the shuffled prefix')
+  assert.equal(snapshot.index, 3)
+  assert.equal(snapshot.order[snapshot.index].playbackId, anchorId)
+  assert.deepEqual(f.live().playback, { state: 'paused', position: 43 })
+  await w.next()
+  assert.equal(f.order().order[f.order().index].title, source[4].title)
+  console.log(`PASS: shuffle restores the full original snapshot for mode ${mode}, preserving decoder and current occurrence`)
+}
+
+for (const manual of [false, true]) {
+  const f = fixture(), w = f.workspace
+  await w.start(source, 3, 'Source', 3)
+  await w.add([source[5]])
+  await w.reorder(0)
+  assert.equal(w.status.staged, true)
+  if (manual) await w.next()
+  else { f.advance(); await w.sync() }
+  const snapshot = f.order()
+  assert.deepEqual([...snapshot.order.map(track => track.path)], [...source, source[5]].map(track => track.path), 'deferred restore must not prepend the old shuffled history')
+  if (manual) assert.equal(snapshot.order[snapshot.index].title, source[4].title)
+  console.log(`PASS: full-order restoration survives ${manual ? 'manual' : 'natural'} deferred handover`)
+}
+
+{
+  const f = fixture(), w = f.workspace
+  await w.start(source, 3, 'Source', 3)
+  const removed = f.order().order.find(track => track.title === source[1].title)
+  await w.remove([removed.playbackId])
+  await w.reorder(1)
+  await w.next()
+  assert.ok(!f.order().order.some(track => track.playbackId === removed.playbackId), 'restore retains explicit removals')
+  assert.deepEqual([...f.order().order.map(track => track.path)], source.filter(track => track.title !== source[1].title).map(track => track.path))
+  console.log('PASS: full source-order restoration retains deleted plan occurrences')
+}

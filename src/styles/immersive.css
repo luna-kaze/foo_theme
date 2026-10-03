@@ -152,7 +152,7 @@
 .coverflow-card { --cover-offset: 0; --cover-distance: 0; position: absolute; top: 50%; left: 50%; width: var(--mode-cover-size); aspect-ratio: 1; padding: 0; overflow: visible; pointer-events: auto; background: transparent; opacity: calc(1 - var(--cover-distance) * .17); transform: translate(-50%,-50%) translateX(calc(var(--cover-offset) * clamp(calc(190px + var(--immersive-p) * 55px),calc(22vw + var(--immersive-p) * 3vw),calc(340px + var(--immersive-p) * 110px)))) translateZ(calc(var(--cover-distance) * (-150px - var(--immersive-p) * 55px))) rotateX(calc(-5deg - var(--immersive-p) * 2deg)) rotateY(calc(-4deg + var(--cover-offset) * (-25deg - var(--immersive-p) * 5deg))) scale(calc(1 - var(--cover-distance) * .1)); transform-style: preserve-3d; transition: transform 620ms cubic-bezier(.18,.82,.16,1), opacity 420ms ease, filter 420ms ease; z-index: calc(20 - var(--cover-distance)); }
 .coverflow-card.far { pointer-events: none; opacity: 0; }
 .coverflow.is-order-reflowing .coverflow-card { transition: none; animation: none; }
-.coverflow-card.is-order-leaving { pointer-events: none; }
+.coverflow-card.is-order-leaving { pointer-events: none; z-index: 1; }
 .coverflow__shuffle-info { display: block; margin-bottom: 8px; color: var(--accent); font-size: 10px; }
 .coverflow-card.active { filter: drop-shadow(0 32px 40px rgba(0,0,0,.42)); transform: translate(-50%,-50%) translateZ(0) rotateX(0) rotateY(0) scale(1); }
 .coverflow-card.idle { cursor: default; }

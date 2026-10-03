@@ -22,7 +22,7 @@ export function createPlaybackWorkspace(deps: Dependencies) {
   let planned: Buffer | null = null
   let bridge: Bridge | null = null
   let canonical: DisplayTrack[] = []
-  let deferred: { tracks: DisplayTrack[]; base: DisplayTrack[]; mode: PlaybackMode } | null = null
+  let deferred: { tracks: DisplayTrack[]; base: DisplayTrack[]; mode: PlaybackMode; restoreOrder?: boolean } | null = null
   let serial: Promise<unknown> = Promise.resolve()
   let ownedStop = false
   let actualPosition = -1
@@ -127,11 +127,11 @@ export function createPlaybackWorkspace(deps: Dependencies) {
       ownedStop = false
     }
   }
-  async function commit(tracks: DisplayTrack[], base: DisplayTrack[], mode: PlaybackMode) {
+  async function commit(tracks: DisplayTrack[], base: DisplayTrack[], mode: PlaybackMode, restoreOrder = false) {
     if (!actual) throw new Error('请先选择曲目开始播放。')
     if (planned && bridge && mode !== 2) {
       await nativeMode(mode)
-      deferred = { tracks, base, mode }
+      deferred = { tracks, base, mode, restoreOrder }
       status.mode = mode
       publish(); await save(); return
     }
@@ -173,6 +173,12 @@ export function createPlaybackWorkspace(deps: Dependencies) {
     publish(true)
     await save()
   }
+  function deferredOrder(next: NonNullable<typeof deferred>, index: number) {
+    if (next.restoreOrder) return next.tracks
+    const history = actual!.tracks.slice(0, index + 1)
+    const ids = new Set(history.map((track) => track.playbackId))
+    return [...history, ...next.tracks.filter((track) => !ids.has(track.playbackId))]
+  }
   async function syncInternal() {
     if (!actual) return
     const live = await location()
@@ -184,17 +190,11 @@ export function createPlaybackWorkspace(deps: Dependencies) {
       publish()
       if (deferred) {
         const next = deferred
-        // Latest edits stay ordered but already consumed items do not reappear.
-        const history = actual.tracks.slice(0, live.index + 1)
-        const historyIds = new Set(history.map((track) => track.playbackId))
-        const rest = next.tracks.filter((track) => !historyIds.has(track.playbackId))
-        await commit([...history, ...rest], next.base, next.mode)
+        await commit(deferredOrder(next, live.index), next.base, next.mode, next.restoreOrder)
       } else await save()
     } else if (live.name === actual.name && !planned && deferred) {
       const next = deferred
-      const history = actual.tracks.slice(0, live.index + 1)
-      const ids = new Set(history.map((track) => track.playbackId))
-      await commit([...history, ...next.tracks.filter((track) => !ids.has(track.playbackId))], next.base, next.mode)
+      await commit(deferredOrder(next, live.index), next.base, next.mode, next.restoreOrder)
     } else if (live.name !== actual.name && !planned && !bridge) {
       status.ready = false
       publish()
@@ -272,7 +272,7 @@ export function createPlaybackWorkspace(deps: Dependencies) {
       const index = target.findIndex((track) => track.playbackId === id)
       if (index < 0 && !(live.index < 0 && (bridge?.name === actual.name || !deps.connected()))) throw new Error('无法定位当前播放条目。')
       const next = run([...target], index)
-      await commit(next, [...(deferred?.base ?? canonical), ...added], deferred?.mode ?? status.mode)
+      await commit(next, [...(deferred?.base ?? canonical), ...added], deferred?.mode ?? status.mode, deferred?.restoreOrder)
     })
   }
   return {
@@ -316,11 +316,13 @@ export function createPlaybackWorkspace(deps: Dependencies) {
       const rest = target.slice(current + 1)
       const base = deferred?.base ?? canonical
       const positions = new Map(base.map((track, index) => [track.playbackId, index]))
-      const ordered = mode === 3 ? shuffleIndices(rest.length).map((index) => rest[index]) : rest.sort((a, b) => (positions.get(a.playbackId) ?? 0) - (positions.get(b.playbackId) ?? 0))
-      if (!planned && !deferred && ordered.every((track, index) => track.playbackId === target[current + 1 + index]?.playbackId) && actual.name.startsWith('正在播放 ')) {
+      const restoreOrder = mode === 0 || mode === 1
+      const ordered = restoreOrder ? [...target].sort((a, b) => (positions.get(a.playbackId) ?? 0) - (positions.get(b.playbackId) ?? 0))
+        : mode === 3 ? [...history, ...shuffleIndices(rest.length).map((index) => rest[index])] : [...target]
+      if (!planned && !deferred && ordered.every((track, index) => track.playbackId === target[index]?.playbackId) && actual.name.startsWith('正在播放 ')) {
         await nativeMode(mode); await stopAtBoundary(false); status.mode = mode; publish(); await save(); return
       }
-      await commit([...history, ...ordered], base, mode)
+      await commit(ordered, base, mode, restoreOrder || deferred?.restoreOrder)
     }),
     remove: (ids: string[]) => edit((order, index) => order.filter((track, position) => position <= index || !ids.includes(track.playbackId ?? ''))),
     moveNext: (id: string) => edit((order, index) => {
@@ -340,9 +342,7 @@ export function createPlaybackWorkspace(deps: Dependencies) {
         if (live.name === planned.name) await syncInternal()
         else {
           const latest = deferred; planned = null
-          const history = actual.tracks.slice(0, live.index + 1)
-          const ids = new Set(history.map((track) => track.playbackId))
-          await commit([...history, ...latest.tracks.filter((track) => !ids.has(track.playbackId))], latest.base, latest.mode)
+          await commit(deferredOrder(latest, live.index), latest.base, latest.mode, latest.restoreOrder)
         }
       }
       if (deps.connected()) {
@@ -385,9 +385,7 @@ export function createPlaybackWorkspace(deps: Dependencies) {
       if (target === planned) { actual = planned; planned = null }
       if (deferred) {
         const latest = deferred
-        const history = actual!.tracks.slice(0, index + 1)
-        const ids = new Set(history.map((track) => track.playbackId))
-        await commit([...history, ...latest.tracks.filter((track) => !ids.has(track.playbackId))], latest.base, latest.mode)
+        await commit(deferredOrder(latest, index), latest.base, latest.mode, latest.restoreOrder)
       }
       await syncInternal(); publish()
     }),
