@@ -1911,7 +1911,7 @@ async function restorePlaybackPlan() {
   if (!await ensurePlaybackWorkspace()) return
   if (!await playbackWorkspace.restoreOrder()) return
   await refreshWorkspace()
-  notify(state.shuffleStaged ? '原序计划已更新，等待安全提交。' : '已恢复工作集原始顺序', 'success')
+  notify(state.shuffleStaged ? '待播放原序已更新，保留人工编辑，等待安全提交。' : '已恢复待播放原序，保留人工编辑', 'success')
 }
 
 async function createPlaylist(name: string) {

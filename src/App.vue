@@ -19,6 +19,7 @@ import type { AlbumCard, ArtistCard, DisplayTrack, LibraryFolderCard, RouteScene
 import { menuIcons, showContextMenu, type ContextMenuItem } from './utils/contextMenu'
 import { isSameTrack, localFilePath, playablePath, trackKey } from './utils/track'
 import { createNavigationTransitions } from './utils/navigationTransition'
+import { installAutoHideScrollbars } from './utils/autoHideScrollbars'
 import { groupAlphabetically } from './utils/alphabetIndex'
 import { artistPortraitUrl, chooseArtistPhoto, configureArtistProfiles, ensureLocalArtistProfile, loadOnlineArtistProfile, openArtistSource, resetArtistPhoto } from './composables/useArtistProfiles'
 
@@ -479,7 +480,9 @@ function onKeydown(event: KeyboardEvent) {
   }
 }
 
+let disposeScrollbars: (() => void) | undefined
 onMounted(() => {
+  disposeScrollbars = installAutoHideScrollbars()
   void player.initialize()
   if (miniMode) document.body.classList.add('mini-window')
   window.addEventListener('keydown', onKeydown)
@@ -492,6 +495,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  disposeScrollbars?.()
   sceneWaiters.forEach((finish) => finish())
   navigationTransitions.cancel()
   document.body.classList.remove('mini-window')

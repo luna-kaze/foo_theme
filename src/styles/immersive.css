@@ -134,8 +134,7 @@
 
 .immersive-lyrics { position: relative; min-width: 0; overflow: hidden; mask-image: linear-gradient(transparent,#000 18%,#000 82%,transparent); z-index: 8; }
 .immersive-lyrics::before { position: absolute; inset: 0; content: ""; pointer-events: none; background: radial-gradient(ellipse at 24% 50%,rgba(255,255,255,.025),transparent 60%); }
-.immersive-lyrics__scroll { position: absolute; inset: 0; display: flex; flex-direction: column; padding: calc(42vh + var(--immersive-p) * 2vh) clamp(30px,calc(5vw + var(--immersive-p) * 1.5vw),calc(86px + var(--immersive-p) * 36px)); overflow-y: auto; scrollbar-width: none; }
-.immersive-lyrics__scroll::-webkit-scrollbar { display: none; }
+.immersive-lyrics__scroll { position: absolute; inset: 0; display: flex; flex-direction: column; padding: calc(42vh + var(--immersive-p) * 2vh) clamp(30px,calc(5vw + var(--immersive-p) * 1.5vw),calc(86px + var(--immersive-p) * 36px)); overflow-y: auto; }
 .immersive-lyrics__scroll > button:not(.lyrics-follow) { width: 100%; padding: calc(10px + var(--immersive-p) * 2px) 0; color: rgba(255,255,255,.16); font-family: "Segoe UI Variable Display","Segoe UI","Microsoft YaHei UI",sans-serif; font-size: clamp(20px,calc(2.35vw + var(--immersive-p) * .42vmin),calc(36px + var(--immersive-p) * 8px)); font-weight: 710; letter-spacing: -.035em; line-height: 1.18; text-align: left; background: transparent; transition: color 260ms ease, transform 260ms var(--ease); }
 .immersive-lyrics__scroll > button.past { color: rgba(255,255,255,.075); }
 .immersive-lyrics__scroll > button.active { color: rgba(255,255,255,.96); transform: translateX(8px); }

@@ -8,7 +8,7 @@ const { build } = require('esbuild')
 const compiled = await build({ entryPoints: ['src/composables/playbackWorkspace.ts'], bundle: true, platform: 'node', format: 'cjs', write: false, external: ['foo-webview-sdk', 'vue'] })
 const source = Array.from({ length: 6 }, (_, index) => ({ path: `C:\\Music\\${index}.flac`, subsong: 0, title: `Track ${index}`, artist: 'Artist', album: 'Album', albumArtist: 'Artist', duration: 180 }))
 
-function fixture() {
+function fixture(random = Math.random) {
   const lists = [{ name: 'Source', tracks: [...source] }]
   const queue = [], calls = [], errors = []
   const preferences = new Map()
@@ -60,11 +60,14 @@ function fixture() {
     else { playing = -1; current = -1 }
   }
   const module = { exports: {} }
-  runInNewContext(compiled.outputFiles[0].text, { module, exports: module.exports, require: id => id === 'foo-webview-sdk' ? { ...fb, __esModule: true, default: fb } : require(id), crypto: { randomUUID }, console })
+  const math = Object.create(Math)
+  math.random = random
+  runInNewContext(compiled.outputFiles[0].text, { module, exports: module.exports, require: id => id === 'foo-webview-sdk' ? { ...fb, __esModule: true, default: fb } : require(id), crypto: { randomUUID }, console, Math: math })
   const create = () => module.exports.createPlaybackWorkspace({ connected: () => true, owner: async () => 'test-owner', tracks: async index => lists[index].tracks.map(track => ({ ...track })), publish() {}, notify: message => errors.push(message) })
   const workspace = create()
   return {
     workspace, create, lists, queue, calls, errors, advance, sdk: fb,
+    saved: () => preferences.get('foo-theme.playback-workspace.v1'),
     pause: () => { playback = { state: 'paused', position: 43 } },
     live: () => ({ playing, current, playback, stopAfter }), fail: () => { failAdd = true },
     race: () => { consumeOnRemove = true }, failRemoval: () => { failRemove = true }, failRegistration: () => { failQueueAdd = true },
@@ -130,7 +133,7 @@ function fixture() {
   f.pause()
   await w.shuffle()
   assert.equal(w.status.mode, 0)
-  assert.equal(f.calls.at(-1)[1], 0, 'shuffle uses explicit default-order playback')
+  assert.equal(f.calls.filter(call => call[0] === 'order').at(-1)[1], 0, 'shuffle retains the current default-order playback policy')
   const shuffled = f.order().order.map(track => track.playbackId)
   await w.setMode(2)
   assert.deepEqual([...f.order().order.map(track => track.playbackId)], [...shuffled], 'repeat-one changes policy without rearranging the plan')
@@ -284,13 +287,13 @@ for (const mode of [0, 1]) {
   assert.equal(await w.restoreOrder(), true)
   assert.equal(await w.setMode(mode), true)
   const snapshot = f.order()
-  assert.deepEqual([...snapshot.order.map(track => track.path)], source.map(track => track.path), 'restore sorts the entire workset, including the shuffled prefix')
-  assert.equal(snapshot.index, 3)
+  assert.deepEqual([...snapshot.order.map(track => track.path)], [source[3], ...source.filter(track => track !== source[3])].map(track => track.path), 'restore only sorts the unplayed remainder and keeps the current occurrence in place')
+  assert.equal(snapshot.index, 0)
   assert.equal(snapshot.order[snapshot.index].playbackId, anchorId)
   assert.deepEqual(f.live().playback, { state: 'paused', position: 43 })
   await w.next()
-  assert.equal(f.order().order[f.order().index].title, source[4].title)
-  console.log(`PASS: shuffle restores the full original snapshot for mode ${mode}, preserving decoder and current occurrence`)
+  assert.equal(f.order().order[f.order().index].title, source[0].title)
+  console.log(`PASS: pending-only restoration for mode ${mode}, preserving decoder, current position and history`)
 }
 
 for (const manual of [false, true]) {
@@ -300,13 +303,17 @@ for (const manual of [false, true]) {
   const blocker = f.protect()
   await w.restoreOrder()
   assert.equal(w.status.staged, true)
+  const before = f.order()
+  const history = before.order.slice(0, before.index + (manual ? 1 : 2))
+  const ids = new Set(history.map(track => track.playbackId))
+  const expected = [...history, ...f.editor().base.filter(track => !ids.has(track.playbackId))]
   f.release(blocker)
   if (manual) await w.next()
   else { f.advance(); await w.sync() }
   const snapshot = f.order()
-  assert.deepEqual([...snapshot.order.map(track => track.path)], [...source, source[5]].map(track => track.path), 'deferred restore must not prepend the old shuffled history')
-  if (manual) assert.equal(snapshot.order[snapshot.index].title, source[4].title)
-  console.log(`PASS: full-order restoration survives ${manual ? 'manual' : 'natural'} deferred handover`)
+  assert.deepEqual([...snapshot.order.map(track => track.playbackId)], expected.map(track => track.playbackId), 'deferred restore preserves the actually consumed history and sorts only surviving future items')
+  if (manual) assert.equal(snapshot.order[snapshot.index].title, source[0].title)
+  console.log(`PASS: pending-only restoration survives ${manual ? 'manual' : 'natural'} deferred handover`)
 }
 
 {
@@ -318,8 +325,8 @@ for (const manual of [false, true]) {
   await w.setMode(1)
   await w.next()
   assert.ok(!f.order().order.some(track => track.playbackId === removed.playbackId), 'restore retains explicit removals')
-  assert.deepEqual([...f.order().order.map(track => track.path)], source.filter(track => track.title !== source[1].title).map(track => track.path))
-  console.log('PASS: full source-order restoration retains deleted plan occurrences')
+  assert.deepEqual([...f.order().order.map(track => track.path)], [source[3], ...source.filter(track => track !== source[3] && track !== source[1])].map(track => track.path))
+  console.log('PASS: pending-only restoration retains deleted plan occurrences')
 }
 
 for (const mode of [0, 1, 2]) {
@@ -395,10 +402,12 @@ for (const failure of ['failRemoval', 'failRegistration']) {
   await w.add([source[5]])
   f.pause()
   const before = f.order().order.map(track => track.playbackId)
+  const baseline = f.editor().base.map(track => track.playbackId)
   const beforeBridge = { ...f.queue[0] }
   f[failure]()
   assert.equal(await w.add([source[0]], true), false)
   assert.deepEqual([...f.order().order.map(track => track.playbackId)], [...before])
+  assert.deepEqual([...f.editor().base.map(track => track.playbackId)], [...baseline], 'failed edits do not change the restore baseline')
   assert.deepEqual(f.queue, [beforeBridge])
   assert.deepEqual(f.live().playback, { state: 'paused', position: 43 })
   assert.equal(await w.add([source[4]], true), true)
@@ -532,4 +541,117 @@ for (const mode of [0, 1, 2]) {
   assert.equal(f.queue[0].playlistItem, 0)
   assert.deepEqual([...f.order().order.map(track => track.playbackId)], [...ids])
   console.log('PASS: policy changes at the plan end cancel/restore loop scheduling without changing the workset')
+}
+
+{
+  const f = fixture(() => 0), w = f.workspace
+  await w.start(source, 1, 'Source')
+  f.lists[0].tracks.reverse()
+  await w.shuffle()
+  await w.add([source[0]], true)
+  const inserted = f.editor().order[f.editor().index + 1]
+  const removed = f.editor().order.find(track => track.title === source[4].title)
+  await w.remove([removed.playbackId])
+  await w.shuffle()
+  f.pause()
+  assert.equal(await w.restoreOrder(), true)
+  const snapshot = f.order()
+  assert.deepEqual([...snapshot.order.map(track => track.path)], [source[0], source[1], source[0], source[2], source[3], source[5]].map(track => track.path))
+  assert.equal(snapshot.order[snapshot.index + 1].playbackId, inserted.playbackId)
+  assert.notEqual(snapshot.order[0].playbackId, inserted.playbackId, 'duplicate file occurrences remain distinct')
+  assert.ok(!snapshot.base.some(track => track.playbackId === removed.playbackId))
+  assert.deepEqual(f.live().playback, { state: 'paused', position: 43 })
+  console.log('PASS: shuffle / insert-next / delete / reshuffle / restore retains explicit edits and ignores source changes')
+}
+
+{
+  const f = fixture(() => 0), w = f.workspace
+  await w.start(source, 1, 'Source')
+  await w.shuffle()
+  await w.next(); await w.next()
+  assert.equal(f.order().order[f.order().index].title, source[4].title)
+  const moved = f.editor().order.find(track => track.title === source[5].title)
+  await w.moveNext(moved.playbackId)
+  await w.add([source[0]], true)
+  const inserted = f.editor().order[f.editor().index + 1]
+  const before = f.order()
+  const history = before.order.slice(0, before.index + 1).map(track => track.playbackId)
+  await w.shuffle()
+  f.pause()
+  await w.restoreOrder()
+  const restored = f.order()
+  assert.deepEqual([...restored.order.slice(0, restored.index + 1).map(track => track.playbackId)], [...history])
+  assert.equal(restored.index, before.index)
+  assert.deepEqual([...restored.order.slice(restored.index + 1).map(track => track.playbackId)], [inserted.playbackId, moved.playbackId, before.order.find(track => track.title === source[2].title).playbackId])
+  assert.deepEqual(f.live().playback, { state: 'paused', position: 43 })
+  console.log('PASS: late-baseline current track keeps actual history; new/moved Next priorities survive restore')
+}
+
+{
+  const f = fixture(() => 0), w = f.workspace
+  await w.start(source, 1, 'Source')
+  const removed = new Set(f.editor().order.slice(2).map(track => track.playbackId))
+  await w.shuffle(); await w.clear()
+  await w.add([source[5]])
+  await w.add([source[0]], true)
+  const expected = f.editor().base.map(track => track.playbackId)
+  await w.shuffle(); await w.restoreOrder()
+  assert.deepEqual([...f.order().order.map(track => track.playbackId)], [...expected])
+  assert.ok(f.order().base.every(track => !removed.has(track.playbackId)))
+  console.log('PASS: clear removes future baseline occurrences; append and Next rebuild an editable baseline')
+}
+
+{
+  const f = fixture(() => 0), w = f.workspace
+  await w.start(source, 1, 'Source')
+  await w.shuffle(); await w.add([source[0]], true)
+  const removed = f.editor().order.find(track => track.title === source[4].title)
+  await w.remove([removed.playbackId])
+  const moved = f.editor().order.find(track => track.title === source[5].title)
+  await w.moveNext(moved.playbackId)
+  const expected = f.editor().base.map(track => track.playbackId)
+  await w.shuffle(); f.pause()
+  const restored = f.create()
+  await restored.restore(); await restored.restoreOrder()
+  assert.deepEqual([...restored.projection(f.live().current).order.map(track => track.playbackId)], [...expected])
+  assert.equal(f.saved().baselineVersion, 2)
+  assert.deepEqual(f.live().playback, { state: 'paused', position: 43 })
+  console.log('PASS: restart retains insertion, movement and deletion baseline metadata without restarting playback')
+}
+
+{
+  const f = fixture(() => 0), w = f.workspace
+  await w.start(source, 1, 'Source'); await w.shuffle()
+  const blocker = f.protect()
+  await w.add([source[0]], true)
+  await w.restoreOrder(); await w.shuffle()
+  const latest = f.editor().order.map(track => track.playbackId)
+  assert.equal(f.saved().deferred.restoreOrder, false, 'a later shuffle supersedes a deferred restore request')
+  const history = f.order().order.slice(0, f.order().index + 2).map(track => track.playbackId)
+  const ids = new Set(history)
+  const restored = f.create()
+  await restored.restore()
+  f.release(blocker); f.advance(); await restored.sync()
+  let snapshot = restored.projection(f.live().current)
+  assert.deepEqual([...snapshot.order.map(track => track.playbackId)], [...history, ...latest.filter(id => !ids.has(id))])
+  const expected = [...history, ...snapshot.base.map(track => track.playbackId).filter(id => !ids.has(id))]
+  f.pause(); await restored.restoreOrder()
+  snapshot = restored.projection(f.live().current)
+  assert.deepEqual([...snapshot.order.map(track => track.playbackId)], expected)
+  assert.deepEqual(f.live().playback, { state: 'paused', position: 43 })
+  console.log('PASS: deferred edits survive restart and natural handover; restore does not overwrite a later shuffle')
+}
+
+{
+  const f = fixture(() => 0), w = f.workspace
+  await w.start(source, 1, 'Source'); await w.shuffle()
+  await w.add([source[0]], true); await w.shuffle()
+  const expected = f.order().order.map(track => track.playbackId)
+  delete f.saved().baselineVersion
+  f.saved().base = f.saved().base.reverse().map(track => ({ id: track.playbackId, path: track.path }))
+  const restored = f.create()
+  await restored.restore(); await restored.restoreOrder()
+  assert.deepEqual([...restored.projection(f.live().current).order.map(track => track.playbackId)], [...expected])
+  assert.equal(f.saved().baselineVersion, 2)
+  console.log('PASS: legacy cache migration keeps verifiable current order rather than guessing old edit positions')
 }

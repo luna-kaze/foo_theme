@@ -605,7 +605,7 @@ onBeforeUnmount(() => {
         </div>
         <div class="immersive-toolbar__actions">
           <button v-if="mode === 'coverflow'" class="immersive-tool" :disabled="shuffleBusy || !playbackTracks.length" aria-label="随机重排待播放曲目" @click="emit('shuffle')"><Shuffle :size="18" /><span>随机重排</span></button>
-          <button v-if="mode === 'coverflow'" class="immersive-tool" :disabled="shuffleBusy || !playbackTracks.length" aria-label="恢复工作集原始顺序" @click="emit('restoreOrder')"><RotateCcw :size="18" /><span>恢复原序</span></button>
+          <button v-if="mode === 'coverflow'" class="immersive-tool" :disabled="shuffleBusy || !playbackTracks.length" aria-label="恢复待播放原序，保留人工编辑" title="恢复待播放原序，保留人工编辑；当前曲及播放历史不变" @click="emit('restoreOrder')"><RotateCcw :size="18" /><span>恢复原序</span></button>
           <button v-if="mode === 'standard'" class="immersive-tool" :aria-label="lyricsVisible ? '隐藏歌词' : '显示歌词'" @click="lyricsVisible = !lyricsVisible">
             <EyeOff v-if="lyricsVisible" :size="18" /><Eye v-else :size="18" /><span>{{ lyricsVisible ? '隐藏歌词' : '显示歌词' }}</span>
           </button>

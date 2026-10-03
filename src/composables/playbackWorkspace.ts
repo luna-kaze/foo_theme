@@ -68,6 +68,7 @@ export function createPlaybackWorkspace(deps: Dependencies) {
     if (!deps.connected() || !actual) return
     try {
       await fb.config.set(key, {
+        baselineVersion: 2,
         mode: status.mode, sourceName: status.sourceName, actual: actual.name, planned: planned?.name ?? '', bridge, ownedStop,
         seed: actualPosition < 0 && !planned && bridge?.name === actual.name,
         actualIds: actual.tracks.map((track) => track.playbackId), actualKeys: actual.tracks.map(trackKey),
@@ -190,6 +191,7 @@ export function createPlaybackWorkspace(deps: Dependencies) {
       }
       actualPosition = live.index
     }
+    tracks = deferredOrder({ tracks, base, mode, restoreOrder }, live.index)
     const currentId = actual.tracks[live.index]?.playbackId
     let current = tracks.findIndex((track) => track.playbackId === currentId)
     // Do not remove the decoder's item; if absent, keep it as this cycle's anchor.
@@ -204,7 +206,14 @@ export function createPlaybackWorkspace(deps: Dependencies) {
     }
     try {
       await fill(target, tracks)
-      const latest = await location()
+      let latest = await location()
+      if (!seeded && latest.name === actual.name && latest.index !== live.index) {
+        const aligned = deferredOrder({ tracks, base, mode, restoreOrder }, latest.index)
+        const position = latest.index
+        await fill(target, aligned)
+        latest = await location()
+        if (latest.name !== actual.name || latest.index !== position) throw new Error('切歌尚未稳定，请重新修改计划。')
+      }
       const latestId = actual.tracks[latest.index]?.playbackId
       current = target.tracks.findIndex((track) => track.playbackId === latestId)
       if (!seeded && (latest.name !== actual.name || current < 0)) throw new Error('播放位置已变化，请重新修改计划。')
@@ -231,11 +240,16 @@ export function createPlaybackWorkspace(deps: Dependencies) {
     publish(true)
     await save()
   }
+  function restoreRemaining(base: DisplayTrack[], order: DisplayTrack[], index: number) {
+    const positions = new Map(base.map((track, position) => [track.playbackId, position]))
+    const pending = order.slice(index + 1).sort((a, b) => (positions.get(a.playbackId) ?? Number.MAX_SAFE_INTEGER) - (positions.get(b.playbackId) ?? Number.MAX_SAFE_INTEGER))
+    return [...order.slice(0, index + 1), ...pending]
+  }
   function deferredOrder(next: NonNullable<typeof deferred>, index: number) {
-    if (next.restoreOrder) return next.tracks
     const history = actual!.tracks.slice(0, index + 1)
     const ids = new Set(history.map((track) => track.playbackId))
-    return [...history, ...next.tracks.filter((track) => !ids.has(track.playbackId))]
+    const order = [...history, ...next.tracks.filter((track) => !ids.has(track.playbackId))]
+    return next.restoreOrder ? restoreRemaining(next.base, order, history.length - 1) : order
   }
   async function syncInternal() {
     if (!actual) return
@@ -305,11 +319,12 @@ export function createPlaybackWorkspace(deps: Dependencies) {
   function projection(index: number, edited = false): Snapshot | null {
     const current = actual?.tracks[external ? actualPosition : index]
     const target = edited && deferred ? { name: 'editor', index: -1, tracks: deferred.tracks } : planned ?? actual
+    const base = edited && deferred ? deferred.base : canonical
     if (!status.ready || !actual || !target) return null
-    if (!current) return { sourceName: status.sourceName, base: canonical, order: indexed(target), index: -1, external }
+    if (!current) return { sourceName: status.sourceName, base, order: indexed(target), index: -1, external }
     const order = indexed(target)
     const focused = order.findIndex((track) => track.playbackId === current.playbackId)
-    return { sourceName: status.sourceName, base: canonical, order, index: focused >= 0 ? focused : 0, external }
+    return { sourceName: status.sourceName, base, order, index: focused >= 0 ? focused : 0, external }
   }
   async function setModeInternal(mode: PlaybackMode) {
     await syncInternal()
@@ -353,15 +368,14 @@ export function createPlaybackWorkspace(deps: Dependencies) {
       const id = actual.tracks[external ? actualPosition : live.index]?.playbackId
       const current = target.findIndex((track) => track.playbackId === id)
       const base = deferred?.base ?? canonical
-      const positions = new Map(base.map((track, index) => [track.playbackId, index]))
       const rest = target.slice(current + 1)
-      const ordered = restoreOrder ? [...target].sort((a, b) => (positions.get(a.playbackId) ?? 0) - (positions.get(b.playbackId) ?? 0))
+      const ordered = restoreOrder ? restoreRemaining(base, target, current)
         : [...target.slice(0, current + 1), ...shuffleIndices(rest.length).map((index) => rest[index])]
       if (!deferred && ordered.every((track, index) => track.playbackId === target[index]?.playbackId)) return
-      await commit(ordered, base, status.mode, restoreOrder || deferred?.restoreOrder)
+      await commit(ordered, base, status.mode, restoreOrder)
     })
   }
-  function edit(run: (order: DisplayTrack[], index: number) => DisplayTrack[], added: DisplayTrack[] = []) {
+  function edit(run: (order: DisplayTrack[], index: number) => DisplayTrack[]) {
     return transaction(async () => {
       await syncInternal()
       if (!actual) throw new Error('请先选择曲目开始播放。')
@@ -371,7 +385,11 @@ export function createPlaybackWorkspace(deps: Dependencies) {
       const index = target.findIndex((track) => track.playbackId === id)
       if (index < 0 && !(live.index < 0 && (bridge?.name === actual.name || !deps.connected()))) throw new Error('无法定位当前播放条目。')
       const next = run([...target], index)
-      await commit(next, [...(deferred?.base ?? canonical), ...added], deferred?.mode ?? status.mode, deferred?.restoreOrder)
+      // Apply the same explicit edit to both the playing permutation and its
+      // non-random baseline. Normalize history first so Next stays first even
+      // when shuffle has already played a late-baseline item.
+      const base = run(restoreRemaining(deferred?.base ?? canonical, target, index), index)
+      await commit(next, base, deferred?.mode ?? status.mode, deferred?.restoreOrder)
     })
   }
   return {
@@ -402,7 +420,7 @@ export function createPlaybackWorkspace(deps: Dependencies) {
     }),
     add: (tracks: DisplayTrack[], first = false) => {
       const entries = identify(tracks).map((track) => ({ ...track, playbackQueued: true }))
-      return edit((order, index) => { order.splice(first ? index + 1 : order.length, 0, ...entries); return order }, entries)
+      return edit((order, index) => { order.splice(first ? index + 1 : order.length, 0, ...entries); return order })
     },
     shuffle: () => reorderPlan(false),
     restoreOrder: () => reorderPlan(true),
@@ -463,7 +481,7 @@ export function createPlaybackWorkspace(deps: Dependencies) {
     restore: async () => {
       if (!deps.connected()) return
       try {
-        const saved = (await fb.config.get(key)).value as { mode: PlaybackMode; sourceName: string; actual: string; planned: string; bridge: Bridge | null; ownedStop?: boolean; seed?: boolean; actualIds: string[]; actualKeys: string[]; plannedIds: string[]; plannedKeys: string[]; queuedIds?: string[]; base: DisplayTrack[]; deferred?: typeof deferred } | null
+        const saved = (await fb.config.get(key)).value as { baselineVersion?: number; mode: PlaybackMode; sourceName: string; actual: string; planned: string; bridge: Bridge | null; ownedStop?: boolean; seed?: boolean; actualIds: string[]; actualKeys: string[]; plannedIds: string[]; plannedKeys: string[]; queuedIds?: string[]; base: DisplayTrack[]; deferred?: typeof deferred } | null
         if (!saved?.actual || ![0, 1, 2, 3].includes(saved.mode)) return
         const suffix = `[foo-theme:${await deps.owner()}]`
         const ownedNames = [`正在播放 A ${suffix}`, `正在播放 B ${suffix}`]
@@ -496,9 +514,14 @@ export function createPlaybackWorkspace(deps: Dependencies) {
         }
         const all = [...actual.tracks, ...planned?.tracks ?? []]
         const validEntries = (entries: DisplayTrack[]) => Array.isArray(entries) && entries.every((track) => typeof track.path === 'string' && typeof track.playbackId === 'string' && track.playbackId.startsWith('work:') && typeof track.title === 'string' && typeof track.duration === 'number') && new Set(entries.map((track) => track.playbackId)).size === entries.length
-        if (!validEntries(saved.base)) { actual = null; planned = null; return }
-        canonical = saved.base
-        deferred = saved.deferred && validEntries(saved.deferred.tracks) && validEntries(saved.deferred.base) && [0, 1, 2, 3].includes(saved.deferred.mode) ? saved.deferred : null
+        if (saved.baselineVersion === 2 && !validEntries(saved.base)) { actual = null; planned = null; return }
+        canonical = saved.baselineVersion === 2 ? saved.base : [...(planned ?? actual).tracks]
+        deferred = saved.deferred && validEntries(saved.deferred.tracks) && (saved.baselineVersion !== 2 || validEntries(saved.deferred.base)) && [0, 1, 2, 3].includes(saved.deferred.mode) ? saved.deferred : null
+        if (saved.baselineVersion !== 2) {
+          // Legacy caches never recorded manual insertion/move positions. Keep
+          // their verifiable current order instead of guessing edit history.
+          if (deferred) { deferred.base = [...deferred.tracks]; deferred.restoreOrder = false }
+        }
         for (const track of all) track.playbackQueued = saved.queuedIds?.includes(track.playbackId!) ?? false
         const currentQueue = await fb.queue.get()
         const candidate = saved.bridge
@@ -507,7 +530,7 @@ export function createPlaybackWorkspace(deps: Dependencies) {
         ownedStop = Boolean(saved.ownedStop)
         status.mode = Number(saved.mode) === 3 ? 0 : saved.mode; status.sourceName = saved.sourceName; status.ready = true
         if (deferred) deferred.mode = status.mode
-        await syncInternal(); publish()
+        await syncInternal(); publish(); await save()
       } catch { /* Invalid saved data leaves native playback untouched. */ }
     },
   }
