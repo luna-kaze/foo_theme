@@ -1,5 +1,6 @@
 type Tier = 'near' | 'shrinking' | 'high' | 'restoring' | 'inactive'
 type Bucket = { frames: number[]; events: Record<string, { count: number; totalMs: number; maxMs: number; items: number }> }
+export type CoverflowPerformanceReport = ReturnType<typeof report>
 const tiers: Tier[] = ['near', 'shrinking', 'high', 'restoring', 'inactive']
 let tier: Tier = 'near', previousTier: Tier = 'near', enabled = false, frame = 0, timer = 0, started = 0, previous = 0
 let observer: PerformanceObserver | null = null

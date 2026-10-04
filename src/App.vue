@@ -13,6 +13,7 @@ import QueuePopover from './components/QueuePopover.vue'
 import TrackInspector from './components/TrackInspector.vue'
 import FileOperationDialog from './components/FileOperationDialog.vue'
 import TrackActionMenu from './components/TrackActionMenu.vue'
+import CoverflowPerformanceDialog from './components/CoverflowPerformanceDialog.vue'
 import { routeKey, useFoobar } from './composables/useFoobar'
 import fb, { consoleApi, type ArtistInfo, type OutputDevice, type PlaylistInfo } from 'foo-webview-sdk'
 import type { AlbumCard, ArtistCard, DisplayTrack, LibraryFolderCard, RouteSceneData, TrackDetails, ViewId } from './types/music'
@@ -21,6 +22,7 @@ import { isSameTrack, localFilePath, playablePath, trackKey } from './utils/trac
 import { createNavigationTransitions } from './utils/navigationTransition'
 import { installAutoHideScrollbars } from './utils/autoHideScrollbars'
 import { coverflowPerformance, installCoverflowPerformance } from './utils/coverflowPerformance'
+import type { CoverflowPerformanceReport } from './utils/coverflowPerformance'
 import { groupAlphabetically } from './utils/alphabetIndex'
 import { artistPortraitUrl, chooseArtistPhoto, configureArtistProfiles, ensureLocalArtistProfile, loadOnlineArtistProfile, openArtistSource, resetArtistPhoto } from './composables/useArtistProfiles'
 
@@ -32,6 +34,7 @@ const miniMode = new URLSearchParams(window.location.search).get('mode') === 'mi
 const trackMenu = reactive({ open: false, track: null as DisplayTrack | null, tracks: [] as DisplayTrack[], index: -1, x: 0, y: 0 })
 const dragState = reactive({ active: false, depth: 0 })
 const queueOpen = ref(false)
+const coverflowPerformanceReport = ref<CoverflowPerformanceReport | null>(null)
 const themeSettingsOpen = ref(false)
 const outputDevices = ref<OutputDevice[]>([])
 const outputLoading = ref(false)
@@ -456,7 +459,8 @@ function onKeydown(event: KeyboardEvent) {
       const report = coverflowPerformance.stop()
       console.log('[Coverflow performance]', report)
       if (state.connected) void consoleApi.log(`[Coverflow performance] ${JSON.stringify(report)}`).catch(() => {})
-      player.notify('性能采样已结束，结果已输出到控制台。', 'success')
+      coverflowPerformanceReport.value = report
+      player.notify('性能采样已结束，报告已在主题中打开。', 'success')
     } else { coverflowPerformance.start(); player.notify('性能采样已开始，再按 Ctrl+Alt+P 结束。', 'info') }
     return
   }
@@ -474,6 +478,7 @@ function onKeydown(event: KeyboardEvent) {
     return
   }
   if (event.key === 'Escape') {
+    if (coverflowPerformanceReport.value) { coverflowPerformanceReport.value = null; return }
     state.nowPlayingOpen = false
     state.dialog = null
     inspector.open = false
@@ -1273,6 +1278,7 @@ function onDrop(event: DragEvent) {
         <footer><button class="secondary-button" @click="ipodPlaylistConfirmation = null">取消</button><button class="primary-button" @click="confirmPlaylistIpodTransfer">发送全部曲目</button></footer>
       </section>
     </div>
+    <CoverflowPerformanceDialog v-if="coverflowPerformanceReport" :report="coverflowPerformanceReport" @close="coverflowPerformanceReport = null" />
 
     <Transition name="drop-overlay">
       <div v-if="dragState.active" class="drop-overlay">
