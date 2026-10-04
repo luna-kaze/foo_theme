@@ -506,7 +506,7 @@ for (const mode of [0, 1, 2]) {
   runInNewContext(bundled.outputFiles[0].text, {
     module, exports: module.exports,
     require: id => id === 'foo-webview-sdk' ? { ...f.sdk, __esModule: true, default: f.sdk } : require(id),
-    crypto: { randomUUID }, console, URL, URLSearchParams, performance,
+    crypto: { randomUUID }, console, URL, URLSearchParams, performance, AbortController,
     window: { location: { search: '', href: 'https://theme.test/' } },
     setTimeout: (fn, ms) => { const id = ++timerId; timers.set(id, { fn, at: time + ms }); return id }, clearTimeout: id => timers.delete(id),
   })
@@ -533,7 +533,7 @@ for (const mode of [0, 1, 2]) {
   const selected = player.state.playbackPreviewId
   assert.ok(selected)
   assert.equal(f.calls.filter(call => call[0] === 'play').length, plays)
-  tick(180)
+  tick(350)
   await Promise.all([first, second, third])
   assert.equal(f.calls.filter(call => call[0] === 'play').length, plays + 1)
   assert.equal(player.state.playbackTracks[player.state.playbackTrackIndex].playbackId, selected)
@@ -545,6 +545,25 @@ for (const mode of [0, 1, 2]) {
   assert.equal(f.calls.filter(call => call[0] === 'play').length, plays + 1)
   assert.equal(player.state.playbackPreviewId, null)
   console.log('PASS: real next/next/previous handlers coalesce decoder startup; explicit seek cancels a pending preview')
+  player.setPlaybackFocusState({ active: true, id: null, request: 0, settled: false })
+  const cardTarget = player.state.playbackTracks[player.state.playbackTrackIndex + 1]
+  const card = player.playPlaybackTrack(cardTarget)
+  const cardRequest = player.state.playbackPreviewRequest
+  tick(350); for (let index = 0; index < 8; index++) await Promise.resolve()
+  assert.equal(f.calls.filter(call => call[0] === 'play').length, plays + 1, 'Coverflow playback must wait for the visible cover to arrive')
+  player.setPlaybackFocusState({ active: true, id: cardTarget.playbackId, request: cardRequest - 1, settled: true })
+  const queueTarget = player.state.queue[1]
+  const queue = player.playQueueItem(1)
+  const queueRequest = player.state.playbackPreviewRequest
+  tick(350); for (let index = 0; index < 8; index++) await Promise.resolve()
+  assert.equal(f.calls.filter(call => call[0] === 'play').length, plays + 1, 'queue playback uses the same quiet/visual barrier instead of immediate jump')
+  player.setPlaybackFocusState({ active: true, id: queueTarget.playbackId, request: queueRequest, settled: true })
+  await Promise.all([card, queue])
+  assert.equal(f.calls.filter(call => call[0] === 'play').length, plays + 2)
+  assert.equal(player.state.playbackTracks[player.state.playbackTrackIndex].playbackId, queueTarget.playbackId)
+  assert.equal(player.state.playbackPreviewPending, false)
+  player.setPlaybackFocusState({ active: false, id: null, request: 0, settled: true })
+  console.log('PASS: real Coverflow and queue play handlers share the visual gate and never decode an intermediate target')
 }
 
 {
@@ -677,4 +696,20 @@ for (const mode of [0, 1, 2]) {
   assert.deepEqual([...restored.projection(f.live().current).order.map(track => track.playbackId)], [...expected])
   assert.equal(f.saved().baselineVersion, 2)
   console.log('PASS: legacy cache migration keeps verifiable current order rather than guessing old edit positions')
+}
+
+{
+  const f = fixture(), w = f.workspace
+  await f.sdk.playlist.playTrack(0, 0)
+  await w.adopt(source, 0, 'Source', 'Source', 0, 1); await w.sync()
+  const target = w.projection().order[3]
+  await w.jump(target)
+  assert.notEqual(f.live().playing, 0, 'initial native playback is copied into an owned buffer at final selection')
+  assert.equal(w.projection().order[w.projection().index].playbackId, target.playbackId)
+  assert.equal(w.status.mode, 1)
+  f.lists[0].tracks.reverse(); f.pause()
+  await w.restoreOrder()
+  assert.deepEqual([...w.projection().order.map(track => track.path)], source.map(track => track.path))
+  assert.deepEqual(f.live().playback, { state: 'paused', position: 43 })
+  console.log('PASS: adopting host playback establishes an owned immutable workset without playing intermediate songs')
 }

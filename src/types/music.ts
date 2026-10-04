@@ -143,6 +143,8 @@ export interface PlayerUiState {
   playbackPlanIds: string[]
   playbackTrackIndex: number
   playbackPreviewId: string | null
+  playbackPreviewPending: boolean
+  playbackPreviewRequest: number
   playingPlaylistIndex: number
   currentArtwork: string
   lyrics: ParsedLyric[]

@@ -28,17 +28,17 @@ const flush = async () => { for (let index = 0; index < 8; index++) await vue.ne
 const bundled = await build({ entryPoints: ['src/utils/settledNavigation.ts'], bundle: true, platform: 'node', format: 'cjs', write: false })
 const navigationClock = clock()
 const module = { exports: {} }
-runInNewContext(bundled.outputFiles[0].text, { module, exports: module.exports, ...navigationClock })
-const { createSettledNavigation } = module.exports
+runInNewContext(bundled.outputFiles[0].text, { module, exports: module.exports, ...navigationClock, AbortController })
+const { createSettledNavigation, createPlaybackFocusGate } = module.exports
 {
   const previews = [], commits = [], clears = []
   const navigation = createSettledNavigation({ preview: target => previews.push(target), commit: async target => { commits.push(target); return true }, clear: () => clears.push(true) })
   const first = navigation.schedule(1)
-  navigationClock.tick(50)
+  navigationClock.tick(200)
   const second = navigation.schedule(2)
-  navigationClock.tick(50)
+  navigationClock.tick(300)
   const third = navigation.schedule(1)
-  navigationClock.tick(179); await flush()
+  navigationClock.tick(349); await flush()
   assert.deepEqual(commits, [])
   navigationClock.tick(1); await flush()
   assert.deepEqual(previews, [1, 2, 1])
@@ -52,9 +52,9 @@ const { createSettledNavigation } = module.exports
   let release
   const navigation = createSettledNavigation({ preview() {}, commit: async target => { commits.push(target); if (target === 1) await new Promise(resolve => { release = resolve }); return true }, clear: () => clears.push(true) })
   const first = navigation.schedule(1)
-  navigationClock.tick(180); await flush()
+  navigationClock.tick(350); await flush()
   const second = navigation.schedule(2)
-  navigationClock.tick(180); await flush()
+  navigationClock.tick(350); await flush()
   assert.deepEqual(commits, [1])
   assert.equal(clears.length, 0)
   release(); await flush()
@@ -72,9 +72,35 @@ const { createSettledNavigation } = module.exports
   assert.deepEqual(commits, [])
   const failed = createSettledNavigation({ preview() {}, commit: async () => { throw new Error('simulated host error') }, clear() {} })
   const result = failed.schedule(4)
-  navigationClock.tick(180); await flush()
+  navigationClock.tick(350); await flush()
   assert.equal(await result, false)
   console.log('PASS: cancel and host failures release all pending inputs without unwanted playback')
+}
+
+{
+  const gate = createPlaybackFocusGate(), commits = []
+  let request = 0
+  gate.report({ active: true, id: 'work:0', request: 0, settled: true })
+  const navigation = createSettledNavigation({
+    preview: (_target, token) => { request = token },
+    waitUntilReady: (id, token, signal) => gate.wait(id, token, signal),
+    commit: async id => { commits.push(id); return true }, clear() {},
+  })
+  const first = navigation.schedule('work:1')
+  navigationClock.tick(350); await flush()
+  assert.deepEqual(commits, [], 'quiet time alone cannot start the decoder')
+  gate.report({ active: true, id: 'work:1', request: request - 1, settled: true }); await flush()
+  assert.deepEqual(commits, [], 'an old animation acknowledgement is not sufficient')
+  gate.report({ active: true, id: 'work:1', request, settled: false }); await flush()
+  assert.deepEqual(commits, [])
+  const second = navigation.schedule('work:2')
+  navigationClock.tick(350); await flush()
+  gate.report({ active: true, id: 'work:1', request: request - 1, settled: true }); await flush()
+  assert.deepEqual(commits, [], 'cancelled visual waits cannot block or play an older target')
+  gate.report({ active: true, id: 'work:2', request, settled: true }); await flush()
+  assert.deepEqual(commits, ['work:2'])
+  assert.deepEqual(await Promise.all([first, second]), [true, true])
+  console.log('PASS: playback requires quiet time plus the latest target/generation animation acknowledgement')
 }
 
 // Test the component's reactive animation logic, not a browser or live UI.
@@ -91,13 +117,18 @@ let state, failAnimation = false
 const tracks = [0, 1, 2].map(index => ({ path: `${index}.flac`, title: `Track ${index}`, artist: 'Artist', album: `${index}`, albumArtist: 'Artist', duration: 100, artworkUrl: `album-${index}`, playbackId: `work:${index}`, sourceIndex: index }))
 const elements = tracks.map((track, index) => ({
   dataset: { coverKey: track.playbackId },
-  style: { getPropertyValue: () => index - state.coverflowIndex.value },
-  classList: { contains: () => false },
+  properties: new Map(), classes: new Set(), livePose: null,
+  style: {
+    getPropertyValue(name) { return elements[index].properties.get(name) ?? `${name === '--cover-distance' ? Math.abs(index - state.coverflowIndex.value) : index - state.coverflowIndex.value}` },
+    setProperty(name, value) { elements[index].properties.set(name, value) },
+    removeProperty(name) { elements[index].properties.delete(name) },
+  },
+  classList: { contains: name => elements[index].classes.has(name), toggle: (name, value) => value ? elements[index].classes.add(name) : elements[index].classes.delete(name) },
   animate(_frames, options) {
     if (failAnimation) throw new Error('simulated animation error')
     let finish, cancel
     const finished = new Promise((resolve, reject) => { finish = resolve; cancel = reject })
-    const animation = { finished, finish, options, cancel: () => cancel(new Error('cancelled')) }
+    const animation = { key: track.playbackId, frames: _frames, finished, finish, options, cancel: () => { elements[index].livePose = null; cancel(new Error('cancelled')) } }
     animations.push(animation)
     return animation
   },
@@ -108,24 +139,30 @@ runInNewContext(component.outputFiles[0].text, {
   require: id => id === 'vue' ? { ...vue, onBeforeUnmount: fn => hooks.push(fn) } : require(id),
   ...animationClock, performance, console,
   matchMedia: () => ({ matches: false }),
-  getComputedStyle: () => ({ transform: 'matrix(1,0,0,1,0,0)', opacity: '1' }),
+  getComputedStyle: element => element.livePose ?? ({ transform: `matrix(1,0,0,1,${Number(element.style.getPropertyValue('--cover-offset')) * 100},0)`, opacity: '1' }),
   Image: class { decode() { return Promise.resolve() } },
   requestAnimationFrame: fn => animationClock.setTimeout(fn, 16), cancelAnimationFrame: id => animationClock.clearTimeout(id),
   document: { querySelector: () => null }, window: { innerWidth: 1200, innerHeight: 800 },
 })
-const props = vue.reactive({ open: false, track: tracks[0], artwork: 'current-art-0', isPlaying: true, playbackState: 'playing', canSeek: true, position: 43, duration: 100, lyrics: [], lyricsSynced: false, playbackTracks: tracks, playbackPlanIds: tracks.map(track => track.playbackId), playbackTrackIndex: 0, playbackPreviewId: null, fullscreen: false, shuffleBusy: false, shufflePending: false, shuffleStaged: false, shuffleSourceName: 'Source' })
+const props = vue.reactive({ open: false, track: tracks[0], artwork: 'current-art-0', isPlaying: true, playbackState: 'playing', canSeek: true, position: 43, duration: 100, lyrics: [], lyricsSynced: false, playbackTracks: tracks, playbackPlanIds: tracks.map(track => track.playbackId), playbackTrackIndex: 0, playbackPreviewId: null, playbackPreviewPending: false, playbackPreviewRequest: 0, fullscreen: false, shuffleBusy: false, shufflePending: false, shuffleStaged: false, shuffleSourceName: 'Source' })
 const scope = vue.effectScope()
-state = scope.run(() => componentModule.exports.default.setup(props, { expose() {}, emit() {} }))
+const events = []
+state = scope.run(() => componentModule.exports.default.setup(props, { expose() {}, emit(name, value) {
+  events.push({ name, value })
+  if (name === 'browseTrack') { props.playbackPreviewId = value.playbackId; props.playbackPreviewPending = false; props.playbackPreviewRequest += 1 }
+} }))
 state.coverflowView.value = { isConnected: true, querySelectorAll: () => elements }
 state.mode.value = 'coverflow'; props.open = true
 await flush()
 props.playbackPreviewId = 'work:1'; await flush()
 assert.equal(state.coverflowIndex.value, 1)
 assert.equal(state.orderReflowing.value, true)
-assert.equal(animations.at(-1).options.duration, 160, 'focus motion completes before the 180ms playback settlement gap')
+assert.equal(animations.at(-1).options.duration, 620, 'all focus moves use the original Coverflow curve and duration')
 const older = [...animations]
+elements[0].livePose = { transform: 'matrix(1,0,0,1,-35,0)', opacity: '.8' }
 props.playbackPreviewId = 'work:2'; await flush()
 assert.equal(state.coverflowIndex.value, 2, 'new focus is not ignored while a previous animation is active')
+assert.equal(animations.slice(older.length).find(animation => animation.key === 'work:0').frames[0].transform, 'matrix(1,0,0,1,-35,0)', 'retargeting starts at the live intermediate pose instead of resetting to a CSS endpoint')
 older.forEach(animation => animation.finish()); await flush()
 assert.equal(state.orderReflowing.value, true, 'older completion cannot unlock or overwrite the newer animation')
 animations.slice(older.length).forEach(animation => animation.finish()); await flush()
@@ -151,6 +188,51 @@ animationClock.tick(751); await flush()
 assert.equal(state.orderReflowing.value, false, 'an unresolved native animation cannot lock the viewport forever')
 assert.equal(state.coverflowIndex.value, 2)
 console.log('PASS: animation errors and stalled finished promises recover to the latest focus instead of freezing')
+state.selectCoverflow(0); await flush()
+assert.equal(state.coverflowIndex.value, 0)
+assert.equal(animations.at(-1).options.duration, 620)
+state.moveCoverflow(1); await flush()
+assert.equal(state.coverflowIndex.value, 1)
+assert.equal(animations.at(-1).options.duration, 620)
+assert.equal(animations.at(-1).options.easing, 'cubic-bezier(.18,.82,.16,1)')
+state.activateCoverflow(2)
+assert.ok(events.some(event => event.name === 'playTrack' && event.value.playbackId === 'work:2'))
+assert.ok(events.some(event => event.name === 'focusState' && event.value.active && !event.value.settled))
+animations.forEach(animation => animation.finish()); await flush()
+assert.equal(events.filter(event => event.name === 'focusState').at(-1).value.settled, true)
+console.log('PASS: card selection, arrows and active-animation activation share one motion path and publish readiness')
+
+const allTracks = [...tracks, ...[3, 4, 5, 6, 7, 8, 9].map(index => ({ ...tracks[0], path: `${index}.flac`, title: `Track ${index}`, playbackId: `work:${index}`, sourceIndex: index }))]
+props.playbackPlanIds = allTracks.map(track => track.playbackId); await flush()
+animations.forEach(animation => animation.finish()); await flush()
+const originalElements = [...elements]
+for (let index = 3; index < allTracks.length; index++) {
+  const properties = new Map(), classes = new Set()
+  const element = {
+    dataset: { coverKey: allTracks[index].playbackId }, livePose: null,
+    style: { getPropertyValue: name => properties.get(name) ?? `${name === '--cover-distance' ? Math.abs(index - state.coverflowIndex.value) : index - state.coverflowIndex.value}`, setProperty: (name, value) => properties.set(name, value), removeProperty: name => properties.delete(name) },
+    classList: { contains: name => classes.has(name), toggle: (name, value) => value ? classes.add(name) : classes.delete(name) },
+    animate(frames, options) {
+      let finish, cancel
+      const finished = new Promise((resolve, reject) => { finish = resolve; cancel = reject })
+      const animation = { key: allTracks[index].playbackId, frames, options, finished, finish, cancel: () => cancel(new Error('cancelled')) }
+      animations.push(animation); return animation
+    },
+  }
+  elements.push(element)
+}
+let captureOld = true
+state.coverflowView.value.querySelectorAll = () => { if (captureOld) { captureOld = false; return originalElements } return elements }
+props.playbackTracks = allTracks
+props.playbackPreviewId = 'work:6'
+await flush()
+const incoming = animations.filter(animation => animation.key === 'work:6').at(-1)
+assert.notEqual(incoming.frames[0].transform, incoming.frames[1].transform, 'an unseen final cover must move in from its previous side position, not fade in at the center')
+assert.equal(incoming.options.duration, 620)
+assert.equal(state.coverflowIndex.value, 6)
+animations.forEach(animation => animation.finish()); await flush()
+assert.equal(state.orderReflowing.value, false)
+console.log('PASS: newly materialized window cards enter from sampled 3D side poses instead of teleporting to the center')
 hooks.forEach(fn => fn()); scope.stop()
 
 const railScript = compileScript(parse(readFileSync('src/components/AlphabetIndexRail.vue', 'utf8')).descriptor, { id: 'rail-test' })

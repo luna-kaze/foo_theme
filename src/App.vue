@@ -1132,6 +1132,8 @@ function onDrop(event: DragEvent) {
       :playback-plan-ids="state.playbackPlanIds"
       :playback-track-index="state.playbackTrackIndex"
       :playback-preview-id="state.playbackPreviewId"
+      :playback-preview-pending="state.playbackPreviewPending"
+      :playback-preview-request="state.playbackPreviewRequest"
       :shuffle-busy="state.shuffleBusy"
       :shuffle-pending="state.shufflePending"
       :shuffle-staged="state.shuffleStaged"
@@ -1143,6 +1145,8 @@ function onDrop(event: DragEvent) {
       @seek-resume="player.seekAndPlay"
       @favourite="player.toggleFavourite"
       @play-track="player.playPlaybackTrack"
+      @browse-track="player.browsePlaybackTrack"
+      @focus-state="player.setPlaybackFocusState"
       @shuffle="player.shufflePlaybackPlan"
       @restore-order="player.restorePlaybackPlan"
     />

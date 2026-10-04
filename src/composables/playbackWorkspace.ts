@@ -459,23 +459,44 @@ export function createPlaybackWorkspace(deps: Dependencies) {
       await syncInternal(); publish(); await save()
     }),
     demoIndex: () => activeDemoIndex,
-    jump: (track: DisplayTrack) => transaction(async () => {
+    jump: (track: DisplayTrack, isCurrent: () => boolean = () => true) => transaction(async () => {
       if (!actual) return
       await syncInternal()
       if (deferred) throw new Error('最新计划正在等待宿主释放缓冲，请稍后播放该条目。')
-      const target = planned ?? actual
+      let target = planned ?? actual
       const index = target.tracks.findIndex((item) => item.playbackId === track.playbackId)
       if (index < 0) throw new Error('播放计划条目已变化。')
-      await removeBridge()
-      await stopAtBoundary(false)
+      if (!isCurrent()) return
       if (deps.connected()) target.index = await locate(target.name)
       if (deps.connected() && target.index < 0) throw new Error('计划缓冲已不存在。')
+      if (!isCurrent()) return
+      const previousBridge = bridge
+      const previousStop = ownedStop
+      const imported = deps.connected() && !/^正在播放 [AB] \[foo-theme:/.test(target.name)
+      if (imported) {
+        const copied = await buffer('A')
+        await fill(copied, target.tracks)
+        target = copied
+      }
+      await removeBridge()
+      await stopAtBoundary(false)
+      if (!isCurrent()) {
+        await restoreScheduling(null, previousBridge)
+        await stopAtBoundary(previousStop)
+        return
+      }
       if (deps.connected()) {
+        if (imported) await nativeMode(status.mode)
+        if (!isCurrent()) {
+          await restoreScheduling(null, previousBridge)
+          await stopAtBoundary(previousStop)
+          return
+        }
         const result = await fb.playlist.playTrack(target.index, index)
         if (result.success === false) throw new Error(result.error || '无法播放计划条目。')
       }
       else activeDemoIndex = index
-      if (target === planned) { actual = planned; planned = null }
+      actual = target; planned = null
       await syncInternal(); publish(); await save()
     }),
     restore: async () => {

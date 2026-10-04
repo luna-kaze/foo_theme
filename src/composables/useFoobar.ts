@@ -1,7 +1,7 @@
 import { computed, reactive, shallowRef } from 'vue'
 import { pickImageFile } from '../utils/imagePicker'
 import { createPlaybackWorkspace, type PlaybackMode } from './playbackWorkspace'
-import { createSettledNavigation } from '../utils/settledNavigation'
+import { createPlaybackFocusGate, createSettledNavigation, type PlaybackFocusState } from '../utils/settledNavigation'
 import fb, {
   type AlbumInfo,
   type ArtistInfo,
@@ -52,6 +52,8 @@ const state = reactive<PlayerUiState>({
   playbackPlanIds: [],
   playbackTrackIndex: -1,
   playbackPreviewId: null,
+  playbackPreviewPending: false,
+  playbackPreviewRequest: 0,
   playingPlaylistIndex: -1,
   currentArtwork: '',
   lyrics: [],
@@ -172,19 +174,25 @@ async function syncWorkspaceProjection() {
   state.shuffleRevision = playbackWorkspace.status.revision
 }
 
+let workspaceAdoption: Promise<boolean> | null = null
 async function ensurePlaybackWorkspace() {
+  if (workspaceAdoption) return workspaceAdoption
   if (playbackWorkspace.status.ready) return true
-  if (state.playbackState === 'stopped' && !state.currentTrack) return false
-  if (state.connected) {
-    const playing = await fb.player.getPlayingPlaylist()
-    const index = playing.playlist ?? -1
-    if (index < 0) return false
-    const name = (await fb.playlist.getAll()).find((playlist) => playlist.index === index)?.name ?? ''
-    await playbackWorkspace.adopt(await getAllPlaylistTracks(index), index, name, name, 0, currentPlaybackMode())
-  } else if (state.currentTrack) {
-    await playbackWorkspace.adopt(state.playbackTracks.length ? state.playbackTracks : [state.currentTrack], -1, 'demo:A', '当前曲目集合', Math.max(0, state.playbackTrackIndex), currentPlaybackMode())
-  }
-  return playbackWorkspace.status.ready
+  workspaceAdoption = (async () => {
+    if (state.playbackState === 'stopped' && !state.currentTrack) return false
+    if (state.connected) {
+      const playing = await fb.player.getPlayingPlaylist()
+      const index = playing.playlist ?? -1
+      if (index < 0) return false
+      const name = (await fb.playlist.getAll()).find((playlist) => playlist.index === index)?.name ?? ''
+      await playbackWorkspace.adopt(await getAllPlaylistTracks(index), index, name, name, 0, currentPlaybackMode())
+    } else if (state.currentTrack) {
+      await playbackWorkspace.adopt(state.playbackTracks.length ? state.playbackTracks : [state.currentTrack], -1, 'demo:A', '当前曲目集合', Math.max(0, state.playbackTrackIndex), currentPlaybackMode())
+    }
+    await playbackWorkspace.sync()
+    return playbackWorkspace.status.ready
+  })()
+  try { return await workspaceAdoption } finally { workspaceAdoption = null }
 }
 
 async function refreshWorkspace() {
@@ -192,25 +200,35 @@ async function refreshWorkspace() {
   if (state.connected) { await loadPlaylists(); await loadQueue() }
 }
 
+const playbackFocusGate = createPlaybackFocusGate()
+let playbackSelectionVersion = 0
 const settledSkip = createSettledNavigation<string>({
-  preview: (id) => {
+  preview: (id, request) => {
+    playbackSelectionVersion += 1
     state.playbackPreviewId = id
+    state.playbackPreviewPending = true
+    state.playbackPreviewRequest = request
     const snapshot = playbackWorkspace.projection(undefined, true)
     if (snapshot) setPlaybackWindow(attachArtwork(snapshot.order), snapshot.index, snapshot.order[0]?.playbackPlaylistIndex ?? -1, state.playingPlaylistIndex)
   },
-  commit: async (id) => {
+  waitUntilReady: (id, request, signal) => playbackFocusGate.wait(id, request, signal),
+  commit: async (id, signal) => {
     if (!await playbackWorkspace.sync()) return false
+    if (signal.aborted) return false
     const snapshot = playbackWorkspace.projection(undefined, true)
     const target = snapshot?.order.find((track) => track.playbackId === id)
     if (!target) return false
     if (snapshot?.order[snapshot.index]?.playbackId === id) return true
-    if (!await playbackWorkspace.jump(target)) return false
+    if (!await playbackWorkspace.jump(target, () => !signal.aborted)) return false
+    if (signal.aborted) return false
     await refreshWorkspace()
     return true
   },
   clear: () => {
+    playbackSelectionVersion += 1
     const preview = state.playbackPreviewId
     state.playbackPreviewId = null
+    state.playbackPreviewPending = false
     if (preview) {
       const snapshot = playbackWorkspace.projection()
       if (snapshot) setPlaybackWindow(attachArtwork(snapshot.order), snapshot.index, snapshot.order[0]?.playbackPlaylistIndex ?? -1, state.playingPlaylistIndex)
@@ -222,12 +240,37 @@ function previewSkip(direction: number) {
   if (!playbackWorkspace.status.ready || state.queue.some((track) => track.queueSource === 'explicit' && !track.playbackId?.startsWith('work:'))) return null
   const snapshot = playbackWorkspace.projection(undefined, true)
   if (!snapshot || snapshot.index < 0) return null
-  const pending = snapshot.order.findIndex((track) => track.playbackId === state.playbackPreviewId)
+  const pending = state.playbackPreviewPending ? snapshot.order.findIndex((track) => track.playbackId === state.playbackPreviewId) : -1
   const index = pending >= 0 ? pending : snapshot.index
   let target = index + direction
   if (state.playbackOrder === 1) target = (target + snapshot.order.length) % snapshot.order.length
   else if (target < 0 || target >= snapshot.order.length) return pending >= 0 ? settledSkip.schedule(snapshot.order[index].playbackId!) : null
   return settledSkip.schedule(snapshot.order[target].playbackId!)
+}
+
+function setPlaybackFocusState(focus: PlaybackFocusState) { playbackFocusGate.report(focus) }
+
+function lookupWorkspaceTrack(track: DisplayTrack) {
+  const snapshot = playbackWorkspace.projection(undefined, true)
+  if (!snapshot) return null
+  if (track.playbackId?.startsWith('work:')) return snapshot.order.find((item) => item.playbackId === track.playbackId) ?? null
+  const indexed = track.sourceIndex == null ? null : snapshot.order[track.sourceIndex]
+  if (indexed && isSameTrack(indexed, track)) return indexed
+  const matches = snapshot.order.filter((item) => isSameTrack(item, track))
+  return matches.length === 1 ? matches[0] : null
+}
+
+async function browsePlaybackTrack(track: DisplayTrack) {
+  settledSkip.cancel()
+  const version = playbackSelectionVersion
+  let target = lookupWorkspaceTrack(track)
+  if (!target && await ensurePlaybackWorkspace()) target = lookupWorkspaceTrack(track)
+  if (!target || version !== playbackSelectionVersion) return
+  state.playbackPreviewId = target.playbackId!
+  state.playbackPreviewPending = false
+  state.playbackPreviewRequest += 1
+  const snapshot = playbackWorkspace.projection(undefined, true)
+  if (snapshot) setPlaybackWindow(attachArtwork(snapshot.order), snapshot.index, snapshot.order[0]?.playbackPlaylistIndex ?? -1, state.playingPlaylistIndex)
 }
 
 export type PluginId = 'converter' | 'freedb' | 'dop'
@@ -975,6 +1018,7 @@ async function initialize() {
       state.playbackOrder = order.order
       await playbackWorkspace.restore()
       await syncCurrentTrack()
+      if (!playbackWorkspace.status.ready && state.currentTrack) await ensurePlaybackWorkspace()
       await Promise.allSettled([loadQueue(), loadPlaybackSequence(), navigate(state.route, 'none')])
       if (library.status === 'rejected' || playlists.status === 'rejected') notify('部分 foobar2000 数据无法加载。', 'error')
       state.error = ''
@@ -1837,6 +1881,7 @@ async function togglePlayback() {
 }
 
 async function next() {
+  if (!playbackWorkspace.status.ready) await ensurePlaybackWorkspace()
   const pending = previewSkip(1)
   if (pending) { await pending; return }
   settledSkip.cancel()
@@ -1849,6 +1894,7 @@ async function next() {
 }
 
 async function previous() {
+  if (!playbackWorkspace.status.ready) await ensurePlaybackWorkspace()
   const pending = previewSkip(-1)
   if (pending) { await pending; return }
   settledSkip.cancel()
@@ -1903,8 +1949,16 @@ async function syncPlaybackCapabilities() {
 }
 
 async function playPlaybackTrack(track: DisplayTrack) {
+  let target = lookupWorkspaceTrack(track)
+  if (!target) {
+    settledSkip.cancel()
+    const version = playbackSelectionVersion
+    if (await ensurePlaybackWorkspace()) target = lookupWorkspaceTrack(track)
+    if (version !== playbackSelectionVersion) return
+  }
+  if (target) { await settledSkip.schedule(target.playbackId!); return }
+  if (track.playbackId?.startsWith('work:')) { notify('播放计划条目已变化，请重新选择。', 'info'); return }
   settledSkip.cancel()
-  if (track.playbackId?.startsWith('work:') && playbackWorkspace.status.ready) { await playbackWorkspace.jump(track); await refreshWorkspace(); return }
   if (track.playbackPlaceholder) return togglePlayback()
   if (!state.connected) return playTrack(track)
   const playlistIndex = track.playbackPlaylistIndex ?? state.playingPlaylistIndex
@@ -2839,7 +2893,8 @@ function findQueueIndex(items: TrackInfo[], expected: DisplayQueueItem) {
 
 async function playQueueItem(index: number) {
   const item = state.queue[index]
-  if (item?.playbackId?.startsWith('work:')) { await playbackWorkspace.jump(item); await refreshWorkspace(); return }
+  if (item?.playbackId?.startsWith('work:')) { await settledSkip.schedule(item.playbackId); return }
+  settledSkip.cancel()
   if (!item) return
   if (!state.connected) return playTrack(item)
   if (item.queueSource === 'playlist' && item.playlist != null && item.playlistItem != null) {
@@ -3181,6 +3236,8 @@ export function useFoobar() {
     removeQueueItem,
     playQueueItem,
     playPlaybackTrack,
+    browsePlaybackTrack,
+    setPlaybackFocusState,
     moveQueueItemToTop,
     clearQueue,
     refreshLibrary,
