@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { Activity, Disc3, Edit3, FileAudio, Gauge, Info, Star, X } from '@lucide/vue'
+import { Activity, Disc3, Edit3, FileAudio, Gauge, Info, PanelTop, Star, X } from '@lucide/vue'
 import type { AlbumCard, DisplayTrack, TrackDetails } from '../types/music'
 import ArtworkImage from './ArtworkImage.vue'
 import { formatTime } from '../utils/format'
 
 const props = defineProps<{ mode: 'properties' | 'edit'; tracks: DisplayTrack[]; details: TrackDetails[]; album: AlbumCard | null; loading: boolean; busy: boolean }>()
-const emit = defineEmits<{ close: []; save: [tags: Record<string, string>]; rating: [rating: number]; scanReplayGain: [mode: 'track' | 'album']; clearReplayGain: []; embedArtwork: [type: 'front' | 'back' | 'disc' | 'artist']; removeArtwork: [type: 'front' | 'back' | 'disc' | 'artist'] }>()
+const emit = defineEmits<{ close: []; save: [tags: Record<string, string>]; rating: [rating: number]; scanReplayGain: [mode: 'track' | 'album']; clearReplayGain: []; nativeProperties: []; embedArtwork: [type: 'front' | 'back' | 'disc' | 'artist']; removeArtwork: [type: 'front' | 'back' | 'disc' | 'artist'] }>()
 const tab = ref<'details' | 'technical' | 'replaygain' | 'artwork'>('details')
 const fields = reactive<Record<string, string>>({})
 const tagFields = [['TITLE', '标题'], ['ARTIST', '艺人'], ['ALBUM', '专辑'], ['ALBUM ARTIST', 'Album Artist'], ['GENRE', '流派'], ['DATE', '日期'], ['TRACKNUMBER', '音轨号'], ['DISCNUMBER', '碟片号']] as const
@@ -42,7 +42,7 @@ function setRating(value: number) {
 <template>
   <div class="inspector-scrim" @pointerdown.self="emit('close')">
     <section class="track-inspector" role="dialog" aria-modal="true" :aria-label="mode === 'edit' ? '编辑标签' : '属性'">
-      <header class="track-inspector__header"><ArtworkImage :src="artwork" :alt="`${heading} 封面`" /><div><small>{{ album ? '专辑' : tracks.length > 1 ? '批量选择' : '曲目' }}</small><h2>{{ heading }}</h2><p>{{ subtitle }}</p></div><button aria-label="关闭" @click="emit('close')"><X :size="18" /></button></header>
+      <header class="track-inspector__header"><ArtworkImage :src="artwork" :alt="`${heading} 封面`" /><div><small>{{ album ? '专辑' : tracks.length > 1 ? '批量选择' : '曲目' }}</small><h2>{{ heading }}</h2><p>{{ subtitle }}</p></div><button title="打开原生 foobar2000 属性" aria-label="打开原生 foobar2000 属性" :disabled="busy || !tracks.length" @click="emit('nativeProperties')"><PanelTop :size="18" /></button><button aria-label="关闭" @click="emit('close')"><X :size="18" /></button></header>
       <div v-if="loading" class="inspector-loading"><span /><strong>正在读取元数据…</strong></div>
       <template v-else>
         <nav v-if="mode === 'properties' && tracks.length === 1" class="track-inspector__tabs"><button :class="{ active: tab === 'details' }" @click="tab = 'details'"><Info :size="15" />详细信息</button><button :class="{ active: tab === 'technical' }" @click="tab = 'technical'"><FileAudio :size="15" />技术信息</button><button :class="{ active: tab === 'replaygain' }" @click="tab = 'replaygain'"><Gauge :size="15" />ReplayGain</button><button :class="{ active: tab === 'artwork' }" @click="tab = 'artwork'"><Disc3 :size="15" />封面</button></nav>

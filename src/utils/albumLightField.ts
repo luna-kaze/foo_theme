@@ -54,15 +54,15 @@ function glow(context: CanvasRenderingContext2D, width: number, height: number, 
 export function renderAlbumLightField(key: string, palette: LightColor[], fallback = false): AlbumLightField {
   const main = palette[0]!, accent = palette[1] ?? main, third = palette[2] ?? accent
   const average = palette.reduce((sum, color) => ({ r: sum.r + color.r / palette.length, g: sum.g + color.g / palette.length, b: sum.b + color.b / palette.length }), { r: 0, g: 0, b: 0 })
-  const baseColor = lightColor({ r: average.r * .75 + 24, g: average.g * .75 + 20, b: average.b * .75 + 18 }, 62, .55)
+  const baseColor = lightColor({ r: average.r * .78 + 30, g: average.g * .78 + 27, b: average.b * .78 + 25 }, 92, .65)
   const base = canvas(1024, 768)
   base.context.fillStyle = rgba(baseColor); base.context.fillRect(0, 0, 1024, 768)
-  glow(base.context, 1024, 768, lightColor(main, 90, 1.5), .32, .78, .74, .65, .65)
-  glow(base.context, 1024, 768, lightColor(accent, 84, 1.5), .85, .44, .8, .84, .45)
-  glow(base.context, 1024, 768, lightColor(third, 56, .8), .08, .08, .9, .65, .3)
+  glow(base.context, 1024, 768, lightColor(main, 128, 1.5), .32, .78, .74, .65, .72)
+  glow(base.context, 1024, 768, lightColor(accent, 120, 1.5), .85, .44, .8, .84, .56)
+  glow(base.context, 1024, 768, lightColor(third, 82, .8), .08, .08, .9, .65, .38)
   const primary = canvas(512, 512), secondary = canvas(512, 512)
-  glow(primary.context, 512, 512, lightColor(main, 115), .5, .5, .72, .72, .7)
-  glow(secondary.context, 512, 512, lightColor(accent, 108), .5, .5, .72, .72, .55)
+  glow(primary.context, 512, 512, lightColor(main, 142), .5, .5, .72, .72, .76)
+  glow(secondary.context, 512, 512, lightColor(accent, 134), .5, .5, .72, .72, .63)
   return { key, base: base.element.toDataURL('image/png'), primary: primary.element.toDataURL('image/png'), secondary: secondary.element.toDataURL('image/png'), palette, fallback }
 }
 async function readPalette(source: string) {

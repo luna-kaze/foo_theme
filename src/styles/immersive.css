@@ -17,13 +17,13 @@
 .fullscreen-light-field__base { position: absolute; inset: -6%; background-size: cover; background-position: center; }
 .fullscreen-light-field__glow { position: absolute; background-size: 100% 100%; background-repeat: no-repeat; transform-origin: center; animation-play-state: paused; }
 .fullscreen-light-field__scene.is-running .fullscreen-light-field__glow { animation-play-state: running; }
-.fullscreen-light-field__glow--primary { inset: 6% 10% -28% -22%; animation: fullscreen-light-drift-primary 19s cubic-bezier(.42,0,.58,1) infinite alternate paused; opacity: .72; }
-.fullscreen-light-field__glow--secondary { inset: -22% -24% -4% 24%; animation: fullscreen-light-drift-secondary 27s cubic-bezier(.42,0,.58,1) infinite alternate paused; opacity: .65; }
-.fullscreen-light-field__shade { position: absolute; inset: 0; background: linear-gradient(180deg,rgba(12,13,17,.025),rgba(12,13,17,.1)),radial-gradient(ellipse 110% 105% at 50% 36%,transparent 25%,rgba(10,12,16,.15) 100%); }
+.fullscreen-light-field__glow--primary { inset: 6% 10% -28% -22%; animation: fullscreen-light-drift-primary 19s cubic-bezier(.42,0,.58,1) infinite alternate paused; opacity: .82; }
+.fullscreen-light-field__glow--secondary { inset: -22% -24% -4% 24%; animation: fullscreen-light-drift-secondary 27s cubic-bezier(.42,0,.58,1) infinite alternate paused; opacity: .74; }
+.fullscreen-light-field__shade { position: absolute; inset: 0; background: linear-gradient(180deg,rgba(12,13,17,.01),rgba(12,13,17,.055)),radial-gradient(ellipse 110% 105% at 50% 36%,transparent 35%,rgba(10,12,16,.08) 100%); }
 .fullscreen-light-crossfade-enter-active, .fullscreen-light-crossfade-leave-active { transition: opacity 600ms ease; }
 .fullscreen-light-crossfade-enter-from, .fullscreen-light-crossfade-leave-to { opacity: 0; }
-@keyframes fullscreen-light-drift-primary { from { transform: translate3d(-3%,2%,0) scale(1.02) rotate(-3deg); opacity: .62; } to { transform: translate3d(4%,-3%,0) scale(1.12) rotate(3deg); opacity: .8; } }
-@keyframes fullscreen-light-drift-secondary { from { transform: translate3d(3%,-2%,0) scale(1.08) rotate(2deg); opacity: .55; } to { transform: translate3d(-4%,3%,0) scale(1.02) rotate(-3deg); opacity: .74; } }
+@keyframes fullscreen-light-drift-primary { from { transform: translate3d(-3%,2%,0) scale(1.02) rotate(-3deg); opacity: .72; } to { transform: translate3d(4%,-3%,0) scale(1.12) rotate(3deg); opacity: .9; } }
+@keyframes fullscreen-light-drift-secondary { from { transform: translate3d(3%,-2%,0) scale(1.08) rotate(2deg); opacity: .65; } to { transform: translate3d(-4%,3%,0) scale(1.02) rotate(-3deg); opacity: .82; } }
 @media (prefers-reduced-motion: reduce) { .fullscreen-light-field__glow { animation: none; }.fullscreen-light-crossfade-enter-active, .fullscreen-light-crossfade-leave-active { transition: none; } }
 .immersive-player__backdrop, .immersive-player__chroma { position: absolute; background-image: var(--immersive-artwork); background-position: center; background-size: cover; }
 .immersive-player__backdrop { inset: -10%; filter: blur(95px) saturate(165%) brightness(.38); opacity: calc(.86 + var(--immersive-p) * .1); transform: scale(calc(1.12 + var(--immersive-p) * .1)); will-change: transform,opacity; }

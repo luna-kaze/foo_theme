@@ -18,6 +18,7 @@ import { routeKey, useFoobar } from './composables/useFoobar'
 import fb, { consoleApi, type ArtistInfo, type OutputDevice, type PlaylistInfo } from 'foo-webview-sdk'
 import type { AlbumCard, ArtistCard, DisplayTrack, LibraryFolderCard, RouteSceneData, TrackDetails, ViewId } from './types/music'
 import { menuIcons, showContextMenu, type ContextMenuItem } from './utils/contextMenu'
+import type { NativeMenuNode } from './utils/nativeMenu'
 import { isSameTrack, localFilePath, playablePath, trackKey } from './utils/track'
 import { createNavigationTransitions } from './utils/navigationTransition'
 import { installAutoHideScrollbars } from './utils/autoHideScrollbars'
@@ -658,6 +659,16 @@ function pluginSubmenu(prefix: string, actions: Array<{ label: string }>): Conte
   return actions.map((action, index) => ({ id: `${prefix}:${index}`, label: action.label }))
 }
 
+function nativeToolsSubmenu(items: NativeMenuNode[]): ContextMenuItem[] {
+  return items.flatMap((item): ContextMenuItem[] => {
+    if (item.type === 'separator') return [{ type: 'separator' }]
+    const label = (item.displayLabel || item.label || '').replaceAll('&', '')
+    if (item.type === 'submenu') return [{ label, submenu: nativeToolsSubmenu(item.children ?? []) }]
+    if (item.type !== 'command') return []
+    return [{ id: `track:tools:${item.commandId}`, label, enabled: item.enabled !== false && item.commandId != null }]
+  })
+}
+
 function pluginMenuItem(prefix: string, label: string, actions: Array<{ label: string }>, installed: boolean, iconSvg: ContextMenuItem['iconSvg']): ContextMenuItem | null {
   if (actions.length) return { id: prefix, label, iconSvg, submenu: pluginSubmenu(prefix, actions) }
   if (installed) return { id: prefix, label: `${label}（当前项目不可用）`, iconSvg, enabled: false }
@@ -706,6 +717,7 @@ async function openTrackMenu(track: DisplayTrack, index: number, event: MouseEve
       const dopItem = pluginMenuItem('track:dop', 'iPod', pluginActions.dop, player.pluginIntegrations.dop.installed, menuIcons.device)
       if (converterItem) pluginItems.push(converterItem)
       if (dopItem) pluginItems.push(dopItem)
+      pluginItems.push({ id: 'track:tools', label: '工具', iconSvg: menuIcons.settings, enabled: pluginActions.tools.length > 0, submenu: nativeToolsSubmenu(pluginActions.tools) })
       const sourcePlaylist = state.view === 'playlist' && index >= 0 ? state.browsingPlaylist ?? state.activePlaylist : null
       const isBatch = targets.length > 1
       const singleItems: ContextMenuItem[] = [
@@ -758,6 +770,7 @@ async function openTrackMenu(track: DisplayTrack, index: number, event: MouseEve
       if (action === 'track:location') await player.showInExplorer(track)
       if (action === 'track:properties') await openInspector('properties', targets)
       if (action === 'track:edit') await openInspector('edit', targets)
+      if (action.startsWith('track:tools:')) await player.runPluginContextAction({ commandId: Number(action.split(':').at(-1)), label: '原生工具' }, targets)
       if (action === 'track:rename') openFileDialog('rename', track)
       if (action === 'track:move') await moveFile(track)
       if (action === 'track:delete-file') openFileDialog('delete', track)
@@ -946,6 +959,8 @@ async function openPlaylistMenu(playlist: PlaylistInfo, event: MouseEvent) {
     { id: 'playlist:undo', label: '撤销上次更改', iconSvg: menuIcons.refresh, enabled: writable },
     { id: 'playlist:sort-title', label: '按标题排序', iconSvg: menuIcons.refresh, enabled: writable },
     { id: 'playlist:sort-album', label: '按专辑 / 音轨排序', iconSvg: menuIcons.album, enabled: writable },
+    { id: 'playlist:remove-duplicates', label: '移除重复项', iconSvg: menuIcons.refresh, enabled: writable && playlist.trackCount > 0 },
+    { id: 'playlist:remove-invalid', label: '移除无效项', iconSvg: menuIcons.refresh, enabled: writable && playlist.trackCount > 0 },
     ...(player.pluginIntegrations.dop.installed ? [{ type: 'separator' } as ContextMenuItem, { id: 'playlist:ipod', label: '发送播放列表到 iPod…', iconSvg: menuIcons.device }] : []),
     { type: 'separator' },
     { id: 'playlist:clear', label: '清空播放列表', iconSvg: menuIcons.remove, enabled: writable && playlist.trackCount > 0 },
@@ -959,6 +974,8 @@ async function openPlaylistMenu(playlist: PlaylistInfo, event: MouseEvent) {
   if (action === 'playlist:undo') await player.undoPlaylistChange(playlist.index)
   if (action === 'playlist:sort-title') await player.sortPlaylist(playlist.index, '%title%')
   if (action === 'playlist:sort-album') await player.sortPlaylist(playlist.index, '%album artist%|%date%|%album%|%discnumber%|%tracknumber%')
+  if (action === 'playlist:remove-duplicates') await player.runNativePlaylistCleanup(playlist.index, 'duplicates')
+  if (action === 'playlist:remove-invalid') await player.runNativePlaylistCleanup(playlist.index, 'invalid')
   if (action === 'playlist:ipod') await player.runIpodMainAction('sendPlaylists')
   if (action === 'playlist:clear') await player.clearPlaylist(playlist.index)
   if (action === 'playlist:remove') await player.removePlaylist(playlist.index)
@@ -1260,6 +1277,7 @@ function onDrop(event: DragEvent) {
       :loading="inspector.loading"
       :busy="inspector.busy"
       @close="inspector.open = false"
+      @native-properties="player.showNativeTrackProperties(inspector.tracks)"
       @save="saveInspectorMetadata"
       @rating="setInspectorRating"
       @scan-replay-gain="scanInspectorReplayGain"

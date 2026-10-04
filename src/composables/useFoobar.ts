@@ -28,6 +28,7 @@ import type {
   ViewRoute,
 } from '../types/music'
 import { albumKey, isSameTrack, localFilePath, playablePath, trackKey, trackSubsong } from '../utils/track'
+import { findNativeMenuCommand, findNativeTools, type NativeMenuNode } from '../utils/nativeMenu'
 
 const state = reactive<PlayerUiState>({
   connected: false,
@@ -687,7 +688,8 @@ async function loadPlaylists() {
 }
 
 function isThemeInternalPlaylist(playlist: PlaylistInfo, ownerId: string) {
-  return playlist.name === `正在播放 [foo-theme:${ownerId}]`
+  return playlist.name.trim().toLocaleLowerCase() === 'airplay'
+    || playlist.name === `正在播放 [foo-theme:${ownerId}]`
     || playlist.name === `收藏 [foo-theme:${ownerId}]`
     || playlist.name === '[WebView Queue]'
     || ['A', 'B'].some((letter) => playlist.name === `正在播放 ${letter} [foo-theme:${ownerId}]`)
@@ -2361,20 +2363,21 @@ function collectPluginActions(items: MenuItem[], output: Record<PluginId, Plugin
 }
 
 async function getPluginContextActions(tracks: DisplayTrack[]) {
-  const output: Record<PluginId, PluginContextAction[]> = { converter: [], freedb: [], dop: [] }
+  const output: Record<PluginId, PluginContextAction[]> & { tools: NativeMenuNode[] } = { converter: [], freedb: [], dop: [], tools: [] }
   if (!state.connected || !tracks.length) return output
   const handles = tracks.map(playablePath).filter(Boolean)
   if (!handles.length) return output
   const result = await runAction(() => fb.menu.getContextMenu({ mode: 'handles', handles, withAvailability: true }))
   if (!result?.items) return output
   collectPluginActions(result.items, output)
-  ;(Object.keys(output) as PluginId[]).forEach((id) => {
+  output.tools = findNativeTools(result.items)
+  ;(['converter', 'freedb', 'dop'] as PluginId[]).forEach((id) => {
     if (output[id].length) pluginIntegrations[id].installed = true
   })
   return output
 }
 
-  async function runPluginContextAction(action: PluginContextAction, tracks: DisplayTrack[]) {
+async function runPluginContextAction(action: PluginContextAction, tracks: DisplayTrack[]) {
   if (!state.connected) return
   const handles = tracks.map(playablePath).filter(Boolean)
   if (!handles.length) {
@@ -2412,6 +2415,38 @@ async function getPluginContextActions(tracks: DisplayTrack[]) {
 function clearIpodCommands() {
   ipodCommandCache.clear()
   ;(Object.keys(ipodCommands) as IpodMainAction[]).forEach((action) => { ipodCommands[action] = false })
+}
+
+async function showNativeTrackProperties(tracks: DisplayTrack[]) {
+  const handles = tracks.map(playablePath).filter(Boolean)
+  if (!state.connected || !handles.length) return false
+  const menu = await runAction(() => fb.menu.getContextMenu({ mode: 'handles', handles, withAvailability: true }))
+  const command = findNativeMenuCommand(menu?.items, 'properties')
+  if (command?.commandId == null) {
+    notify('当前 foobar2000 未提供可执行的“属性”命令。', 'info')
+    return false
+  }
+  const result = await runAction(() => fb.menu.runContextCommandById(command.commandId!, { mode: 'handles', handles }))
+  return Boolean(result)
+}
+
+async function runNativePlaylistCleanup(playlistIndex: number, kind: 'duplicates' | 'invalid') {
+  const playlist = state.playlists.find((item) => item.index === playlistIndex)
+  if (!state.connected || !playlist || playlist.isLocked || playlist.isAutoplaylist) return false
+  if (!await runAction(() => fb.playlist.setActive(playlistIndex))) return false
+  state.activePlaylist = playlist
+  const menu = await runAction(() => fb.menu.getMainMenu())
+  const command = findNativeMenuCommand(menu?.items, kind)
+  if (!command?.command) {
+    notify(`当前 foobar2000 未提供“${kind === 'duplicates' ? '移除重复项' : '移除无效项'}”命令。`, 'info')
+    return false
+  }
+  const result = await runAction(() => fb.menu.runMainMenuCommand(command.command!))
+  if (!result) return false
+  await loadPlaylists()
+  if (state.route.view === 'playlist' && state.route.playlistIndex === playlistIndex) await refreshActivePlaylist()
+  notify(`已执行原生“${kind === 'duplicates' ? '移除重复项' : '移除无效项'}”。`, 'success')
+  return true
 }
 
 function matchesIpodCommand(action: IpodMainAction, name: string, path = '') {
@@ -2898,7 +2933,13 @@ async function setTracksRating(tracks: DisplayTrack[], rating: number) {
 }
 
 async function scanReplayGain(tracks: DisplayTrack[], mode: 'track' | 'album') {
-  const result = await runAction(() => fb.replaygain.scan(tracks.map(playablePath), { mode }))
+  // The scanner accepts file paths, not foobar handles such as "file|subsong:0".
+  const paths = tracks.map(localFilePath).filter(Boolean)
+  if (!paths.length) {
+    notify('所选项目不包含可扫描的本地音频文件。', 'info')
+    return false
+  }
+  const result = await runAction(() => fb.replaygain.scan(paths, { mode }))
   if (result) notify(result.note || `已提交 ${mode === 'album' ? '专辑' : '音轨'} ReplayGain 扫描`, 'success')
   return Boolean(result)
 }
@@ -3259,6 +3300,8 @@ export function useFoobar() {
     setOutputDevice,
     getPluginContextActions,
     runPluginContextAction,
+    showNativeTrackProperties,
+    runNativePlaylistCleanup,
     sendTracksToIpod,
     sendPlaylistToIpod,
     runIpodMainAction,
