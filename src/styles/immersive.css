@@ -149,6 +149,11 @@
 .coverflow { position: relative; width: 100%; height: 100%; overflow: hidden; perspective: 1500px; z-index: 2; }
 .coverflow__viewport { position: absolute; top: calc(17% - var(--immersive-p) * 6%); left: 50%; width: min(96vw,calc(1480px + var(--immersive-p) * 440px)); height: calc(66% + var(--immersive-p) * 11%); cursor: pointer; touch-action: manipulation; transform: translateX(-50%); transform-style: preserve-3d; }
 .coverflow-card { --cover-offset: 0; --cover-distance: 0; position: absolute; top: 50%; left: 50%; width: var(--mode-cover-size); aspect-ratio: 1; padding: 0; overflow: visible; pointer-events: auto; background: transparent; opacity: calc(1 - var(--cover-distance) * .17); transform: translate(-50%,-50%) translateX(calc(var(--cover-offset) * clamp(calc(190px + var(--immersive-p) * 55px),calc(22vw + var(--immersive-p) * 3vw),calc(340px + var(--immersive-p) * 110px)))) translateZ(calc(var(--cover-distance) * (-150px - var(--immersive-p) * 55px))) rotateX(calc(-5deg - var(--immersive-p) * 2deg)) rotateY(calc(-4deg + var(--cover-offset) * (-25deg - var(--immersive-p) * 5deg))) scale(calc(1 - var(--cover-distance) * .1)); transform-style: preserve-3d; transition: filter 420ms ease; z-index: calc(20 - var(--cover-distance)); }
+.coverflow__covers { position: absolute; inset: 0; transform-origin: 50% 50%; transform-style: preserve-3d; will-change: transform, opacity; }
+.coverflow__dots { position: absolute; inset: 0; transform-style: preserve-3d; pointer-events: none; }
+.coverflow__dot { position: absolute; top: 50%; left: 50%; width: 6px; height: 6px; padding: 0; border-radius: 50%; background: rgba(255,255,255,.55); pointer-events: auto; opacity: calc(1 - min(15, var(--point-distance)) * .05); transform: translate(-50%,-50%) translateX(calc(var(--point-offset) * 22px)) translateY(calc(var(--point-distance) * 1.6px)) translateZ(calc(var(--point-distance) * -3px)); }
+.coverflow__dot.active { background: var(--accent); box-shadow: 0 0 15px color-mix(in srgb, var(--accent) 65%, transparent); }
+.coverflow.is-rail-moving .coverflow-card { transition: none; animation: none; }
 .coverflow-card.far { pointer-events: none; opacity: 0; }
 .coverflow.is-order-reflowing .coverflow-card { transition: none; animation: none; }
 .coverflow-card.is-order-leaving { pointer-events: none; z-index: 1; }

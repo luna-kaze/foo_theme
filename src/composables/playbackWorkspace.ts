@@ -55,8 +55,14 @@ export function createPlaybackWorkspace(deps: Dependencies) {
   function identify(tracks: DisplayTrack[]) {
     return tracks.map((track) => ({ ...track, playbackId: `work:${crypto.randomUUID()}`, playbackPlaceholder: false }))
   }
+  const indexedCache = new WeakMap<DisplayTrack[], { playlist: number; order: DisplayTrack[]; positions: Map<string, number> }>()
   function indexed(target: Buffer) {
-    return target.tracks.map((track, index) => ({ ...track, sourceIndex: index, playbackPlaylistIndex: target.index }))
+    const cached = indexedCache.get(target.tracks)
+    if (cached?.playlist === target.index) return cached
+    const order = target.tracks.map((track, index) => ({ ...track, sourceIndex: index, playbackPlaylistIndex: target.index }))
+    const value = { playlist: target.index, order, positions: new Map(order.map((track, index) => [track.playbackId!, index])) }
+    indexedCache.set(target.tracks, value)
+    return value
   }
   async function location() {
     if (!deps.connected()) return { name: actual?.name ?? '', index: actual ? activeDemoIndex : -1 }
@@ -254,8 +260,12 @@ export function createPlaybackWorkspace(deps: Dependencies) {
   async function syncInternal() {
     if (!actual) return
     const live = await location()
+    // Decoder handover can briefly expose no playlist/item. It is not evidence
+    // that the owned session disappeared, and must not replace its last cursor.
+    if (!live.name || live.index < 0) return
     external = live.name !== actual.name && live.name !== planned?.name
     if (!external) actualPosition = live.index
+    if (!external) status.ready = true
     if (bridge?.name === actual.name && live.name === actual.name && live.index >= 0) bridge = null
     if (planned && live.name === planned.name) {
       actual = planned; planned = null; bridge = null
@@ -321,9 +331,10 @@ export function createPlaybackWorkspace(deps: Dependencies) {
     const target = edited && deferred ? { name: 'editor', index: -1, tracks: deferred.tracks } : planned ?? actual
     const base = edited && deferred ? deferred.base : canonical
     if (!status.ready || !actual || !target) return null
-    if (!current) return { sourceName: status.sourceName, base, order: indexed(target), index: -1, external }
-    const order = indexed(target)
-    const focused = order.findIndex((track) => track.playbackId === current.playbackId)
+    const cached = indexed(target)
+    if (!current) return { sourceName: status.sourceName, base, order: cached.order, index: -1, external }
+    const order = cached.order
+    const focused = cached.positions.get(current.playbackId!) ?? -1
     return { sourceName: status.sourceName, base, order, index: focused >= 0 ? focused : 0, external }
   }
   async function setModeInternal(mode: PlaybackMode) {

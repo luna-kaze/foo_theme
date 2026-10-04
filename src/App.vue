@@ -1146,6 +1146,8 @@ function onDrop(event: DragEvent) {
       @favourite="player.toggleFavourite"
       @play-track="player.playPlaybackTrack"
       @browse-track="player.browsePlaybackTrack"
+      @browse-position="player.browsePlaybackPosition"
+      @begin-browse="player.beginPlaybackBrowse"
       @focus-state="player.setPlaybackFocusState"
       @shuffle="player.shufflePlaybackPlan"
       @restore-order="player.restorePlaybackPlan"

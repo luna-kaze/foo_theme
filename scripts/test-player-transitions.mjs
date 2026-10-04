@@ -153,8 +153,9 @@ state = scope.run(() => componentModule.exports.default.setup(props, { expose() 
   events.push({ name, value })
   if (name === 'focusState') standardGate?.report(value)
   if (name === 'browseTrack') { props.playbackPreviewId = value.playbackId; props.playbackPreviewPending = false; props.playbackPreviewRequest += 1 }
+  if (name === 'browsePosition') { props.playbackPreviewId = props.playbackTracks.find(track => track.sourceIndex === value)?.playbackId ?? props.playbackPreviewId; props.playbackPreviewPending = false; props.playbackPreviewRequest += 1 }
 } }))
-state.coverflowView.value = { isConnected: true, querySelectorAll: () => elements }
+state.coverflowView.value = { isConnected: true, querySelector: () => null, querySelectorAll: () => elements }
 state.mode.value = 'coverflow'; props.open = true
 await flush()
 props.playbackPreviewId = 'work:1'; await flush()
@@ -236,6 +237,25 @@ assert.equal(state.coverflowIndex.value, 6)
 animations.forEach(animation => animation.finish()); await flush()
 assert.equal(state.orderReflowing.value, false)
 console.log('PASS: newly materialized window cards enter from sampled 3D side poses instead of teleporting to the center')
+
+state.onCoverflowWheel({ deltaY: 100, deltaX: 0, deltaMode: 0, ctrlKey: false }); animationClock.tick(1600); await flush()
+assert.equal(state.railState.distant, false)
+assert.ok(state.visibleCoverflowItems.value.length > 0)
+state.onCoverflowWheel({ deltaY: 600, deltaX: 0, deltaMode: 0, ctrlKey: false }); animationClock.tick(120); await flush()
+assert.equal(state.railState.distant, true)
+assert.equal(state.visibleCoverflowItems.value.length, 0, 'steady high-speed mode removes image-bearing cover nodes')
+assert.ok(state.railPoints.value.length > 0 && state.railPoints.value.length <= 31)
+assert.deepEqual([...state.coverflowPreloadSources()], [], 'high-speed rail cannot start new image preloads')
+const railPosition = state.railState.position
+state.onCoverflowWheel({ deltaY: -200, deltaX: 0, deltaMode: 0, ctrlKey: false })
+assert.equal(state.railState.position, railPosition)
+animationClock.tick(1600); await flush()
+assert.equal(state.railState.active, false)
+assert.equal(state.railState.zoom, 0)
+assert.equal(state.railPoints.value.length, 0)
+assert.ok(state.visibleCoverflowItems.value.length > 0 && state.visibleCoverflowItems.value.length <= 7)
+assert.ok(state.coverflowPreloadSources().length <= 9)
+console.log('PASS: Coverflow uses only bounded dots/no new artwork at high speed and restores visible covers at the same stopped target')
 
 state.mode.value = 'standard'
 state.recordZone.value = { isConnected: true }

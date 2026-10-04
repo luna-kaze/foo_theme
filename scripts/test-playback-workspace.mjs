@@ -12,14 +12,14 @@ function fixture(random = Math.random) {
   const lists = [{ name: 'Source', tracks: [...source] }]
   const queue = [], calls = [], errors = []
   const preferences = new Map()
-  let playing = -1, current = -1, stopAfter = false, failAdd = false, consumeOnRemove = false, failRemove = false, failQueueAdd = false
+  let playing = -1, current = -1, stopAfter = false, failAdd = false, consumeOnRemove = false, failRemove = false, failQueueAdd = false, hiddenLocation = false
   let playback = { state: 'paused', position: 43 }
   const fb = {
     config: { get: async key => ({ value: preferences.get(key) }), set: async (key, value) => { preferences.set(key, structuredClone(value)); return { success: true } } },
     player: {
       getState: async () => ({ state: playback.state }),
-      getPlayingPlaylist: async () => ({ playlist: playing }),
-      getCurrentTrackIndex: async () => ({ index: current }),
+      getPlayingPlaylist: async () => ({ playlist: hiddenLocation ? -1 : playing }),
+      getCurrentTrackIndex: async () => ({ index: hiddenLocation ? -1 : current }),
       getStopAfterCurrent: async () => ({ enabled: stopAfter }),
       setStopAfterCurrent: async enabled => { stopAfter = enabled; calls.push(['stopAfter', enabled]); return { success: true } },
       setOrder: async order => { calls.push(['order', order]); return { success: true } },
@@ -72,6 +72,7 @@ function fixture(random = Math.random) {
     live: () => ({ playing, current, playback, stopAfter }), fail: () => { failAdd = true },
     race: () => { consumeOnRemove = true }, failRemoval: () => { failRemove = true }, failRegistration: () => { failQueueAdd = true },
     stop: () => { playing = -1; current = -1; playback = { state: 'stopped', position: 0 } },
+    hideLocation: () => { hiddenLocation = true }, revealLocation: () => { hiddenLocation = false },
     protect: () => { const reference = { playlist: queue[0].playlist, playlistItem: 0 }; queue.push(reference); return reference },
     release: reference => { queue.splice(queue.indexOf(reference), 1) },
     order: () => workspace.projection(current), editor: () => workspace.projection(current, true),
@@ -564,6 +565,27 @@ for (const mode of [0, 1, 2]) {
   assert.equal(player.state.playbackPreviewPending, false)
   player.setPlaybackFocusState({ active: false, id: null, request: 0, settled: true })
   console.log('PASS: real Coverflow and queue play handlers share the visual gate and never decode an intermediate target')
+  const browseTarget = player.state.playbackTracks[player.state.playbackTrackIndex + 1]
+  const planIds = player.state.playbackPlanIds
+  const playCount = f.calls.filter(call => call[0] === 'play').length
+  const browsing = player.browsePlaybackTrack(browseTarget)
+  assert.equal(player.state.playbackPreviewId, browseTarget.playbackId, 'browsing must not transiently clear focus back to the actual track')
+  await browsing
+  await player.seek(0)
+  assert.equal(player.state.playbackPreviewId, browseTarget.playbackId, 'actual playback controls must not reset a browse-only cursor')
+  assert.equal(player.state.playbackPlanIds, planIds, 'changing the window reuses the full-plan ID array')
+  assert.equal(f.calls.filter(call => call[0] === 'play').length, playCount)
+  const pendingConfirmation = player.playPlaybackTrack(browseTarget)
+  f.hideLocation(); tick(350)
+  for (let index = 0; index < 30; index++) await Promise.resolve()
+  assert.equal(player.state.playbackPreviewPending, true)
+  assert.equal(player.state.playbackPreviewId, browseTarget.playbackId)
+  assert.ok(player.state.currentTrack, 'transient decoder handover must not empty the footer')
+  f.revealLocation(); tick(60)
+  await pendingConfirmation
+  assert.equal(player.state.playbackPreviewPending, false)
+  assert.equal(player.state.currentTrack.path, browseTarget.path)
+  console.log('PASS: browse focus never rolls back; plan IDs are cached; pending playback holds the target/footer until confirmed')
 }
 
 {
@@ -712,4 +734,29 @@ for (const mode of [0, 1, 2]) {
   assert.deepEqual([...w.projection().order.map(track => track.path)], source.map(track => track.path))
   assert.deepEqual(f.live().playback, { state: 'paused', position: 43 })
   console.log('PASS: adopting host playback establishes an owned immutable workset without playing intermediate songs')
+}
+
+{
+  const f = fixture(), w = f.workspace
+  await w.start(source, 0, 'Source')
+  const initial = f.order()
+  f.hideLocation(); await w.sync()
+  assert.equal(w.status.ready, true)
+  assert.equal(w.projection().order[0].playbackId, initial.order[0].playbackId)
+  f.revealLocation(); await w.sync()
+  assert.equal(w.status.ready, true)
+  console.log('PASS: empty native handover observations preserve the last valid owned session and stable identities')
+}
+
+{
+  const f = fixture(), w = f.workspace
+  const large = Array.from({ length: 50000 }, (_, index) => ({ ...source[0], path: `large-${index}.flac`, title: `${index}` }))
+  await w.adopt(large, 0, 'Source')
+  const reference = w.projection(0).order
+  for (let index = 0; index < 1000; index++) {
+    const snapshot = w.projection(index * 37)
+    assert.equal(snapshot.order, reference, 'unchanged projection cannot allocate/copy the entire large list on every browse')
+    assert.equal(snapshot.index, index * 37)
+  }
+  console.log('PASS: 50,000-item workset projections reuse one indexed order across 1,000 cursor changes')
 }

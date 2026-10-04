@@ -41,12 +41,12 @@ export function createSettledNavigation<T>(deps: {
       }, deps.delay ?? 350)
       return new Promise<boolean>(resolve => waiters.push(resolve))
     },
-    cancel() {
+    cancel(clearPreview = true) {
       generation += 1
       controller?.abort()
       if (timer) clearTimeout(timer)
       timer = undefined
-      deps.clear()
+      if (clearPreview) deps.clear()
       waiters.splice(0).forEach(resolve => resolve(false))
     },
   }

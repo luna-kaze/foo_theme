@@ -145,18 +145,18 @@ async function syncWorkspaceProjection() {
     const [playing, position] = await Promise.all([fb.player.getPlayingPlaylist(), fb.player.getCurrentTrackIndex(true)])
     if (generation !== workspaceProjectionGeneration) return
     state.playingPlaylistIndex = playing.playlist ?? -1
-    const snapshot = playbackWorkspace.projection(position.index ?? -1)
+    const snapshot = playbackWorkspace.projection(position.index >= 0 ? position.index : undefined)
     if (snapshot?.external && (position.track || state.currentTrack)) {
       const current = position.track ? normalizeTrack(position.track) : state.currentTrack!
       const anchor = { ...current, playbackId: `continuing:${state.playingPlaylistIndex}:${position.index}:${trackKey(current)}`, playbackPlaceholder: true }
       state.playbackTracks = [anchor, ...attachArtwork(snapshot.order.slice(snapshot.index + 1, snapshot.index + 61))]
       state.playbackPlanIds = [anchor.playbackId, ...snapshot.order.map((track) => track.playbackId!)]
       state.playbackTrackIndex = 0
-    } else if (snapshot) setPlaybackWindow(attachArtwork(snapshot.order), snapshot.index, snapshot.order[0]?.playbackPlaylistIndex ?? -1, state.playingPlaylistIndex)
+    } else if (snapshot) setPlaybackWindow(snapshot.order, snapshot.index, snapshot.order[0]?.playbackPlaylistIndex ?? -1, state.playingPlaylistIndex)
   } else {
     const snapshot = playbackWorkspace.projection(playbackWorkspace.demoIndex())
     if (snapshot) {
-      setPlaybackWindow(attachArtwork(snapshot.order), snapshot.index, -1)
+      setPlaybackWindow(snapshot.order, snapshot.index, -1)
       const current = snapshot.order[snapshot.index]
       if (current && (state.currentTrack?.playbackId ? current.playbackId !== state.currentTrack.playbackId : !isSameTrack(current, state.currentTrack))) {
         state.currentTrack = current
@@ -209,7 +209,7 @@ const settledSkip = createSettledNavigation<string>({
     state.playbackPreviewPending = true
     state.playbackPreviewRequest = request
     const snapshot = playbackWorkspace.projection(undefined, true)
-    if (snapshot) setPlaybackWindow(attachArtwork(snapshot.order), snapshot.index, snapshot.order[0]?.playbackPlaylistIndex ?? -1, state.playingPlaylistIndex)
+    if (snapshot) setPlaybackWindow(snapshot.order, snapshot.index, snapshot.order[0]?.playbackPlaylistIndex ?? -1, state.playingPlaylistIndex)
   },
   waitUntilReady: (id, request, signal) => playbackFocusGate.wait(id, request, signal),
   commit: async (id, signal) => {
@@ -221,6 +221,24 @@ const settledSkip = createSettledNavigation<string>({
     if (snapshot?.order[snapshot.index]?.playbackId === id) return true
     if (!await playbackWorkspace.jump(target, () => !signal.aborted)) return false
     if (signal.aborted) return false
+    if (state.connected) {
+      let confirmed = false
+      for (let attempt = 0; attempt < 20 && !signal.aborted; attempt++) {
+        const [position, playback] = await Promise.all([fb.player.getCurrentTrackIndex(true), fb.player.getState()])
+        await playbackWorkspace.sync()
+        const actual = playbackWorkspace.projection(position.index >= 0 ? position.index : undefined)
+        if (position.index >= 0 && playback.state !== 'stopped' && actual?.order[actual.index]?.playbackId === id) {
+          state.playbackState = playback.state
+          state.isPlaying = playback.state === 'playing'
+          await syncCurrentTrack(position.track ?? actual.order[actual.index])
+          confirmed = true
+          break
+        }
+        await new Promise(resolve => setTimeout(resolve, 60))
+      }
+      if (!confirmed) return false
+    }
+    if (signal.aborted) return false
     await refreshWorkspace()
     return true
   },
@@ -231,7 +249,7 @@ const settledSkip = createSettledNavigation<string>({
     state.playbackPreviewPending = false
     if (preview) {
       const snapshot = playbackWorkspace.projection()
-      if (snapshot) setPlaybackWindow(attachArtwork(snapshot.order), snapshot.index, snapshot.order[0]?.playbackPlaylistIndex ?? -1, state.playingPlaylistIndex)
+      if (snapshot) setPlaybackWindow(snapshot.order, snapshot.index, snapshot.order[0]?.playbackPlaylistIndex ?? -1, state.playingPlaylistIndex)
     }
   },
 })
@@ -250,10 +268,19 @@ function previewSkip(direction: number) {
 
 function setPlaybackFocusState(focus: PlaybackFocusState) { playbackFocusGate.report(focus) }
 
+function beginPlaybackBrowse() {
+  settledSkip.cancel(false)
+  playbackSelectionVersion += 1
+  state.playbackPreviewPending = false
+}
+
 function lookupWorkspaceTrack(track: DisplayTrack) {
   const snapshot = playbackWorkspace.projection(undefined, true)
   if (!snapshot) return null
-  if (track.playbackId?.startsWith('work:')) return snapshot.order.find((item) => item.playbackId === track.playbackId) ?? null
+  if (track.playbackId?.startsWith('work:')) {
+    const indexed = getPlaybackWindowData(snapshot.order, snapshot.order[0]?.playbackPlaylistIndex ?? -1).positions.get(track.playbackId)
+    return indexed == null ? null : snapshot.order[indexed]
+  }
   const indexed = track.sourceIndex == null ? null : snapshot.order[track.sourceIndex]
   if (indexed && isSameTrack(indexed, track)) return indexed
   const matches = snapshot.order.filter((item) => isSameTrack(item, track))
@@ -261,7 +288,8 @@ function lookupWorkspaceTrack(track: DisplayTrack) {
 }
 
 async function browsePlaybackTrack(track: DisplayTrack) {
-  settledSkip.cancel()
+  settledSkip.cancel(false)
+  playbackSelectionVersion += 1
   const version = playbackSelectionVersion
   let target = lookupWorkspaceTrack(track)
   if (!target && await ensurePlaybackWorkspace()) target = lookupWorkspaceTrack(track)
@@ -270,7 +298,14 @@ async function browsePlaybackTrack(track: DisplayTrack) {
   state.playbackPreviewPending = false
   state.playbackPreviewRequest += 1
   const snapshot = playbackWorkspace.projection(undefined, true)
-  if (snapshot) setPlaybackWindow(attachArtwork(snapshot.order), snapshot.index, snapshot.order[0]?.playbackPlaylistIndex ?? -1, state.playingPlaylistIndex)
+  if (snapshot) setPlaybackWindow(snapshot.order, snapshot.index, snapshot.order[0]?.playbackPlaylistIndex ?? -1, state.playingPlaylistIndex)
+}
+
+function browsePlaybackPosition(index: number) {
+  const snapshot = playbackWorkspace.projection(undefined, true)
+  if (!snapshot) return
+  const track = snapshot.order[Math.max(0, Math.min(snapshot.order.length - 1, Math.round(index)))]
+  if (track) void browsePlaybackTrack(track)
 }
 
 export type PluginId = 'converter' | 'freedb' | 'dop'
@@ -687,11 +722,22 @@ async function loadQueue() {
   if (generation === queueGeneration) state.queue = [...explicit, ...upcoming]
 }
 
+const playbackWindowCache = new WeakMap<DisplayTrack[], { playlist: number; ids: string[]; positions: Map<string, number> }>()
+function getPlaybackWindowData(tracks: DisplayTrack[], playlistIndex: number) {
+  let cached = playbackWindowCache.get(tracks)
+  if (!cached || cached.playlist !== playlistIndex) {
+    const ids = tracks.map((track, index) => track.playbackId ?? `playlist:${playlistIndex}:${index}:${trackKey(track)}`)
+    cached = { playlist: playlistIndex, ids, positions: new Map(ids.map((id, index) => [id, index])) }
+    playbackWindowCache.set(tracks, cached)
+  }
+  return cached
+}
 function setPlaybackWindow(tracks: DisplayTrack[], currentIndex: number, playlistIndex: number, actualPlaylistIndex = playlistIndex) {
-  state.playbackPlanIds = tracks.map((track, index) => track.playbackId ?? `playlist:${playlistIndex}:${index}:${trackKey(track)}`)
-  const preview = tracks.findIndex((track) => track.playbackId === state.playbackPreviewId)
+  const cached = getPlaybackWindowData(tracks, playlistIndex)
+  state.playbackPlanIds = cached.ids
+  const preview = cached.positions.get(state.playbackPreviewId ?? '') ?? -1
   const start = Math.max(0, (preview >= 0 ? preview : currentIndex) - 30)
-  state.playbackTracks = tracks.slice(start, start + 61).map((track, offset) => ({ ...track, sourceIndex: start + offset, playbackPlaylistIndex: track.playbackPlaylistIndex ?? playlistIndex, playbackId: track.playbackId ?? `playlist:${playlistIndex}:${start + offset}:${trackKey(track)}` }))
+  state.playbackTracks = attachArtwork(tracks.slice(start, start + 61)).map((track, offset) => ({ ...track, sourceIndex: start + offset, playbackPlaylistIndex: track.playbackPlaylistIndex ?? playlistIndex, playbackId: cached.ids[start + offset] }))
   state.playbackTrackIndex = currentIndex >= start && currentIndex < start + 61 ? currentIndex - start : -1
   state.playingPlaylistIndex = actualPlaylistIndex
 }
@@ -764,6 +810,7 @@ async function loadLyrics(request: number, key: string, path: string) {
 async function syncCurrentTrack(track?: TrackInfo | PlaybackTrackChangedPayload | null) {
   const request = ++mediaRequest
   let nextTrack = track === undefined ? state.playbackState === 'stopped' ? null : await fb.player.getCurrentTrack() : track
+  if (!nextTrack && state.playbackPreviewPending) return
   if (track === undefined && !nextTrack && state.playbackState !== 'stopped') {
     const position = await fb.player.getCurrentTrackIndex(true)
     nextTrack = position.track ?? null
@@ -842,6 +889,7 @@ function bindEvents() {
     }),
     fb.on('playback:stopped', (event) => {
       if (event.reason === 'starting_another') return
+      if (state.playbackPreviewPending && event.reason === 'unknown') return
       state.playbackState = 'stopped'
       state.isPlaying = false
       state.position = 0
@@ -1867,7 +1915,7 @@ async function shuffleCurrent() {
 }
 
 async function togglePlayback() {
-  settledSkip.cancel()
+  settledSkip.cancel(state.playbackPreviewPending)
   if (!state.connected) {
     state.isPlaying = !state.isPlaying
     state.playbackState = state.isPlaying ? 'playing' : 'paused'
@@ -1914,7 +1962,7 @@ async function previous() {
 }
 
 async function seek(position: number) {
-  settledSkip.cancel()
+  settledSkip.cancel(state.playbackPreviewPending)
   if (!state.canSeek || !Number.isFinite(position)) return false
   const previous = state.position
   const target = Math.min(Math.max(0, position), Math.max(0, state.duration))
@@ -3237,6 +3285,8 @@ export function useFoobar() {
     playQueueItem,
     playPlaybackTrack,
     browsePlaybackTrack,
+    browsePlaybackPosition,
+    beginPlaybackBrowse,
     setPlaybackFocusState,
     moveQueueItemToTop,
     clearQueue,
