@@ -586,6 +586,30 @@ for (const mode of [0, 1, 2]) {
   assert.equal(player.state.playbackPreviewPending, false)
   assert.equal(player.state.currentTrack.path, browseTarget.path)
   console.log('PASS: browse focus never rolls back; plan IDs are cached; pending playback holds the target/footer until confirmed')
+  f.lists[0].tracks = Array.from({ length: 50000 }, (_, index) => source[index % source.length])
+  await player.playCurrentCollection()
+  const frozenWindow = player.state.playbackTracks
+  const frozenIds = player.state.playbackPlanIds
+  for (let index = 1000; index < 2000; index++) {
+    player.browsePlaybackPosition(index, true)
+    assert.equal(player.state.playbackTracks, frozenWindow)
+    assert.equal(player.state.playbackBrowseIndex, index)
+    assert.equal(player.state.playbackBrowseTrack.playbackId, player.state.playbackPreviewId)
+  }
+  const highStart = performance.now()
+  for (let index = 1000; index < 2000; index++) player.browsePlaybackPosition(index, true)
+  const highMs = performance.now() - highStart
+  assert.equal(player.state.playbackPlanIds, frozenIds)
+  assert.equal(player.state.playbackWindowDeferred, true)
+  assert.equal(player.state.playbackBrowseTrack.title, source[1999 % source.length].title)
+  player.browsePlaybackPosition(1999, false)
+  assert.equal(player.state.playbackWindowDeferred, false)
+  assert.notEqual(player.state.playbackTracks, frozenWindow)
+  assert.equal(player.state.playbackTracks.length, 61)
+  const nearStart = performance.now()
+  for (let index = 1000; index < 2000; index++) player.browsePlaybackPosition(index, false)
+  const nearMs = performance.now() - nearStart
+  console.log(`PASS: 50,000-item high-speed browsing freezes windows across 1,000 targets; local JS replay high=${highMs.toFixed(2)}ms near=${nearMs.toFixed(2)}ms (no WebView/GPU measurement)`)
 }
 
 {

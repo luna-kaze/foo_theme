@@ -145,6 +145,9 @@ export interface PlayerUiState {
   playbackPreviewId: string | null
   playbackPreviewPending: boolean
   playbackPreviewRequest: number
+  playbackBrowseIndex: number | null
+  playbackBrowseTrack: DisplayTrack | null
+  playbackWindowDeferred: boolean
   playingPlaylistIndex: number
   currentArtwork: string
   lyrics: ParsedLyric[]

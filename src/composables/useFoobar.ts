@@ -2,6 +2,7 @@ import { computed, reactive, shallowRef } from 'vue'
 import { pickImageFile } from '../utils/imagePicker'
 import { createPlaybackWorkspace, type PlaybackMode } from './playbackWorkspace'
 import { createPlaybackFocusGate, createSettledNavigation, type PlaybackFocusState } from '../utils/settledNavigation'
+import { coverflowPerformance } from '../utils/coverflowPerformance'
 import fb, {
   type AlbumInfo,
   type ArtistInfo,
@@ -54,6 +55,9 @@ const state = reactive<PlayerUiState>({
   playbackPreviewId: null,
   playbackPreviewPending: false,
   playbackPreviewRequest: 0,
+  playbackBrowseIndex: null,
+  playbackBrowseTrack: null,
+  playbackWindowDeferred: false,
   playingPlaylistIndex: -1,
   currentArtwork: '',
   lyrics: [],
@@ -204,6 +208,9 @@ const playbackFocusGate = createPlaybackFocusGate()
 let playbackSelectionVersion = 0
 const settledSkip = createSettledNavigation<string>({
   preview: (id, request) => {
+    state.playbackBrowseIndex = null
+    state.playbackBrowseTrack = null
+    state.playbackWindowDeferred = false
     playbackSelectionVersion += 1
     state.playbackPreviewId = id
     state.playbackPreviewPending = true
@@ -243,6 +250,9 @@ const settledSkip = createSettledNavigation<string>({
     return true
   },
   clear: () => {
+    state.playbackBrowseIndex = null
+    state.playbackBrowseTrack = null
+    state.playbackWindowDeferred = false
     playbackSelectionVersion += 1
     const preview = state.playbackPreviewId
     state.playbackPreviewId = null
@@ -294,6 +304,9 @@ async function browsePlaybackTrack(track: DisplayTrack) {
   let target = lookupWorkspaceTrack(track)
   if (!target && await ensurePlaybackWorkspace()) target = lookupWorkspaceTrack(track)
   if (!target || version !== playbackSelectionVersion) return
+  state.playbackBrowseIndex = null
+  state.playbackBrowseTrack = null
+  state.playbackWindowDeferred = false
   state.playbackPreviewId = target.playbackId!
   state.playbackPreviewPending = false
   state.playbackPreviewRequest += 1
@@ -301,11 +314,22 @@ async function browsePlaybackTrack(track: DisplayTrack) {
   if (snapshot) setPlaybackWindow(snapshot.order, snapshot.index, snapshot.order[0]?.playbackPlaylistIndex ?? -1, state.playingPlaylistIndex)
 }
 
-function browsePlaybackPosition(index: number) {
+function browsePlaybackPosition(index: number, distant = false) {
   const snapshot = playbackWorkspace.projection(undefined, true)
   if (!snapshot) return
-  const track = snapshot.order[Math.max(0, Math.min(snapshot.order.length - 1, Math.round(index)))]
-  if (track) void browsePlaybackTrack(track)
+  const selected = Math.max(0, Math.min(snapshot.order.length - 1, Math.round(index)))
+  const track = snapshot.order[selected]
+  if (!track) return
+  settledSkip.cancel(false)
+  playbackSelectionVersion += 1
+  state.playbackPreviewId = track.playbackId!
+  state.playbackPreviewPending = false
+  state.playbackPreviewRequest += 1
+  state.playbackBrowseIndex = selected
+  state.playbackBrowseTrack = track
+  state.playbackWindowDeferred = distant
+  coverflowPerformance.record(distant ? 'lightweightTarget' : 'nearTarget', 0, 1)
+  if (!distant) setPlaybackWindow(snapshot.order, snapshot.index, snapshot.order[0]?.playbackPlaylistIndex ?? -1, state.playingPlaylistIndex)
 }
 
 export type PluginId = 'converter' | 'freedb' | 'dop'
@@ -735,11 +759,20 @@ function getPlaybackWindowData(tracks: DisplayTrack[], playlistIndex: number) {
 function setPlaybackWindow(tracks: DisplayTrack[], currentIndex: number, playlistIndex: number, actualPlaylistIndex = playlistIndex) {
   const cached = getPlaybackWindowData(tracks, playlistIndex)
   state.playbackPlanIds = cached.ids
+  if (state.playbackWindowDeferred) {
+    coverflowPerformance.record('deferredWindowRefresh')
+    const start = state.playbackTracks[0]?.sourceIndex ?? 0
+    state.playbackTrackIndex = currentIndex >= start && currentIndex < start + state.playbackTracks.length ? currentIndex - start : -1
+    state.playingPlaylistIndex = actualPlaylistIndex
+    return
+  }
   const preview = cached.positions.get(state.playbackPreviewId ?? '') ?? -1
+  const startTime = coverflowPerformance.active ? performance.now() : 0
   const start = Math.max(0, (preview >= 0 ? preview : currentIndex) - 30)
   state.playbackTracks = attachArtwork(tracks.slice(start, start + 61)).map((track, offset) => ({ ...track, sourceIndex: start + offset, playbackPlaylistIndex: track.playbackPlaylistIndex ?? playlistIndex, playbackId: cached.ids[start + offset] }))
   state.playbackTrackIndex = currentIndex >= start && currentIndex < start + 61 ? currentIndex - start : -1
   state.playingPlaylistIndex = actualPlaylistIndex
+  if (coverflowPerformance.active) coverflowPerformance.record('coverWindowBuild', performance.now() - startTime, state.playbackTracks.length)
 }
 
 async function loadPlaybackSequence(force = false) {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, reactive, ref, shallowRef, watch } from 'vue'
 import { ChevronLeft, ChevronRight, Eye, EyeOff, Heart, Layers3, LocateFixed, Mic2, RotateCcw, Rows3, Shuffle, X } from '@lucide/vue'
 import type { DisplayTrack, ParsedLyric } from '../types/music'
 import { formatTime } from '../utils/format'
@@ -7,6 +7,7 @@ import ArtworkImage from './ArtworkImage.vue'
 import { isSameTrack, trackKey } from '../utils/track'
 import type { PlaybackFocusState } from '../utils/settledNavigation'
 import { createCoverflowRail, type RailFrame } from '../utils/coverflowRail'
+import { coverflowPerformance } from '../utils/coverflowPerformance'
 
 const props = defineProps<{
   open: boolean
@@ -25,6 +26,9 @@ const props = defineProps<{
   playbackPreviewId?: string | null
   playbackPreviewPending?: boolean
   playbackPreviewRequest?: number
+  playbackBrowseIndex?: number | null
+  playbackBrowseTrack?: DisplayTrack | null
+  playbackWindowDeferred?: boolean
   fullscreen: boolean
   shuffleBusy: boolean
   shufflePending: boolean
@@ -40,7 +44,7 @@ const emit = defineEmits<{
   favourite: [track: DisplayTrack]
   playTrack: [track: DisplayTrack]
   browseTrack: [track: DisplayTrack]
-  browsePosition: [index: number]
+  browsePosition: [index: number, distant: boolean]
   beginBrowse: []
   focusState: [state: PlaybackFocusState]
   shuffle: []
@@ -124,15 +128,21 @@ let previousFocusKey: string | null = null
 const railState = reactive<RailFrame>({ position: 0, target: 0, zoom: 0, distant: false, active: false, settled: true })
 let railSource: 'wheel' | 'intent' = 'wheel'
 let lastRailSelection = -1
+let lastRailDistant = false
 let railSettledKey: string | null = null
 const frozenCovers = ref<Array<CoverflowItem & { index: number; leaving: boolean; removed: boolean }>>([])
 const frozenBackdrop = ref('')
+const frozenDeck = shallowRef<CoverflowItem[]>([])
 const focusIndex = computed(() => {
+  if (props.playbackWindowDeferred) return coverflowIndex.value
   const preview = props.playbackTracks.findIndex((track) => track.playbackId === props.playbackPreviewId)
   return preview >= 0 ? preview : Math.max(0, props.playbackTrackIndex)
 })
+const globalFocusIndex = computed(() => props.playbackBrowseIndex ?? props.playbackTracks[focusIndex.value]?.sourceIndex ?? focusIndex.value)
 
 const coverflowItems = computed<CoverflowItem[]>(() => {
+  if ((railState.distant || props.playbackWindowDeferred) && frozenDeck.value.length) return frozenDeck.value
+  coverflowPerformance.record('coverModelBuild', 0, props.playbackTracks.length)
   if (props.playbackTracks.length) return props.playbackTracks.map((track, index) => ({
     track,
     artwork: index === props.playbackTrackIndex && isSameTrack(track, props.track) ? props.artwork || track.artworkUrl || '' : track.artworkUrl || '',
@@ -168,12 +178,18 @@ const rail = createCoverflowRail({
   update: (frame) => {
     if (frame.distant && !railState.distant) {
       frozenCovers.value = visibleCoverflowItems.value.filter(item => !item.leaving)
+      frozenDeck.value = coverflowItems.value
       frozenBackdrop.value = selectedCoverflow.value?.artwork || props.artwork
     }
     Object.assign(railState, frame)
+    coverflowPerformance.setTier(frame.distant ? frame.zoom < .6 ? 'shrinking' : 'high' : frame.zoom > .005 ? 'restoring' : 'near')
+    coverflowPerformance.record('railFrame')
     if (railSource === 'wheel' && frame.active) {
       const selected = Math.round(frame.target)
-      if (selected !== lastRailSelection) { lastRailSelection = selected; emit('browsePosition', selected) }
+      if (selected !== lastRailSelection || frame.distant !== lastRailDistant) {
+        lastRailSelection = selected; lastRailDistant = frame.distant
+        emit('browsePosition', selected, frame.distant)
+      }
     }
     if (frame.settled) {
       coverflowIndex.value = focusIndex.value
@@ -189,6 +205,8 @@ function coverflowOffset(item: { index: number; track: DisplayTrack | null }) {
 }
 
 function publishFocusState() {
+  if (!props.open || mode.value !== 'coverflow') coverflowPerformance.setTier('inactive')
+  else if (!railState.active && railState.zoom === 0) coverflowPerformance.setTier('near')
   if (mode.value === 'standard') {
     emit('focusState', {
       active: props.open,
@@ -237,11 +255,12 @@ watch(coverflowItems, (items) => { if (!orderReflowing.value && !railState.activ
 // arrive before its async projection, so it cannot be the animation trigger.
 watch([() => coverflowItems.value.map((item) => item.key).join('\u0000'), focusIndex, () => props.playbackPlanIds.join('\u0000'), () => props.open, mode, modeTransition], async (_values, [, , previousPlan]) => {
   if (!props.open || mode.value !== 'coverflow' || modeTransition.value) {
+    if (props.playbackWindowDeferred && props.playbackBrowseIndex != null) emit('browsePosition', props.playbackBrowseIndex, false)
     railSettledKey = null
     rail.dispose(); railState.active = false; railState.distant = false; railState.zoom = 0
     cancelOrderAnimation(); coverflowIndex.value = focusIndex.value; previousDeck = [...coverflowItems.value]; publishFocusState(); return
   }
-  const desired = props.playbackTracks[focusIndex.value]?.sourceIndex ?? focusIndex.value
+  const desired = props.playbackBrowseIndex ?? props.playbackTracks[focusIndex.value]?.sourceIndex ?? focusIndex.value
   if (!railState.active && railSettledKey === coverflowItems.value[focusIndex.value]?.key && railState.position === desired && _values[2] === previousPlan) {
     coverflowIndex.value = focusIndex.value; previousDeck = [...coverflowItems.value]; publishFocusState(); return
   }
@@ -339,6 +358,7 @@ function preloadCoverflowArtwork(sources: string[]) {
       return
     }
     const image = new Image()
+    coverflowPerformance.record('imagePreload', 0, 1)
     image.decoding = 'async'
     image.src = source
     const decoded = image.decode().catch(() => undefined).then(() => { void image.naturalWidth })
@@ -351,7 +371,18 @@ function preloadCoverflowArtwork(sources: string[]) {
   })
 }
 
-const selectedCoverflow = computed(() => coverflowItems.value[coverflowIndex.value] ?? null)
+const selectedCoverflow = computed<CoverflowItem | null>(() => {
+  if (props.playbackPreviewPending) {
+    const target = props.playbackTracks.find(track => track.playbackId === props.playbackPreviewId)
+    if (target) return { track: target, artwork: target.artworkUrl || '', idle: false, key: target.playbackId!, current: target.playbackId === props.playbackTracks[props.playbackTrackIndex]?.playbackId }
+  }
+  if (props.playbackWindowDeferred && props.playbackBrowseTrack) return {
+    track: props.playbackBrowseTrack, artwork: '', idle: false,
+    key: props.playbackBrowseTrack.playbackId!,
+    current: props.playbackBrowseTrack.playbackId === props.playbackTracks[props.playbackTrackIndex]?.playbackId,
+  }
+  return coverflowItems.value[coverflowIndex.value] ?? null
+})
 const currentCoverflowIndex = computed(() => Math.max(0, props.playbackTrackIndex))
 const idleCoverflow = computed(() => selectedCoverflow.value?.idle === true)
 const backgroundArtwork = computed(() => modeTransition.value ? props.artwork : mode.value === 'coverflow' ? railState.distant ? frozenBackdrop.value : selectedCoverflow.value?.artwork || props.artwork : props.artwork)
@@ -586,6 +617,7 @@ function cancelTonearm() {
 
 function moveCoverflow(direction: number) {
   lastCoverflowPointer = { index: -1, key: '', track: null, time: 0, x: 0, y: 0 }
+  if (props.playbackWindowDeferred) { railSource = 'wheel'; rail.aim(globalFocusIndex.value + direction); return }
   selectCoverflow(Math.min(coverflowItems.value.length - 1, Math.max(0, focusIndex.value + direction)))
 }
 
@@ -711,6 +743,7 @@ function onCoverflowWheel(event: WheelEvent) {
     cancelOrderAnimation()
     rail.reset(props.playbackPlanIds.length, position)
     lastRailSelection = -1
+    lastRailDistant = false
   }
   railSource = 'wheel'
   railState.active = true
@@ -897,8 +930,8 @@ onBeforeUnmount(() => {
             <button v-for="index in railPoints" :key="index" class="coverflow__dot" :class="{ active: index === Math.round(railState.position) }" :style="{ '--point-offset': index - railState.position, '--point-distance': Math.abs(index - railState.position) }" :aria-label="`浏览第 ${index + 1} 首`" @pointerup.stop.prevent="railSource = 'wheel'; rail.aim(index)" />
           </div>
         </div>
-        <button v-if="!idleCoverflow" class="coverflow__arrow coverflow__arrow--left" :disabled="focusIndex === 0" aria-label="上一张封面" @click="moveCoverflow(-1)"><ChevronLeft :size="22" /><span>上一张</span></button>
-        <button v-if="!idleCoverflow" class="coverflow__arrow coverflow__arrow--right" :disabled="focusIndex >= coverflowItems.length - 1" aria-label="下一张封面" @click="moveCoverflow(1)"><ChevronRight :size="22" /><span>下一张</span></button>
+        <button v-if="!idleCoverflow" class="coverflow__arrow coverflow__arrow--left" :disabled="globalFocusIndex === 0" aria-label="上一张封面" @click="moveCoverflow(-1)"><ChevronLeft :size="22" /><span>上一张</span></button>
+        <button v-if="!idleCoverflow" class="coverflow__arrow coverflow__arrow--right" :disabled="globalFocusIndex >= playbackPlanIds.length - 1" aria-label="下一张封面" @click="moveCoverflow(1)"><ChevronRight :size="22" /><span>下一张</span></button>
         <div v-if="selectedCoverflow" class="coverflow__copy">
           <small v-if="shuffleSourceName" class="coverflow__shuffle-info">{{ shuffleSourceName }} · {{ shuffleStaged ? '最新编辑待提交，封面显示已提交计划' : shufflePending ? '计划待下一曲接管' : '播放工作集' }}</small>
           <p>{{ railState.distant ? `高速浏览 · 第 ${Math.round(railState.target) + 1} 首` : playbackPreviewPending && selectedCoverflow.key === playbackPreviewId ? '准备播放' : selectedCoverflow.idle ? (selectedCoverflow.track ? '未加入播放列表' : '当前没有播放') : selectedCoverflow.current ? '正在播放' : `播放列表第 ${(selectedCoverflow.track?.sourceIndex ?? coverflowIndex) + 1} 首` }}</p>

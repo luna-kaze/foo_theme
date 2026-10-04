@@ -14,12 +14,13 @@ import TrackInspector from './components/TrackInspector.vue'
 import FileOperationDialog from './components/FileOperationDialog.vue'
 import TrackActionMenu from './components/TrackActionMenu.vue'
 import { routeKey, useFoobar } from './composables/useFoobar'
-import fb, { type ArtistInfo, type OutputDevice, type PlaylistInfo } from 'foo-webview-sdk'
+import fb, { consoleApi, type ArtistInfo, type OutputDevice, type PlaylistInfo } from 'foo-webview-sdk'
 import type { AlbumCard, ArtistCard, DisplayTrack, LibraryFolderCard, RouteSceneData, TrackDetails, ViewId } from './types/music'
 import { menuIcons, showContextMenu, type ContextMenuItem } from './utils/contextMenu'
 import { isSameTrack, localFilePath, playablePath, trackKey } from './utils/track'
 import { createNavigationTransitions } from './utils/navigationTransition'
 import { installAutoHideScrollbars } from './utils/autoHideScrollbars'
+import { coverflowPerformance, installCoverflowPerformance } from './utils/coverflowPerformance'
 import { groupAlphabetically } from './utils/alphabetIndex'
 import { artistPortraitUrl, chooseArtistPhoto, configureArtistProfiles, ensureLocalArtistProfile, loadOnlineArtistProfile, openArtistSource, resetArtistPhoto } from './composables/useArtistProfiles'
 
@@ -449,6 +450,16 @@ async function createPlaylistFromDialog(name: string, options?: { query: string;
 }
 
 function onKeydown(event: KeyboardEvent) {
+  if (event.ctrlKey && event.altKey && event.code === 'KeyP' && !event.repeat) {
+    event.preventDefault()
+    if (coverflowPerformance.active) {
+      const report = coverflowPerformance.stop()
+      console.log('[Coverflow performance]', report)
+      if (state.connected) void consoleApi.log(`[Coverflow performance] ${JSON.stringify(report)}`).catch(() => {})
+      player.notify('性能采样已结束，结果已输出到控制台。', 'success')
+    } else { coverflowPerformance.start(); player.notify('性能采样已开始，再按 Ctrl+Alt+P 结束。', 'info') }
+    return
+  }
   const target = event.target as HTMLElement | null
   const interactive = target?.closest('button, a, input, textarea, select, [contenteditable="true"], [role="button"], [role="slider"]')
 
@@ -481,7 +492,9 @@ function onKeydown(event: KeyboardEvent) {
 }
 
 let disposeScrollbars: (() => void) | undefined
+let disposePerformance: (() => void) | undefined
 onMounted(() => {
+  disposePerformance = installCoverflowPerformance()
   disposeScrollbars = installAutoHideScrollbars()
   void player.initialize()
   if (miniMode) document.body.classList.add('mini-window')
@@ -495,6 +508,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  disposePerformance?.()
   disposeScrollbars?.()
   sceneWaiters.forEach((finish) => finish())
   navigationTransitions.cancel()
@@ -1134,6 +1148,9 @@ function onDrop(event: DragEvent) {
       :playback-preview-id="state.playbackPreviewId"
       :playback-preview-pending="state.playbackPreviewPending"
       :playback-preview-request="state.playbackPreviewRequest"
+      :playback-browse-index="state.playbackBrowseIndex"
+      :playback-browse-track="state.playbackBrowseTrack"
+      :playback-window-deferred="state.playbackWindowDeferred"
       :shuffle-busy="state.shuffleBusy"
       :shuffle-pending="state.shufflePending"
       :shuffle-staged="state.shuffleStaged"

@@ -149,11 +149,17 @@ const props = vue.reactive({ open: false, track: tracks[0], artwork: 'current-ar
 const scope = vue.effectScope()
 const events = []
 let standardGate = null
-state = scope.run(() => componentModule.exports.default.setup(props, { expose() {}, emit(name, value) {
+state = scope.run(() => componentModule.exports.default.setup(props, { expose() {}, emit(name, value, distant) {
   events.push({ name, value })
   if (name === 'focusState') standardGate?.report(value)
   if (name === 'browseTrack') { props.playbackPreviewId = value.playbackId; props.playbackPreviewPending = false; props.playbackPreviewRequest += 1 }
-  if (name === 'browsePosition') { props.playbackPreviewId = props.playbackTracks.find(track => track.sourceIndex === value)?.playbackId ?? props.playbackPreviewId; props.playbackPreviewPending = false; props.playbackPreviewRequest += 1 }
+  if (name === 'browsePosition') {
+    props.playbackPreviewId = props.playbackTracks.find(track => track.sourceIndex === value)?.playbackId ?? props.playbackPreviewId
+    props.playbackPreviewPending = false; props.playbackPreviewRequest += 1
+    props.playbackBrowseIndex = value
+    props.playbackBrowseTrack = props.playbackTracks.find(track => track.sourceIndex === value)
+    props.playbackWindowDeferred = distant
+  }
 } }))
 state.coverflowView.value = { isConnected: true, querySelector: () => null, querySelectorAll: () => elements }
 state.mode.value = 'coverflow'; props.open = true
@@ -246,6 +252,10 @@ assert.equal(state.railState.distant, true)
 assert.equal(state.visibleCoverflowItems.value.length, 0, 'steady high-speed mode removes image-bearing cover nodes')
 assert.ok(state.railPoints.value.length > 0 && state.railPoints.value.length <= 31)
 assert.deepEqual([...state.coverflowPreloadSources()], [], 'high-speed rail cannot start new image preloads')
+const frozenModel = state.coverflowItems.value
+props.artwork = 'unrelated-current-artwork-update'; await flush()
+assert.equal(state.coverflowItems.value, frozenModel, 'the high-speed cover model is frozen even when actual playback metadata updates')
+assert.equal(state.selectedCoverflow.value.track.title, props.playbackBrowseTrack.title, 'lightweight target metadata keeps the exact original title refresh behavior')
 const railPosition = state.railState.position
 state.onCoverflowWheel({ deltaY: -200, deltaX: 0, deltaMode: 0, ctrlKey: false })
 assert.equal(state.railState.position, railPosition)
