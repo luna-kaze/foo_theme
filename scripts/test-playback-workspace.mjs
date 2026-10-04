@@ -497,12 +497,18 @@ for (const mode of [0, 1, 2]) {
   f.lists[0].tracks.splice(2, 1)
   f.lists[0].tracks.push(source[1])
   const module = { exports: {} }
+  let time = 0, timerId = 0
+  const timers = new Map()
+  function tick(ms) {
+    time += ms
+    for (const [id, timer] of [...timers]) if (timer.at <= time) { timers.delete(id); timer.fn() }
+  }
   runInNewContext(bundled.outputFiles[0].text, {
     module, exports: module.exports,
     require: id => id === 'foo-webview-sdk' ? { ...f.sdk, __esModule: true, default: f.sdk } : require(id),
     crypto: { randomUUID }, console, URL, URLSearchParams, performance,
     window: { location: { search: '', href: 'https://theme.test/' } },
-    setTimeout: () => 0, clearTimeout() {},
+    setTimeout: (fn, ms) => { const id = ++timerId; timers.set(id, { fn, at: time + ms }); return id }, clearTimeout: id => timers.delete(id),
   })
   const player = module.exports.useFoobar()
   player.state.connected = true
@@ -522,6 +528,23 @@ for (const mode of [0, 1, 2]) {
   }
   assert.equal('shuffleEnabled' in player.state, false)
   console.log('PASS: real playlist red-button handler reloads edited source; bottom cycles exactly three policies without reordering')
+  const plays = f.calls.filter(call => call[0] === 'play').length
+  const first = player.next(), second = player.next(), third = player.previous()
+  const selected = player.state.playbackPreviewId
+  assert.ok(selected)
+  assert.equal(f.calls.filter(call => call[0] === 'play').length, plays)
+  tick(180)
+  await Promise.all([first, second, third])
+  assert.equal(f.calls.filter(call => call[0] === 'play').length, plays + 1)
+  assert.equal(player.state.playbackTracks[player.state.playbackTrackIndex].playbackId, selected)
+  assert.equal(player.state.playbackPreviewId, null)
+  const pending = player.next()
+  player.state.canSeek = false
+  await player.seek(0)
+  tick(200); await pending
+  assert.equal(f.calls.filter(call => call[0] === 'play').length, plays + 1)
+  assert.equal(player.state.playbackPreviewId, null)
+  console.log('PASS: real next/next/previous handlers coalesce decoder startup; explicit seek cancels a pending preview')
 }
 
 {

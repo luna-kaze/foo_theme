@@ -142,6 +142,7 @@ export interface PlayerUiState {
   playbackTracks: DisplayTrack[]
   playbackPlanIds: string[]
   playbackTrackIndex: number
+  playbackPreviewId: string | null
   playingPlaylistIndex: number
   currentArtwork: string
   lyrics: ParsedLyric[]

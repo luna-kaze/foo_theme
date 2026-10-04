@@ -4,7 +4,7 @@ import { ChevronLeft, ChevronRight, Eye, EyeOff, Heart, Layers3, LocateFixed, Mi
 import type { DisplayTrack, ParsedLyric } from '../types/music'
 import { formatTime } from '../utils/format'
 import ArtworkImage from './ArtworkImage.vue'
-import { trackKey } from '../utils/track'
+import { isSameTrack, trackKey } from '../utils/track'
 
 const props = defineProps<{
   open: boolean
@@ -20,6 +20,7 @@ const props = defineProps<{
   playbackTracks: DisplayTrack[]
   playbackPlanIds: string[]
   playbackTrackIndex: number
+  playbackPreviewId?: string | null
   fullscreen: boolean
   shuffleBusy: boolean
   shufflePending: boolean
@@ -104,19 +105,24 @@ const orderReflowing = ref(false)
 const outgoingCovers = ref<Array<CoverflowItem & { index: number; leaving: boolean; removed: boolean }>>([])
 let orderAnimations: Animation[] = []
 let orderRequest = 0
+let orderTimer: ReturnType<typeof setTimeout> | null = null
 let previousDeck: CoverflowItem[] = []
+const focusIndex = computed(() => {
+  const preview = props.playbackTracks.findIndex((track) => track.playbackId === props.playbackPreviewId)
+  return preview >= 0 ? preview : Math.max(0, props.playbackTrackIndex)
+})
 
 const coverflowItems = computed<CoverflowItem[]>(() => {
   if (props.playbackTracks.length) return props.playbackTracks.map((track, index) => ({
     track,
-    artwork: index === props.playbackTrackIndex ? props.artwork || track.artworkUrl || '' : track.artworkUrl || '',
+    artwork: index === props.playbackTrackIndex && isSameTrack(track, props.track) ? props.artwork || track.artworkUrl || '' : track.artworkUrl || '',
     current: index === props.playbackTrackIndex,
     idle: false,
     key: track.playbackId ?? `playlist:${track.sourceIndex ?? index}:${trackKey(track)}`,
   }))
   return [{
     track: props.track,
-    artwork: standardCover.value.artwork || props.artwork || props.track?.artworkUrl || '',
+    artwork: props.artwork || props.track?.artworkUrl || '',
     current: false,
     idle: true,
     key: `idle:${standardCover.value.key}`,
@@ -132,6 +138,8 @@ const visibleCoverflowItems = computed(() => {
 
 function cancelOrderAnimation() {
   orderRequest += 1
+  if (orderTimer) clearTimeout(orderTimer)
+  orderTimer = null
   orderAnimations.forEach((animation) => animation.cancel())
   orderAnimations = []
   outgoingCovers.value = []
@@ -140,8 +148,10 @@ function cancelOrderAnimation() {
 watch(coverflowItems, (items) => { if (!orderReflowing.value) previousDeck = [...items] }, { immediate: true, flush: 'post' })
 // Capture the old DOM before Vue patches the committed deck. A revision can
 // arrive before its async projection, so it cannot be the animation trigger.
-watch(() => coverflowItems.value.map((item) => item.key).join('\u0000'), async () => {
-  if (!props.open || mode.value !== 'coverflow' || modeTransition.value) return
+watch([() => coverflowItems.value.map((item) => item.key).join('\u0000'), focusIndex, () => props.playbackPlanIds.join('\u0000')], async ([, , plan], [, , previousPlan]) => {
+  if (!props.open || mode.value !== 'coverflow' || modeTransition.value) {
+    cancelOrderAnimation(); coverflowIndex.value = focusIndex.value; previousDeck = [...coverflowItems.value]; return
+  }
   const poses = new Map<string, { transform: string; opacity: string; offset: number }>()
   coverflowView.value?.querySelectorAll<HTMLElement>('[data-cover-key]').forEach((element) => {
     const style = getComputedStyle(element)
@@ -150,7 +160,7 @@ watch(() => coverflowItems.value.map((item) => item.key).join('\u0000'), async (
   const old = [...previousDeck, ...outgoingCovers.value]
   cancelOrderAnimation()
   const request = orderRequest
-  coverflowIndex.value = Math.max(0, props.playbackTrackIndex)
+  coverflowIndex.value = focusIndex.value
   if (globalThis.matchMedia('(prefers-reduced-motion: reduce)').matches) { previousDeck = [...coverflowItems.value]; return }
   // The rendered deck is windowed. A shuffled card outside that window is
   // leaving the viewport, not deleted from the committed plan.
@@ -160,22 +170,31 @@ watch(() => coverflowItems.value.map((item) => item.key).join('\u0000'), async (
   await nextTick()
   if (request !== orderRequest) return
   if (!coverflowView.value?.isConnected) { cancelOrderAnimation(); previousDeck = [...coverflowItems.value]; return }
-  const animations = [...coverflowView.value.querySelectorAll<HTMLElement>('[data-cover-key]')].map((element) => {
-    const oldPose = poses.get(element.dataset.coverKey!)
-    const end = getComputedStyle(element)
-    const leaving = element.classList.contains('is-order-leaving')
-    const removed = element.classList.contains('is-order-removed')
-    const offset = Number(element.style.getPropertyValue('--cover-offset'))
-    const startTransform = oldPose?.transform || `${end.transform} translateX(${Math.sign(offset) * 110}px) translateZ(-180px) scale(.88)`
-    const endTransform = leaving ? `${startTransform} translateX(${removed ? 0 : Math.sign(oldPose?.offset ?? offset) * 160}px) translateY(${removed ? 64 : 0}px) translateZ(-140px) scale(${removed ? .82 : .94})` : end.transform
-    return element.animate([
-      { transform: startTransform, opacity: oldPose?.opacity ?? '0' },
-      { transform: endTransform, opacity: leaving ? 0 : Number(end.opacity) },
-    ], { duration: removed ? 300 : 560, easing: 'cubic-bezier(.22,.72,.18,1)', fill: 'both' })
-  })
-  orderAnimations = animations
-  await Promise.allSettled(animations.map((animation) => animation.finished))
+  try {
+    for (const element of coverflowView.value.querySelectorAll<HTMLElement>('[data-cover-key]')) {
+      const oldPose = poses.get(element.dataset.coverKey!)
+      const end = getComputedStyle(element)
+      const leaving = element.classList.contains('is-order-leaving')
+      const removed = element.classList.contains('is-order-removed')
+      const offset = Number(element.style.getPropertyValue('--cover-offset'))
+      const startTransform = oldPose?.transform || `${end.transform} translateX(${Math.sign(offset) * 110}px) translateZ(-180px) scale(.88)`
+      const endTransform = leaving ? `${startTransform} translateX(${removed ? 0 : Math.sign(oldPose?.offset ?? offset) * 160}px) translateY(${removed ? 64 : 0}px) translateZ(-140px) scale(${removed ? .82 : .94})` : end.transform
+      orderAnimations.push(element.animate([
+        { transform: startTransform, opacity: oldPose?.opacity ?? '0' },
+        { transform: endTransform, opacity: leaving ? 0 : Number(end.opacity) },
+      ], { duration: removed ? 300 : plan === previousPlan ? 160 : 420, easing: 'cubic-bezier(.22,.72,.18,1)', fill: 'both' }))
+    }
+  } catch {
+    cancelOrderAnimation(); previousDeck = [...coverflowItems.value]; return
+  }
+  const animations = [...orderAnimations]
+  await Promise.race([
+    Promise.allSettled(animations.map((animation) => animation.finished)),
+    new Promise<void>(resolve => { orderTimer = setTimeout(resolve, 750) }),
+  ])
   if (request !== orderRequest) return
+  if (orderTimer) clearTimeout(orderTimer)
+  orderTimer = null
   animations.forEach((animation) => animation.cancel())
   orderAnimations = []
   outgoingCovers.value = []
@@ -543,9 +562,6 @@ watch(() => props.artwork || props.track?.artworkUrl || '', (artwork) => {
   if (pendingStandardCover.value?.key === key) pendingStandardCover.value.artwork = artwork
   if (standardCover.value.key === key) standardCover.value.artwork = artwork
 })
-watch(() => props.playbackTrackIndex, (index) => {
-  if (index >= 0 && !orderReflowing.value) coverflowIndex.value = index
-})
 watch(lyricsVisible, (visible) => {
   if (visible) {
     coverForward.value = false
@@ -695,7 +711,7 @@ onBeforeUnmount(() => {
         <button v-if="!idleCoverflow" class="coverflow__arrow coverflow__arrow--right" :disabled="orderReflowing || coverflowIndex >= coverflowItems.length - 1" aria-label="下一张封面" @click="moveCoverflow(1)"><ChevronRight :size="22" /><span>下一张</span></button>
         <div v-if="selectedCoverflow" class="coverflow__copy">
           <small v-if="shuffleSourceName" class="coverflow__shuffle-info">{{ shuffleSourceName }} · {{ shuffleStaged ? '最新编辑待提交，封面显示已提交计划' : shufflePending ? '计划待下一曲接管' : '播放工作集' }}</small>
-          <p>{{ selectedCoverflow.idle ? (selectedCoverflow.track ? '未加入播放列表' : '当前没有播放') : selectedCoverflow.current ? '正在播放' : `播放列表第 ${(selectedCoverflow.track?.sourceIndex ?? coverflowIndex) + 1} 首` }}</p>
+          <p>{{ selectedCoverflow.key === playbackPreviewId ? '准备播放' : selectedCoverflow.idle ? (selectedCoverflow.track ? '未加入播放列表' : '当前没有播放') : selectedCoverflow.current ? '正在播放' : `播放列表第 ${(selectedCoverflow.track?.sourceIndex ?? coverflowIndex) + 1} 首` }}</p>
           <h1>{{ selectedCoverflow.track?.title || standardCover.album || '当前没有播放' }}</h1>
           <span v-if="selectedCoverflow.track">{{ selectedCoverflow.track.artist }} · {{ selectedCoverflow.track.album }}</span>
           <span v-else>最后播放的专辑封面会保留在这里</span>

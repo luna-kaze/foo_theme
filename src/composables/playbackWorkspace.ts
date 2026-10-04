@@ -316,7 +316,7 @@ export function createPlaybackWorkspace(deps: Dependencies) {
     publish(true)
     await save()
   }
-  function projection(index: number, edited = false): Snapshot | null {
+  function projection(index = actualPosition, edited = false): Snapshot | null {
     const current = actual?.tracks[external ? actualPosition : index]
     const target = edited && deferred ? { name: 'editor', index: -1, tracks: deferred.tracks } : planned ?? actual
     const base = edited && deferred ? deferred.base : canonical
@@ -456,7 +456,7 @@ export function createPlaybackWorkspace(deps: Dependencies) {
         else activeDemoIndex += 1
         if (activeDemoIndex >= actual.tracks.length) activeDemoIndex = status.mode === 1 ? 0 : actual.tracks.length - 1
       }
-      await syncInternal(); publish()
+      await syncInternal(); publish(); await save()
     }),
     demoIndex: () => activeDemoIndex,
     jump: (track: DisplayTrack) => transaction(async () => {
@@ -476,7 +476,7 @@ export function createPlaybackWorkspace(deps: Dependencies) {
       }
       else activeDemoIndex = index
       if (target === planned) { actual = planned; planned = null }
-      await syncInternal(); publish()
+      await syncInternal(); publish(); await save()
     }),
     restore: async () => {
       if (!deps.connected()) return

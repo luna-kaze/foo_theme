@@ -67,12 +67,16 @@ input[type="range"] {
   cursor: pointer;
 }
 
-* { scrollbar-color: transparent transparent; }
-.scrollbar-active { scrollbar-color: rgba(255, 255, 255, 0.24) transparent; }
+/* scrollbar-color overrides the narrow WebKit thumb in Chromium. */
+@supports not selector(::-webkit-scrollbar) {
+  * { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+  .scrollbar-active { scrollbar-color: rgba(255, 255, 255, 0.24) transparent; }
+  .workspace-scroll--index-rail { scrollbar-color: transparent transparent !important; }
+}
 
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
@@ -502,6 +506,7 @@ input[type="range"] {
 }
 .workspace-scroll { scrollbar-gutter: stable; }
 .workspace-scroll--layout-switch { overflow-anchor: none; }
+.workspace-scroll--index-rail::-webkit-scrollbar-thumb { background: transparent !important; }
 
 .route-page { min-height: 100%; }
 .route-scene { min-height: 100%; }
@@ -730,11 +735,12 @@ input[type="range"] {
   backdrop-filter: blur(18px);
   z-index: 30;
   transform: translateY(-50%);
-  transition: background 150ms ease, border-color 150ms ease;
-  animation: alphabet-rail-appear 360ms ease both;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease, background 150ms ease, border-color 150ms ease;
 }
-@keyframes alphabet-rail-appear { from { opacity: 0; } to { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .alphabet-index { animation: none; } }
+.alphabet-index.is-visible, .alphabet-index:focus-within { opacity: 1; pointer-events: auto; }
+@media (prefers-reduced-motion: reduce) { .alphabet-index { transition: none; } }
 .alphabet-index button { display: grid; width: 21px; height: 17px; padding: 0; place-items: center; color: #8e8a91; font-size: 9px; font-weight: 700; line-height: 1; background: transparent; border-radius: 7px; }
 .alphabet-index button:hover:not(:disabled) { color: white; background: rgba(255,255,255,.09); }
 .alphabet-index button.active { color: #fff; background: var(--accent); box-shadow: 0 3px 10px rgba(231,99,97,.3); }

@@ -1131,6 +1131,7 @@ function onDrop(event: DragEvent) {
       :playback-tracks="state.playbackTracks"
       :playback-plan-ids="state.playbackPlanIds"
       :playback-track-index="state.playbackTrackIndex"
+      :playback-preview-id="state.playbackPreviewId"
       :shuffle-busy="state.shuffleBusy"
       :shuffle-pending="state.shufflePending"
       :shuffle-staged="state.shuffleStaged"

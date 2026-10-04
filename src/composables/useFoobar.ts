@@ -1,6 +1,7 @@
 import { computed, reactive, shallowRef } from 'vue'
 import { pickImageFile } from '../utils/imagePicker'
 import { createPlaybackWorkspace, type PlaybackMode } from './playbackWorkspace'
+import { createSettledNavigation } from '../utils/settledNavigation'
 import fb, {
   type AlbumInfo,
   type ArtistInfo,
@@ -50,6 +51,7 @@ const state = reactive<PlayerUiState>({
   playbackTracks: [],
   playbackPlanIds: [],
   playbackTrackIndex: -1,
+  playbackPreviewId: null,
   playingPlaylistIndex: -1,
   currentArtwork: '',
   lyrics: [],
@@ -188,6 +190,44 @@ async function ensurePlaybackWorkspace() {
 async function refreshWorkspace() {
   await syncWorkspaceProjection()
   if (state.connected) { await loadPlaylists(); await loadQueue() }
+}
+
+const settledSkip = createSettledNavigation<string>({
+  preview: (id) => {
+    state.playbackPreviewId = id
+    const snapshot = playbackWorkspace.projection(undefined, true)
+    if (snapshot) setPlaybackWindow(attachArtwork(snapshot.order), snapshot.index, snapshot.order[0]?.playbackPlaylistIndex ?? -1, state.playingPlaylistIndex)
+  },
+  commit: async (id) => {
+    if (!await playbackWorkspace.sync()) return false
+    const snapshot = playbackWorkspace.projection(undefined, true)
+    const target = snapshot?.order.find((track) => track.playbackId === id)
+    if (!target) return false
+    if (snapshot?.order[snapshot.index]?.playbackId === id) return true
+    if (!await playbackWorkspace.jump(target)) return false
+    await refreshWorkspace()
+    return true
+  },
+  clear: () => {
+    const preview = state.playbackPreviewId
+    state.playbackPreviewId = null
+    if (preview) {
+      const snapshot = playbackWorkspace.projection()
+      if (snapshot) setPlaybackWindow(attachArtwork(snapshot.order), snapshot.index, snapshot.order[0]?.playbackPlaylistIndex ?? -1, state.playingPlaylistIndex)
+    }
+  },
+})
+
+function previewSkip(direction: number) {
+  if (!playbackWorkspace.status.ready || state.queue.some((track) => track.queueSource === 'explicit' && !track.playbackId?.startsWith('work:'))) return null
+  const snapshot = playbackWorkspace.projection(undefined, true)
+  if (!snapshot || snapshot.index < 0) return null
+  const pending = snapshot.order.findIndex((track) => track.playbackId === state.playbackPreviewId)
+  const index = pending >= 0 ? pending : snapshot.index
+  let target = index + direction
+  if (state.playbackOrder === 1) target = (target + snapshot.order.length) % snapshot.order.length
+  else if (target < 0 || target >= snapshot.order.length) return pending >= 0 ? settledSkip.schedule(snapshot.order[index].playbackId!) : null
+  return settledSkip.schedule(snapshot.order[target].playbackId!)
 }
 
 export type PluginId = 'converter' | 'freedb' | 'dop'
@@ -606,9 +646,10 @@ async function loadQueue() {
 
 function setPlaybackWindow(tracks: DisplayTrack[], currentIndex: number, playlistIndex: number, actualPlaylistIndex = playlistIndex) {
   state.playbackPlanIds = tracks.map((track, index) => track.playbackId ?? `playlist:${playlistIndex}:${index}:${trackKey(track)}`)
-  const start = Math.max(0, currentIndex - 30)
+  const preview = tracks.findIndex((track) => track.playbackId === state.playbackPreviewId)
+  const start = Math.max(0, (preview >= 0 ? preview : currentIndex) - 30)
   state.playbackTracks = tracks.slice(start, start + 61).map((track, offset) => ({ ...track, sourceIndex: start + offset, playbackPlaylistIndex: track.playbackPlaylistIndex ?? playlistIndex, playbackId: track.playbackId ?? `playlist:${playlistIndex}:${start + offset}:${trackKey(track)}` }))
-  state.playbackTrackIndex = currentIndex - start
+  state.playbackTrackIndex = currentIndex >= start && currentIndex < start + 61 ? currentIndex - start : -1
   state.playingPlaylistIndex = actualPlaylistIndex
 }
 
@@ -1398,6 +1439,7 @@ async function loadRadio(pushHistory = true) {
 }
 
 async function playTrack(track: DisplayTrack, index?: number) {
+  settledSkip.cancel()
   if (!track) return
   if (isSameTrack(track, state.currentTrack) && state.playbackState !== 'stopped') {
     await togglePlayback()
@@ -1463,6 +1505,7 @@ async function setAlphabetIndexView(enabled: boolean) {
 }
 
 async function playGeneratedCollection(tracks: DisplayTrack[], playIndex = 0, random = false, message?: string) {
+  settledSkip.cancel()
   const requestedIndex = Number.isInteger(playIndex) ? playIndex : 0
   const entries = tracks.map((track, originalIndex) => ({ originalIndex, path: playablePath(track) })).filter((item) => item.path)
   const mappedPlayIndex = entries.findIndex((item) => item.originalIndex === requestedIndex)
@@ -1573,6 +1616,7 @@ async function addAlbumToPlaylist(album: AlbumCard, playlistIndex: number) {
 }
 
 async function playPlaylist(playlistIndex: number, shuffled = false) {
+  settledSkip.cancel()
   const playlist = state.playlists.find((item) => item.index === playlistIndex)
   if (!playlist) return
   if (shuffled) {
@@ -1779,6 +1823,7 @@ async function shuffleCurrent() {
 }
 
 async function togglePlayback() {
+  settledSkip.cancel()
   if (!state.connected) {
     state.isPlaying = !state.isPlaying
     state.playbackState = state.isPlaying ? 'playing' : 'paused'
@@ -1792,6 +1837,9 @@ async function togglePlayback() {
 }
 
 async function next() {
+  const pending = previewSkip(1)
+  if (pending) { await pending; return }
+  settledSkip.cancel()
   if (playbackWorkspace.status.ready) { await playbackWorkspace.next(); await refreshWorkspace() }
   else if (state.connected) await runAction(() => fb.player.next())
   else if (state.tracks.length) {
@@ -1801,6 +1849,9 @@ async function next() {
 }
 
 async function previous() {
+  const pending = previewSkip(-1)
+  if (pending) { await pending; return }
+  settledSkip.cancel()
   const previousTrack = state.playbackTracks[state.playbackTrackIndex - 1]
   if (playbackWorkspace.status.ready && previousTrack?.playbackId?.startsWith('work:')) {
     await playbackWorkspace.jump(previousTrack); await refreshWorkspace(); return
@@ -1817,6 +1868,7 @@ async function previous() {
 }
 
 async function seek(position: number) {
+  settledSkip.cancel()
   if (!state.canSeek || !Number.isFinite(position)) return false
   const previous = state.position
   const target = Math.min(Math.max(0, position), Math.max(0, state.duration))
@@ -1851,6 +1903,7 @@ async function syncPlaybackCapabilities() {
 }
 
 async function playPlaybackTrack(track: DisplayTrack) {
+  settledSkip.cancel()
   if (track.playbackId?.startsWith('work:') && playbackWorkspace.status.ready) { await playbackWorkspace.jump(track); await refreshWorkspace(); return }
   if (track.playbackPlaceholder) return togglePlayback()
   if (!state.connected) return playTrack(track)
@@ -2956,6 +3009,7 @@ function closeNowPlaying() {
 }
 
 function dispose() {
+  settledSkip.cancel()
   lifecycleGeneration += 1
   routeGeneration += 1
   searchGeneration += 1
