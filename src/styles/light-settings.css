@@ -1,0 +1,18 @@
+.modal-backdrop.light-settings-backdrop { display: flex; z-index: 14000; align-items: stretch; justify-content: flex-end; padding: 24px; background: transparent; backdrop-filter: none; }
+.light-settings-panel { display: flex; flex-direction: column; width: 360px; max-width: calc(100vw - 48px); max-height: calc(100vh - 48px); min-height: 0; padding: 20px; color: var(--text); background: rgba(22,22,27,.96); border: 1px solid rgba(255,255,255,.13); border-radius: 18px; box-shadow: 0 22px 70px rgba(0,0,0,.4); }
+.light-settings-panel > header { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.light-settings-panel h2 { margin: 0 0 5px; font-size: 16px; }
+.light-settings-panel header small { color: var(--text-muted); font-size: 10px; }
+.light-settings-panel header button { display: grid; place-items: center; width: 30px; height: 30px; margin-left: auto; border-radius: 8px; color: var(--text-muted); background: transparent; }
+.light-settings-note, .light-settings-message { margin: 14px 0; font-size: 11px; line-height: 1.6; color: var(--text-muted); }
+.light-settings-controls { min-height: 0; overflow-y: auto; padding-right: 8px; }
+.light-settings-controls > label { display: block; margin-bottom: 13px; }
+.light-settings-controls > label > span { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 7px; font-size: 11px; }
+.light-settings-controls output { color: var(--accent-bright); font-variant-numeric: tabular-nums; }
+.light-settings-controls input[type="range"] { width: 100%; height: 16px; accent-color: var(--accent-bright); cursor: pointer; }
+.light-settings-controls .light-settings-animation { display: flex; align-items: center; gap: 8px; }
+.light-settings-controls .light-settings-animation > span { margin: 0; }
+.light-settings-animation input { accent-color: var(--accent-bright); }
+.light-settings-panel > footer { display: flex; justify-content: space-between; gap: 10px; padding-top: 14px; flex-shrink: 0; }
+.light-settings-message { margin-bottom: 0; }
+@media (max-width: 600px) { .modal-backdrop.light-settings-backdrop { padding: 12px; }.light-settings-panel { max-width: calc(100vw - 24px); max-height: calc(100vh - 24px); padding: 16px; } }

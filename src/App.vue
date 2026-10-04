@@ -3,6 +3,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowR
 import { AlertCircle, CheckCircle2, FileMusic, Info } from '@lucide/vue'
 import AppSidebar from './components/AppSidebar.vue'
 import ThemeSettings from './components/ThemeSettings.vue'
+import LightFieldSettingsDialog from './components/LightFieldSettingsDialog.vue'
+import { loadLightFieldSettings } from './utils/lightFieldSettings'
 import AppTopbar from './components/AppTopbar.vue'
 import CreatePlaylistDialog from './components/CreatePlaylistDialog.vue'
 import RouteScene from './components/RouteScene.vue'
@@ -38,6 +40,10 @@ const dragState = reactive({ active: false, depth: 0 })
 const queueOpen = ref(false)
 const coverflowPerformanceReport = ref<CoverflowPerformanceReport | null>(null)
 const themeSettingsOpen = ref(false)
+const lightSettingsOpen = ref(false)
+watch(() => state.connected, connected => {
+  if (connected) void loadLightFieldSettings(true).catch(error => player.notify(error instanceof Error ? error.message : '无法读取背景参数。', 'error'))
+})
 const outputDevices = ref<OutputDevice[]>([])
 const outputLoading = ref(false)
 const connectionLabel = ref('foobar2000')
@@ -456,6 +462,14 @@ async function createPlaylistFromDialog(name: string, options?: { query: string;
 }
 
 function onKeydown(event: KeyboardEvent) {
+  if (event.ctrlKey && event.altKey && event.code === 'KeyB') {
+    event.preventDefault(); event.stopImmediatePropagation()
+    if (!event.repeat && !miniMode.value) lightSettingsOpen.value = !lightSettingsOpen.value
+    return
+  }
+  if (event.key === 'Escape' && lightSettingsOpen.value) {
+    event.preventDefault(); event.stopImmediatePropagation(); lightSettingsOpen.value = false; return
+  }
   if (event.ctrlKey && event.altKey && event.code === 'KeyP' && !event.repeat) {
     event.preventDefault()
     if (coverflowPerformance.active) {
@@ -503,6 +517,7 @@ function onKeydown(event: KeyboardEvent) {
 let disposeScrollbars: (() => void) | undefined
 let disposePerformance: (() => void) | undefined
 onMounted(() => {
+  void loadLightFieldSettings(false)
   disposePerformance = installCoverflowPerformance()
   disposeScrollbars = installAutoHideScrollbars()
   void player.initialize()
@@ -1296,6 +1311,7 @@ function onDrop(event: DragEvent) {
     <FileOperationDialog v-if="fileDialog.open && fileDialog.track" :track="fileDialog.track" :mode="fileDialog.mode" :target="fileDialog.target" :busy="fileDialog.busy" @close="fileDialog.open = false" @rename="renameFile" @move="confirmMoveFile" @delete="deleteFile" />
 
     <ThemeSettings v-if="themeSettingsOpen" :connected="state.connected" @close="themeSettingsOpen = false" />
+    <LightFieldSettingsDialog v-if="lightSettingsOpen" :connected="state.connected" :fullscreen="state.isFullscreen && state.nowPlayingOpen" @close="lightSettingsOpen = false" />
     <div v-if="ipodPlaylistConfirmation" class="modal-backdrop" @click.self="ipodPlaylistConfirmation = null">
       <section class="create-playlist-dialog ipod-transfer-confirmation" role="dialog" aria-modal="true" aria-labelledby="ipod-transfer-title">
         <header><span><Info :size="20" /></span><div><strong id="ipod-transfer-title">发送曲目到 iPod</strong><small>{{ ipodPlaylistConfirmation.name }}</small></div></header>

@@ -121,10 +121,10 @@ function fixture() {
   const app = readFileSync('src/App.vue', 'utf8')
   const keySource = app.match(/function onKeydown\(event: KeyboardEvent\) \{[\s\S]*?\n\}/)[0]
   const code = await transform(`${keySource}\nmodule.exports = onKeydown`, { loader: 'ts', format: 'cjs' })
-  const state = { nowPlayingOpen: false }, miniMode = { value: false }
+  const state = { nowPlayingOpen: false }, miniMode = { value: false }, lightSettingsOpen = { value: false }
   let toggles = 0
   const module = { exports: {} }
-  runInNewContext(code.code, { module, state, miniMode, player: { toggleFullscreen: async () => { toggles++ } } })
+  runInNewContext(code.code, { module, state, miniMode, lightSettingsOpen, player: { toggleFullscreen: async () => { toggles++ } } })
   function press(repeat = false) {
     let prevented = false, stopped = false
     module.exports({ key: 'F11', code: 'F11', repeat, target: null, preventDefault() { prevented = true }, stopImmediatePropagation() { stopped = true } })
@@ -136,5 +136,19 @@ function fixture() {
   press(true); assert.equal(toggles, 1)
   miniMode.value = true
   press(); assert.equal(toggles, 1)
+  miniMode.value = false
+  let intercepted = 0
+  const backgroundKey = { key: 'b', code: 'KeyB', ctrlKey: true, altKey: true, repeat: false, preventDefault() { intercepted++ }, stopImmediatePropagation() {} }
+  module.exports(backgroundKey)
+  assert.equal(lightSettingsOpen.value, true)
+  module.exports({ ...backgroundKey, repeat: true })
+  assert.equal(lightSettingsOpen.value, true)
+  module.exports({ key: 'Escape', preventDefault() {}, stopImmediatePropagation() {} })
+  assert.equal(lightSettingsOpen.value, false)
+  assert.equal(state.nowPlayingOpen, true, 'Escape closes only the background panel, preserving immersion')
+  miniMode.value = true
+  module.exports(backgroundKey)
+  assert.equal(lightSettingsOpen.value, false)
   console.log('PASS: actual F11 handler suppresses browser defaults in every mode and only dispatches once from non-mini immersion')
+  console.log('PASS: Ctrl+Alt+B opens background controls, ignores key repeat and mini mode; Escape closes the panel without exiting immersion')
 }

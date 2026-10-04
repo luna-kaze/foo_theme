@@ -75,6 +75,13 @@ const before = canvases.length
 await flush(); assert.equal(canvases.length, before, 'ordinary-window mode never generates a new light-field texture')
 props.active = true; props.progress = 1; await flush()
 assert.ok(state.field.value)
+const settingsCanvasCount = canvases.length
+state.lightFieldSettings.brightness = 1.7
+state.lightFieldSettings.speed = 2
+assert.ok(state.fieldStyle.value['--light-filter'].includes('brightness(1.7)'))
+assert.equal(state.fieldStyle.value['--light-primary-period'], '9.5s')
+await flush()
+assert.equal(canvases.length, settingsCanvasCount, 'live slider edits must not reread artwork or regenerate cached textures')
 assert.equal(events.length, 0, 'legacy background must remain until initial light-field crossfade finishes')
 state.finishCrossfade({ getAttribute: () => state.field.value.key })
 assert.equal(events.at(-1).value, true)
@@ -86,3 +93,4 @@ assert.notEqual(state.field.value, displayed)
 props.active = false; await flush()
 hooks.forEach(fn => fn()); scope.stop()
 console.log('PASS: fullscreen-only generation, post-crossfade readiness, high-speed source suspension and restoration')
+console.log('PASS: live background settings update CSS without new image reads or texture generation')

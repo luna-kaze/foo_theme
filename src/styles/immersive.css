@@ -13,17 +13,17 @@
 .immersive-player__background { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
 .immersive-legacy-background { position: absolute; inset: 0; pointer-events: none; }
 .fullscreen-light-field { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 0; }
-.fullscreen-light-field__scene { position: absolute; inset: 0; overflow: hidden; background: #34332f; }
-.fullscreen-light-field__base { position: absolute; inset: -6%; background-size: cover; background-position: center; }
-.fullscreen-light-field__glow { position: absolute; background-size: 100% 100%; background-repeat: no-repeat; transform-origin: center; animation-play-state: paused; }
+.fullscreen-light-field__scene { position: absolute; inset: 0; overflow: hidden; background: #34332f; filter: var(--light-filter); }
+.fullscreen-light-field__base { position: absolute; inset: -6%; background-size: cover; background-position: center; opacity: var(--light-base-opacity); filter: blur(var(--light-blur)); }
+.fullscreen-light-field__glow { position: absolute; background-size: 100% 100%; background-repeat: no-repeat; transform-origin: center; filter: blur(var(--light-blur)); animation-play-state: paused; }
 .fullscreen-light-field__scene.is-running .fullscreen-light-field__glow { animation-play-state: running; }
-.fullscreen-light-field__glow--primary { inset: 6% 10% -28% -22%; animation: fullscreen-light-drift-primary 19s cubic-bezier(.42,0,.58,1) infinite alternate paused; opacity: .82; }
-.fullscreen-light-field__glow--secondary { inset: -22% -24% -4% 24%; animation: fullscreen-light-drift-secondary 27s cubic-bezier(.42,0,.58,1) infinite alternate paused; opacity: .74; }
-.fullscreen-light-field__shade { position: absolute; inset: 0; background: linear-gradient(180deg,rgba(12,13,17,.01),rgba(12,13,17,.055)),radial-gradient(ellipse 110% 105% at 50% 36%,transparent 35%,rgba(10,12,16,.08) 100%); }
+.fullscreen-light-field__glow--primary { inset: 6% 10% -28% -22%; animation: fullscreen-light-drift-primary var(--light-primary-period) cubic-bezier(.42,0,.58,1) infinite alternate paused; opacity: calc(.82 * var(--light-primary-intensity)); transform: scale(var(--light-glow-scale)); }
+.fullscreen-light-field__glow--secondary { inset: -22% -24% -4% 24%; animation: fullscreen-light-drift-secondary var(--light-secondary-period) cubic-bezier(.42,0,.58,1) infinite alternate paused; opacity: calc(.74 * var(--light-secondary-intensity)); transform: scale(var(--light-glow-scale)); }
+.fullscreen-light-field__shade { position: absolute; inset: 0; background: linear-gradient(180deg,rgba(12,13,17,calc(.01 * var(--light-vignette))),rgba(12,13,17,calc(.055 * var(--light-vignette)))),radial-gradient(ellipse 110% 105% at 50% 36%,transparent 35%,rgba(10,12,16,calc(.08 * var(--light-vignette))) 100%); }
 .fullscreen-light-crossfade-enter-active, .fullscreen-light-crossfade-leave-active { transition: opacity 600ms ease; }
 .fullscreen-light-crossfade-enter-from, .fullscreen-light-crossfade-leave-to { opacity: 0; }
-@keyframes fullscreen-light-drift-primary { from { transform: translate3d(-3%,2%,0) scale(1.02) rotate(-3deg); opacity: .72; } to { transform: translate3d(4%,-3%,0) scale(1.12) rotate(3deg); opacity: .9; } }
-@keyframes fullscreen-light-drift-secondary { from { transform: translate3d(3%,-2%,0) scale(1.08) rotate(2deg); opacity: .65; } to { transform: translate3d(-4%,3%,0) scale(1.02) rotate(-3deg); opacity: .82; } }
+@keyframes fullscreen-light-drift-primary { from { transform: translate3d(calc(-3% * var(--light-motion)),calc(2% * var(--light-motion)),0) scale(calc(1.02 * var(--light-glow-scale))) rotate(calc(-3deg * var(--light-motion))); opacity: calc(.72 * var(--light-primary-intensity)); } to { transform: translate3d(calc(4% * var(--light-motion)),calc(-3% * var(--light-motion)),0) scale(calc(1.12 * var(--light-glow-scale))) rotate(calc(3deg * var(--light-motion))); opacity: calc(.9 * var(--light-primary-intensity)); } }
+@keyframes fullscreen-light-drift-secondary { from { transform: translate3d(calc(3% * var(--light-motion)),calc(-2% * var(--light-motion)),0) scale(calc(1.08 * var(--light-glow-scale))) rotate(calc(2deg * var(--light-motion))); opacity: calc(.65 * var(--light-secondary-intensity)); } to { transform: translate3d(calc(-4% * var(--light-motion)),calc(3% * var(--light-motion)),0) scale(calc(1.02 * var(--light-glow-scale))) rotate(calc(-3deg * var(--light-motion))); opacity: calc(.82 * var(--light-secondary-intensity)); } }
 @media (prefers-reduced-motion: reduce) { .fullscreen-light-field__glow { animation: none; }.fullscreen-light-crossfade-enter-active, .fullscreen-light-crossfade-leave-active { transition: none; } }
 .immersive-player__backdrop, .immersive-player__chroma { position: absolute; background-image: var(--immersive-artwork); background-position: center; background-size: cover; }
 .immersive-player__backdrop { inset: -10%; filter: blur(95px) saturate(165%) brightness(.38); opacity: calc(.86 + var(--immersive-p) * .1); transform: scale(calc(1.12 + var(--immersive-p) * .1)); will-change: transform,opacity; }

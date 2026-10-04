@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { onBeforeUnmount, shallowRef, watch } from 'vue'
+import { computed, onBeforeUnmount, shallowRef, watch } from 'vue'
 import fb from 'foo-webview-sdk'
 import { createAlbumLightFieldCache, type AlbumLightField } from '../utils/albumLightField'
 import { coverflowPerformance } from '../utils/coverflowPerformance'
+import { lightFieldSettings, lightFieldStyle } from '../utils/lightFieldSettings'
 
 const props = defineProps<{ active: boolean; source: string; path: string; progress: number; suspended: boolean }>()
 const emit = defineEmits<{ ready: [ready: boolean] }>()
 const field = shallowRef<AlbumLightField | null>(null)
+const fieldStyle = computed(() => ({ ...lightFieldStyle(lightFieldSettings), opacity: field.value ? props.progress * lightFieldSettings.opacity : 0 }))
 const loader = createAlbumLightFieldCache()
 let generation = 0
 function finishCrossfade(element: Element) {
@@ -39,9 +41,9 @@ onBeforeUnmount(() => { generation += 1; loader.dispose() })
 </script>
 
 <template>
-  <div class="fullscreen-light-field" :style="{ opacity: field ? progress : 0 }" aria-hidden="true">
+  <div class="fullscreen-light-field" :style="fieldStyle" aria-hidden="true">
     <Transition name="fullscreen-light-crossfade" @after-enter="finishCrossfade">
-      <div v-if="field" :key="field.key" :data-light-key="field.key" class="fullscreen-light-field__scene" :class="{ 'is-running': active }">
+      <div v-if="field" :key="field.key" :data-light-key="field.key" class="fullscreen-light-field__scene" :class="{ 'is-running': active && lightFieldSettings.animated }">
         <div class="fullscreen-light-field__base" :style="{ backgroundImage: `url(${field.base})` }" />
         <div class="fullscreen-light-field__glow fullscreen-light-field__glow--primary" :style="{ backgroundImage: `url(${field.primary})` }" />
         <div class="fullscreen-light-field__glow fullscreen-light-field__glow--secondary" :style="{ backgroundImage: `url(${field.secondary})` }" />
