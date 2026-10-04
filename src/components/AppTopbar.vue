@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import { ArrowLeft, AudioLines, Check, ChevronLeft, ChevronRight, Maximize, MoreHorizontal, PanelTopOpen, RefreshCw, Search, Settings, Smartphone, ScanSearch, Subtitles, X } from '@lucide/vue'
+import { ArrowLeft, AudioLines, Check, ChevronLeft, ChevronRight, MoreHorizontal, PanelTopOpen, RefreshCw, Search, Settings, Smartphone, ScanSearch, Subtitles, X } from '@lucide/vue'
 import type { OutputDevice } from 'foo-webview-sdk'
 
 defineProps<{
@@ -25,7 +25,6 @@ const emit = defineEmits<{
   forward: []
   refresh: []
   preferences: []
-  fullscreen: []
   reload: []
   rescan: []
   loadOutputDevices: []
@@ -48,10 +47,9 @@ function clearSearch() {
   searchInput.value?.focus({ preventScroll: true })
 }
 
-function run(action: 'refresh' | 'preferences' | 'fullscreen' | 'reload' | 'rescan' | 'desktopLyrics' | 'miniPlayer' | 'ipodManager') {
+function run(action: 'refresh' | 'preferences' | 'reload' | 'rescan' | 'desktopLyrics' | 'miniPlayer' | 'ipodManager') {
   if (action === 'refresh') emit('refresh')
   if (action === 'preferences') emit('preferences')
-  if (action === 'fullscreen') emit('fullscreen')
   if (action === 'reload') emit('reload')
   if (action === 'rescan') emit('rescan')
   if (action === 'desktopLyrics') emit('desktopLyrics')
@@ -164,7 +162,6 @@ onBeforeUnmount(() => {
           <button @click="run('desktopLyrics')"><Subtitles :size="16" /><span>桌面歌词</span></button>
           <button v-if="ipodAvailable" @click="run('ipodManager')"><Smartphone :size="16" /><span>iPod 管理器</span></button>
           <button @click="run('miniPlayer')"><PanelTopOpen :size="16" /><span>迷你播放器</span></button>
-          <button @click="run('fullscreen')"><Maximize :size="16" /><span>切换全屏</span></button>
           <button @click="run('reload')"><RefreshCw :size="16" /><span>重新加载界面</span></button>
         </template>
       </div>

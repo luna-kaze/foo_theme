@@ -31,7 +31,8 @@ const player = useFoobar()
 const { state, filteredAlbums, libraryFilterOptions } = player
 configureArtistProfiles({ connected: () => state.connected, tracks: () => state.tracks })
 const navigationTransitions = createNavigationTransitions()
-const miniMode = new URLSearchParams(window.location.search).get('mode') === 'mini'
+const miniMode = computed(() => player.miniPlayerMode.value)
+watch(miniMode, value => document.body.classList.toggle('mini-window', value), { immediate: true })
 const trackMenu = reactive({ open: false, track: null as DisplayTrack | null, tracks: [] as DisplayTrack[], index: -1, x: 0, y: 0 })
 const dragState = reactive({ active: false, depth: 0 })
 const queueOpen = ref(false)
@@ -112,6 +113,7 @@ function onFullscreenWindowResize() {
 }
 
 watch(() => state.isFullscreen, () => {
+  if (state.isFullscreen && !state.nowPlayingOpen) void player.setFullscreen(false)
   fullscreenWindowSettled = false
   scheduleFullscreenSettle()
 })
@@ -475,12 +477,13 @@ function onKeydown(event: KeyboardEvent) {
   }
   if (event.key === 'F11') {
     event.preventDefault()
-    void player.toggleFullscreen()
+    event.stopImmediatePropagation()
+    if (state.nowPlayingOpen && !miniMode.value && !event.repeat) void player.toggleFullscreen()
     return
   }
   if (event.key === 'Escape') {
     if (coverflowPerformanceReport.value) { coverflowPerformanceReport.value = null; return }
-    state.nowPlayingOpen = false
+    player.closeNowPlaying()
     state.dialog = null
     inspector.open = false
     trackMenu.open = false
@@ -503,10 +506,8 @@ onMounted(() => {
   disposePerformance = installCoverflowPerformance()
   disposeScrollbars = installAutoHideScrollbars()
   void player.initialize()
-  if (miniMode) document.body.classList.add('mini-window')
-  window.addEventListener('keydown', onKeydown)
+  window.addEventListener('keydown', onKeydown, true)
   window.addEventListener('resize', onFullscreenWindowResize)
-  if (miniMode) return
   window.addEventListener('dragenter', onDragEnter)
   window.addEventListener('dragover', onDragOver)
   window.addEventListener('dragleave', onDragLeave)
@@ -519,7 +520,7 @@ onBeforeUnmount(() => {
   sceneWaiters.forEach((finish) => finish())
   navigationTransitions.cancel()
   document.body.classList.remove('mini-window')
-  window.removeEventListener('keydown', onKeydown)
+  window.removeEventListener('keydown', onKeydown, true)
   window.removeEventListener('resize', onFullscreenWindowResize)
   window.removeEventListener('dragenter', onDragEnter)
   window.removeEventListener('dragover', onDragOver)
@@ -538,6 +539,11 @@ function openNowPlaying() {
   player.toggleNowPlaying('lyrics')
 }
 
+function openFullscreenNowPlaying() {
+  queueOpen.value = false
+  void player.toggleFullscreenNowPlaying()
+}
+
 function toggleQueue() {
   queueOpen.value = !queueOpen.value
   trackMenu.open = false
@@ -545,7 +551,7 @@ function toggleQueue() {
 
 function closeSecondaryUi() {
   themeSettingsOpen.value = false
-  state.nowPlayingOpen = false
+  void player.closeNowPlaying()
   state.dialog = null
   trackMenu.open = false
   queueOpen.value = false
@@ -956,11 +962,11 @@ async function openPlaylistMenu(playlist: PlaylistInfo, event: MouseEvent) {
     { id: 'playlist:move-top', label: '移到最上方', iconSvg: menuIcons.move, enabled: state.playlists.at(0)?.index !== playlist.index },
     { type: 'separator' },
     { id: 'playlist:duplicate', label: '复制播放列表', iconSvg: menuIcons.copy },
-    { id: 'playlist:undo', label: '撤销上次更改', iconSvg: menuIcons.refresh, enabled: writable },
-    { id: 'playlist:sort-title', label: '按标题排序', iconSvg: menuIcons.refresh, enabled: writable },
-    { id: 'playlist:sort-album', label: '按专辑 / 音轨排序', iconSvg: menuIcons.album, enabled: writable },
-    { id: 'playlist:remove-duplicates', label: '移除重复项', iconSvg: menuIcons.refresh, enabled: writable && playlist.trackCount > 0 },
-    { id: 'playlist:remove-invalid', label: '移除无效项', iconSvg: menuIcons.refresh, enabled: writable && playlist.trackCount > 0 },
+    { id: 'playlist:undo', label: '撤销上次更改', iconSvg: menuIcons.undo, enabled: writable },
+    { id: 'playlist:sort-title', label: '按标题排序', iconSvg: menuIcons.sort, enabled: writable },
+    { id: 'playlist:sort-album', label: '按专辑 / 音轨排序', iconSvg: menuIcons.sortAlbum, enabled: writable },
+    { id: 'playlist:remove-duplicates', label: '移除重复项', iconSvg: menuIcons.deduplicate, enabled: writable && playlist.trackCount > 0 },
+    { id: 'playlist:remove-invalid', label: '移除无效项', iconSvg: menuIcons.invalid, enabled: writable && playlist.trackCount > 0 },
     ...(player.pluginIntegrations.dop.installed ? [{ type: 'separator' } as ContextMenuItem, { id: 'playlist:ipod', label: '发送播放列表到 iPod…', iconSvg: menuIcons.device }] : []),
     { type: 'separator' },
     { id: 'playlist:clear', label: '清空播放列表', iconSvg: menuIcons.remove, enabled: writable && playlist.trackCount > 0 },
@@ -1059,6 +1065,7 @@ function onDrop(event: DragEvent) {
     @seek="player.seek"
     @mute="player.toggleMute"
     @drag="player.startWindowDrag"
+    @restore="player.restoreMainPlayer"
     @close="player.closeWindow"
   />
   <div v-else class="app-shell" :class="{ 'immersive-fullscreen-active': immersiveFullscreenTarget }" :style="immersiveShellStyle" @contextmenu.prevent>
@@ -1104,7 +1111,6 @@ function onDrop(event: DragEvent) {
         @forward="goForwardPrimary"
         @refresh="player.refreshLibrary"
         @preferences="player.showPreferences"
-        @fullscreen="player.toggleFullscreen"
         @reload="player.reloadInterface"
         @rescan="player.rescanLibrary"
         @load-output-devices="loadOutputDevices"
@@ -1233,6 +1239,7 @@ function onDrop(event: DragEvent) {
       @mute="player.toggleMute"
       @order="player.cyclePlaybackOrder"
       @immersive="openNowPlaying"
+      @fullscreen-immersive="openFullscreenNowPlaying"
       @queue="toggleQueue"
       @menu="(track, event) => openTrackMenu(track, -1, event)"
     />

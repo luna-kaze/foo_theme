@@ -120,13 +120,18 @@ let favouritePlaylistIndex: number | null = null
 const insertingPlaylistIndexes = new Set<number>()
 const favouriteTrackKeys = new Set<string>()
 let desktopLyricsCommand: { guid: string; subGuid?: string } | null = null
-let miniPlayerWindowId = ''
+const miniPlayerMode = shallowRef(false)
+type MainWindowSnapshot = { bounds: { x: number; y: number; width: number; height: number }; minSize: { width: number; height: number }; maximized: boolean; resizable: boolean; alwaysOnTop: boolean }
+let mainWindowSnapshot: MainWindowSnapshot | null = null
+let miniWindowTask: Promise<void> | null = null
+const miniWindowConfigKey = 'foo-theme.mini-window.v1'
+let fullscreenRequest: boolean | null = null
+let fullscreenIntent: boolean | null = null
+let fullscreenTask: Promise<boolean> | null = null
 const history: ViewRoute[] = [{ view: 'home' }]
 let historyIndex = 0
 const ownershipConfigKey = 'foo-theme.owned-playlists.v1'
 const preferencesConfigKey = 'foo-theme.preferences.v1'
-const runtimeParams = new URLSearchParams(window.location.search)
-const parentWindowId = runtimeParams.get('mainWindowId') ?? ''
 const customColumnValues = new Map<string, string>()
 let exactAlbumArtwork = new Map<string, string>()
 let namedAlbumArtwork = new Map<string, string | null>()
@@ -1006,14 +1011,6 @@ function bindEvents() {
       if (event.paths.length) refreshSafely(() => importPaths(event.paths))
       else refreshSafely(importDroppedPaths)
     }),
-    fb.on('window:message', (event) => {
-      if (event.message.type === 'restore-main') refreshSafely(restoreCurrentWindow)
-    }),
-    fb.on('window:popupClosed', (event) => {
-      if (event.windowId !== miniPlayerWindowId) return
-      miniPlayerWindowId = ''
-      refreshSafely(restoreCurrentWindow)
-    }),
     fb.on('window:stateChanged', (event) => {
       state.isFullscreen = event.isFullscreen
     }),
@@ -1033,13 +1030,14 @@ async function syncNoDragRegion() {
 }
 
 async function recoverMiniPlayerWindow() {
-  if (parentWindowId || runtimeParams.get('mode') === 'mini') return
   try {
-    const windows = await fb.ui.getAllWindows()
-    const miniPlayer = windows.items.find((item) => !item.isMain && (item.profile === 'miniPlayer' || item.url.includes('mode=mini')))
-    miniPlayerWindowId = miniPlayer?.windowId ?? ''
+    const saved = (await fb.config.get(miniWindowConfigKey)).value as MainWindowSnapshot | null
+    if (saved && saved.bounds && saved.bounds.width > 0 && saved.bounds.height > 0 && saved.minSize) {
+      mainWindowSnapshot = saved
+      miniPlayerMode.value = true
+    }
   } catch {
-    miniPlayerWindowId = ''
+    // A normal window remains usable when no saved mini-window state exists.
   }
 }
 
@@ -1387,7 +1385,7 @@ async function navigate(route: ViewRoute, historyMode: 'push' | 'replace' | 'non
   const previousRoute = state.route
   const routeChanged = routeKey(route) !== routeKey(previousRoute)
   if (historyMode !== 'none') {
-    state.nowPlayingOpen = false
+    closeNowPlaying()
     state.dialog = null
   }
   if (searchTimer && routeChanged) {
@@ -1448,7 +1446,7 @@ async function setView(view: ViewId, pushHistory = true) {
 
 async function goBack() {
   if (!state.canGoBack) return
-  state.nowPlayingOpen = false
+  closeNowPlaying()
   state.dialog = null
   historyIndex -= 1
   updateHistoryState()
@@ -1457,7 +1455,7 @@ async function goBack() {
 
 async function goForward() {
   if (!state.canGoForward) return
-  state.nowPlayingOpen = false
+  closeNowPlaying()
   state.dialog = null
   historyIndex += 1
   updateHistoryState()
@@ -2554,32 +2552,46 @@ async function openMiniPlayer() {
     notify('迷你播放器仅可在 foobar2000 中打开。', 'info')
     return
   }
-  if (miniPlayerWindowId) {
-    const focused = await runAction(() => fb.ui.focus(miniPlayerWindowId))
-    if (focused) {
-      await runAction(() => fb.ui.minimize())
-      return
+  if (miniWindowTask) return miniWindowTask
+  if (miniPlayerMode.value) return
+  miniWindowTask = (async () => {
+    try {
+      await closeNowPlaying()
+      const [windowState, minSize, resizable, topmost] = await Promise.all([fb.ui.getState(), fb.ui.getMinSize(), fb.ui.isResizable(), fb.ui.isAlwaysOnTop()])
+      if (windowState.isMaximized && !await runAction(() => fb.ui.restore())) return
+      const bounds = await fb.ui.getBounds()
+      mainWindowSnapshot = { bounds, minSize, maximized: windowState.isMaximized, resizable: resizable.resizable, alwaysOnTop: topmost.enabled }
+      if (!await runAction(() => fb.config.set(miniWindowConfigKey, mainWindowSnapshot))) throw new Error('无法保存主窗口尺寸。')
+      miniPlayerMode.value = true
+      for (const action of [() => fb.ui.setMinSize(430, 156), () => fb.ui.setResizable(false), () => fb.ui.setSize(430, 156), () => fb.ui.setAlwaysOnTop(true)]) {
+        if (!await runAction(action)) throw new Error('无法切换主窗口为迷你播放器。')
+      }
+    } catch (error) {
+      if (mainWindowSnapshot) await restoreMainWindowSnapshot()
+      notify(error instanceof Error ? error.message : '无法打开迷你播放器。', 'error')
     }
-    miniPlayerWindowId = ''
+  })().finally(() => { miniWindowTask = null })
+  return miniWindowTask
+}
+
+async function restoreMainWindowSnapshot() {
+  const saved = mainWindowSnapshot
+  if (!saved) return
+  let restored = true
+  for (const action of [() => fb.ui.setResizable(saved.resizable), () => fb.ui.setMinSize(saved.minSize.width, saved.minSize.height), () => fb.ui.setBounds(saved.bounds), () => fb.ui.setAlwaysOnTop(saved.alwaysOnTop), ...(saved.maximized ? [() => fb.ui.maximize()] : [])]) {
+    if (!await runAction(action)) restored = false
   }
-  const currentWindow = await runAction(() => fb.ui.getCurrentWindowId())
-  if (!currentWindow) return
-  const url = new URL(window.location.href)
-  url.search = ''
-  url.searchParams.set('mode', 'mini')
-  url.searchParams.set('mainWindowId', currentWindow.windowId)
-  const result = await runAction(() => fb.ui.createPopup({
-    url: url.href,
-    width: 430,
-    height: 156,
-    title: 'foobar2000 迷你播放器',
-    frame: false,
-    resizable: false,
-    alwaysOnTop: true,
-    profile: 'miniPlayer',
-  }))
-  miniPlayerWindowId = result?.windowId ?? ''
-  if (miniPlayerWindowId) await runAction(() => fb.ui.minimize())
+  if (!restored) return
+  miniPlayerMode.value = false
+  mainWindowSnapshot = null
+  await runAction(() => fb.config.set(miniWindowConfigKey, null))
+}
+
+async function restoreMainPlayer() {
+  if (miniWindowTask) await miniWindowTask
+  if (!mainWindowSnapshot) return
+  miniWindowTask = restoreMainWindowSnapshot().finally(() => { miniWindowTask = null })
+  return miniWindowTask
 }
 
 async function startWindowDrag() {
@@ -2592,15 +2604,10 @@ async function toggleWindowMaximize() {
 
 async function closeWindow() {
   if (state.connected) {
-    if (parentWindowId) await runAction(() => fb.ui.sendMessage(parentWindowId, { type: 'restore-main' }))
+    if (miniPlayerMode.value) await restoreMainPlayer()
     await runAction(() => fb.ui.close())
   }
   else window.close()
-}
-
-async function restoreCurrentWindow() {
-  await fb.ui.restore()
-  await fb.ui.focus()
 }
 
 async function showInExplorer(track: DisplayTrack) {
@@ -3162,13 +3169,46 @@ async function showPreferences() {
   else notify('首选项仅可在 foobar2000 中使用。', 'info')
 }
 
-async function toggleFullscreen() {
-  if (state.connected) {
-    const result = await runAction(() => fb.ui.toggleFullscreen())
-    if (result?.fullscreen != null) state.isFullscreen = result.fullscreen
-  }
-  else if (document.fullscreenElement) await document.exitFullscreen()
-  else await document.documentElement.requestFullscreen()
+function setFullscreen(enabled: boolean): Promise<boolean> {
+  if (enabled && (!state.nowPlayingOpen || miniPlayerMode.value)) return Promise.resolve(false)
+  if (!fullscreenTask && state.isFullscreen === enabled) return Promise.resolve(true)
+  fullscreenRequest = enabled
+  fullscreenIntent = enabled
+  if (fullscreenTask) return fullscreenTask
+  fullscreenTask = (async () => {
+    let succeeded = true
+    while (fullscreenRequest != null) {
+      const target = fullscreenRequest && state.nowPlayingOpen && !miniPlayerMode.value
+      fullscreenRequest = null
+      if (state.connected) {
+        const result = await runAction(() => fb.ui.setFullscreen(target))
+        if (result) state.isFullscreen = result.fullscreen ?? target
+        else { succeeded = false; fullscreenRequest = null; break }
+      } else {
+        try {
+          if (target && !document.fullscreenElement) await document.documentElement.requestFullscreen()
+          if (!target && document.fullscreenElement) await document.exitFullscreen()
+          state.isFullscreen = Boolean(document.fullscreenElement)
+        } catch { succeeded = false; fullscreenRequest = null; break }
+      }
+      if (state.isFullscreen && !state.nowPlayingOpen) fullscreenRequest = false
+    }
+    return succeeded
+  })().finally(() => { fullscreenTask = null; fullscreenIntent = null })
+  return fullscreenTask
+}
+
+function toggleFullscreen() {
+  if (!state.nowPlayingOpen || miniPlayerMode.value) return Promise.resolve(false)
+  return setFullscreen(!(fullscreenIntent ?? state.isFullscreen))
+}
+
+async function toggleFullscreenNowPlaying() {
+  if (miniPlayerMode.value) return false
+  if (state.nowPlayingOpen && (fullscreenIntent ?? state.isFullscreen)) return closeNowPlaying()
+  state.nowPlayingTab = 'lyrics'
+  state.nowPlayingOpen = true
+  return setFullscreen(true)
 }
 
 async function reloadInterface() {
@@ -3178,11 +3218,13 @@ async function reloadInterface() {
 
 function toggleNowPlaying(tab = state.nowPlayingTab) {
   state.nowPlayingTab = tab
-  state.nowPlayingOpen = !state.nowPlayingOpen
+  if (state.nowPlayingOpen) void closeNowPlaying()
+  else state.nowPlayingOpen = true
 }
 
-function closeNowPlaying() {
+async function closeNowPlaying() {
   state.nowPlayingOpen = false
+  if (state.isFullscreen || fullscreenTask) await setFullscreen(false)
 }
 
 function dispose() {
@@ -3310,6 +3352,8 @@ export function useFoobar() {
     openIpodManager,
     toggleDesktopLyrics,
     openMiniPlayer,
+    miniPlayerMode,
+    restoreMainPlayer,
     startWindowDrag,
     toggleWindowMaximize,
     closeWindow,
@@ -3370,6 +3414,8 @@ export function useFoobar() {
     rescanLibrary,
     showPreferences,
     toggleFullscreen,
+    setFullscreen,
+    toggleFullscreenNowPlaying,
     reloadInterface,
     toggleNowPlaying,
     closeNowPlaying,

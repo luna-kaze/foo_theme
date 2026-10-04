@@ -51,6 +51,7 @@ const emit = defineEmits<{
   mute: []
   order: []
   immersive: []
+  fullscreenImmersive: []
   queue: []
   menu: [track: DisplayTrack, event: MouseEvent]
 }>()
@@ -58,7 +59,7 @@ const emit = defineEmits<{
 
 <template>
   <footer class="player-bar">
-    <button class="player-track" @click="emit('immersive')" @contextmenu.prevent.stop="track && emit('menu', track, $event)">
+    <button class="player-track" aria-label="切换全屏沉浸播放" @click="emit('fullscreenImmersive')" @contextmenu.prevent.stop="track && emit('menu', track, $event)">
       <ArtworkImage :src="artwork || track?.artworkUrl" :alt="`${track?.album ?? '当前曲目'} 封面`" />
       <span class="player-track__copy">
         <strong>{{ track?.title || '当前没有播放' }}</strong>

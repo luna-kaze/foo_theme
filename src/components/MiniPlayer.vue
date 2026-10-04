@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Pause, Play, SkipBack, SkipForward, Volume1, Volume2, VolumeX, X } from '@lucide/vue'
+import { Maximize2, Pause, Play, SkipBack, SkipForward, Volume1, Volume2, VolumeX, X } from '@lucide/vue'
 import type { DisplayTrack } from '../types/music'
 import { formatTime } from '../utils/format'
 import ArtworkImage from './ArtworkImage.vue'
@@ -23,6 +23,7 @@ const emit = defineEmits<{
   mute: []
   drag: []
   close: []
+  restore: []
 }>()
 </script>
 
@@ -45,6 +46,7 @@ const emit = defineEmits<{
       <button aria-label="下一首" data-tip="下一首" @click="emit('next')"><SkipForward :size="17" fill="currentColor" /></button>
       <button :aria-label="muted ? '取消静音' : '静音'" :data-tip="muted ? '取消静音' : '静音'" @click="emit('mute')"><VolumeX v-if="muted || volume === 0" :size="17" /><Volume1 v-else-if="volume < 45" :size="17" /><Volume2 v-else :size="17" /></button>
     </div>
-    <button class="mini-player__close" aria-label="关闭迷你播放器" data-tip="关闭" @click="emit('close')"><X :size="16" /></button>
+    <button class="mini-player__close mini-player__restore" aria-label="恢复主窗口" data-tip="恢复主窗口" @click="emit('restore')"><Maximize2 :size="15" /></button>
+    <button class="mini-player__close" aria-label="关闭窗口" data-tip="关闭窗口" @click="emit('close')"><X :size="16" /></button>
   </main>
 </template>
