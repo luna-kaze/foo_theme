@@ -8,6 +8,8 @@ import { isSameTrack, trackKey } from '../utils/track'
 import type { PlaybackFocusState } from '../utils/settledNavigation'
 import { createCoverflowRail, type RailFrame } from '../utils/coverflowRail'
 import { coverflowPerformance } from '../utils/coverflowPerformance'
+import FullscreenLightField from './FullscreenLightField.vue'
+import { playablePath } from '../utils/track'
 
 const props = defineProps<{
   open: boolean
@@ -30,6 +32,7 @@ const props = defineProps<{
   playbackBrowseTrack?: DisplayTrack | null
   playbackWindowDeferred?: boolean
   fullscreen: boolean
+  fullscreenProgress?: number
   shuffleBusy: boolean
   shufflePending: boolean
   shuffleStaged: boolean
@@ -386,6 +389,14 @@ const selectedCoverflow = computed<CoverflowItem | null>(() => {
 const currentCoverflowIndex = computed(() => Math.max(0, props.playbackTrackIndex))
 const idleCoverflow = computed(() => selectedCoverflow.value?.idle === true)
 const backgroundArtwork = computed(() => modeTransition.value ? props.artwork : mode.value === 'coverflow' ? railState.distant ? frozenBackdrop.value : selectedCoverflow.value?.artwork || props.artwork : props.artwork)
+const lightFieldReady = ref(false)
+const fullscreenBackgroundProgress = computed(() => props.fullscreenProgress ?? (props.fullscreen ? 1 : 0))
+const legacyBackgroundVisible = computed(() => !lightFieldReady.value || fullscreenBackgroundProgress.value < .999)
+const legacyBackgroundOpacity = computed(() => lightFieldReady.value ? 1 - fullscreenBackgroundProgress.value : 1)
+const lightFieldPath = computed(() => {
+  const target = mode.value === 'coverflow' && !modeTransition.value ? selectedCoverflow.value?.track : props.track
+  return target ? playablePath(target) : ''
+})
 const handoffCoverStyle = computed(() => ({
   top: `${handoffCover.top}px`,
   left: `${handoffCover.left}px`,
@@ -819,6 +830,7 @@ onBeforeUnmount(() => {
 <template>
   <Transition name="now-playing">
     <section v-if="open" class="now-playing-panel immersive-player" :class="[`immersive-player--${mode}`, fullscreen && 'immersive-player--fullscreen', modeTransition && `mode-${modeTransition}`, handoffCover.visible && 'handoff-cover-active']" aria-label="沉浸式正在播放">
+      <div v-if="legacyBackgroundVisible" class="immersive-legacy-background" :style="{ opacity: legacyBackgroundOpacity }">
       <Transition name="immersive-backdrop">
         <div :key="backgroundArtwork || 'empty'" class="immersive-player__background" :style="backgroundArtwork ? { '--immersive-artwork': `url(${backgroundArtwork})` } : {}">
           <div class="immersive-player__backdrop" />
@@ -828,6 +840,8 @@ onBeforeUnmount(() => {
         </div>
       </Transition>
       <div class="immersive-player__wash" />
+      </div>
+      <FullscreenLightField :active="open && (fullscreen || fullscreenBackgroundProgress > .001)" :source="backgroundArtwork" :path="lightFieldPath" :progress="fullscreenBackgroundProgress" :suspended="railState.distant" @ready="lightFieldReady = $event" />
       <div v-if="handoffCover.visible" class="immersive-handoff-cover" :style="handoffCoverStyle"><ArtworkImage :src="artwork || track?.artworkUrl" :alt="`${track?.album ?? '当前专辑'} 交接封面`" /></div>
 
       <header class="immersive-toolbar">

@@ -1161,6 +1161,7 @@ function onDrop(event: DragEvent) {
       :shuffle-staged="state.shuffleStaged"
       :shuffle-source-name="state.shuffleSourceName"
       :fullscreen="state.isFullscreen"
+      :fullscreen-progress="immersiveFullscreenProgress"
       @close="player.closeNowPlaying"
       @toggle="player.togglePlayback"
       @seek="player.seek"

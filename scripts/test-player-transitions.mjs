@@ -356,6 +356,19 @@ assert.equal(state.standardCoverVisible.value, true)
 assert.equal(state.standardCoverEntering.value, false)
 assert.equal(state.pendingStandardCover.value, null)
 console.log('PASS: closing and reopening Standard restores the actual sleeve and releases obsolete animation state')
+state.lightFieldReady.value = true
+props.fullscreenProgress = 0
+assert.equal(state.legacyBackgroundVisible.value, true)
+assert.equal(state.legacyBackgroundOpacity.value, 1)
+props.fullscreenProgress = .5
+assert.equal(state.legacyBackgroundVisible.value, true)
+assert.equal(state.legacyBackgroundOpacity.value, .5)
+props.fullscreenProgress = 1
+assert.equal(state.legacyBackgroundVisible.value, false, 'fullscreen removes legacy live-blur layers only after the field is ready')
+state.lightFieldReady.value = false
+assert.equal(state.legacyBackgroundVisible.value, true, 'generation failure keeps the existing background rather than blacking out')
+props.fullscreenProgress = 0
+console.log('PASS: ordinary-window background remains unchanged; fullscreen progress crossfades to the ready field with a legacy fallback')
 hooks.forEach(fn => fn()); scope.stop()
 
 const railScript = compileScript(parse(readFileSync('src/components/AlphabetIndexRail.vue', 'utf8')).descriptor, { id: 'rail-test' })
