@@ -11,6 +11,7 @@ function clock() {
   let now = 0, id = 0
   const tasks = new Map()
   return {
+    now: () => now,
     setTimeout(fn, delay) { const key = ++id; tasks.set(key, { at: now + delay, fn }); return key },
     clearTimeout(key) { tasks.delete(key) },
     tick(ms) {
@@ -137,7 +138,7 @@ const componentModule = { exports: {} }
 runInNewContext(component.outputFiles[0].text, {
   module: componentModule, exports: componentModule.exports,
   require: id => id === 'vue' ? { ...vue, onBeforeUnmount: fn => hooks.push(fn) } : require(id),
-  ...animationClock, performance, console,
+  ...animationClock, performance: { now: animationClock.now }, console,
   matchMedia: () => ({ matches: false }),
   getComputedStyle: element => element.livePose ?? ({ transform: `matrix(1,0,0,1,${Number(element.style.getPropertyValue('--cover-offset')) * 100},0)`, opacity: '1' }),
   Image: class { decode() { return Promise.resolve() } },
@@ -147,8 +148,10 @@ runInNewContext(component.outputFiles[0].text, {
 const props = vue.reactive({ open: false, track: tracks[0], artwork: 'current-art-0', isPlaying: true, playbackState: 'playing', canSeek: true, position: 43, duration: 100, lyrics: [], lyricsSynced: false, playbackTracks: tracks, playbackPlanIds: tracks.map(track => track.playbackId), playbackTrackIndex: 0, playbackPreviewId: null, playbackPreviewPending: false, playbackPreviewRequest: 0, fullscreen: false, shuffleBusy: false, shufflePending: false, shuffleStaged: false, shuffleSourceName: 'Source' })
 const scope = vue.effectScope()
 const events = []
+let standardGate = null
 state = scope.run(() => componentModule.exports.default.setup(props, { expose() {}, emit(name, value) {
   events.push({ name, value })
+  if (name === 'focusState') standardGate?.report(value)
   if (name === 'browseTrack') { props.playbackPreviewId = value.playbackId; props.playbackPreviewPending = false; props.playbackPreviewRequest += 1 }
 } }))
 state.coverflowView.value = { isConnected: true, querySelectorAll: () => elements }
@@ -202,7 +205,7 @@ animations.forEach(animation => animation.finish()); await flush()
 assert.equal(events.filter(event => event.name === 'focusState').at(-1).value.settled, true)
 console.log('PASS: card selection, arrows and active-animation activation share one motion path and publish readiness')
 
-const allTracks = [...tracks, ...[3, 4, 5, 6, 7, 8, 9].map(index => ({ ...tracks[0], path: `${index}.flac`, title: `Track ${index}`, playbackId: `work:${index}`, sourceIndex: index }))]
+const allTracks = [...tracks, ...[3, 4, 5, 6, 7, 8, 9].map(index => ({ ...tracks[0], path: `${index}.flac`, title: `Track ${index}`, album: `${index}`, artworkUrl: `album-${index}`, playbackId: `work:${index}`, sourceIndex: index }))]
 props.playbackPlanIds = allTracks.map(track => track.playbackId); await flush()
 animations.forEach(animation => animation.finish()); await flush()
 const originalElements = [...elements]
@@ -233,6 +236,96 @@ assert.equal(state.coverflowIndex.value, 6)
 animations.forEach(animation => animation.finish()); await flush()
 assert.equal(state.orderReflowing.value, false)
 console.log('PASS: newly materialized window cards enter from sampled 3D side poses instead of teleporting to the center')
+
+state.mode.value = 'standard'
+state.recordZone.value = { isConnected: true }
+props.playbackPreviewId = null; props.playbackPreviewPending = false
+await flush()
+standardGate = createPlaybackFocusGate()
+state.publishFocusState()
+const standardCommits = []
+const standardNavigation = createSettledNavigation({
+  preview: (id, request) => { props.playbackPreviewId = id; props.playbackPreviewPending = true; props.playbackPreviewRequest = request },
+  waitUntilReady: (id, request, signal) => standardGate.wait(id, request, signal),
+  commit: async id => {
+    standardCommits.push(id)
+    props.playbackTrackIndex = props.playbackTracks.findIndex(track => track.playbackId === id)
+    props.track = props.playbackTracks[props.playbackTrackIndex]
+    props.artwork = `current-art-${props.playbackTrackIndex}`
+    return true
+  },
+  clear: () => { props.playbackPreviewId = null; props.playbackPreviewPending = false },
+})
+const standardFirst = standardNavigation.schedule('work:2'); await flush()
+assert.equal(state.standardCoverVisible.value, false)
+assert.equal(state.pendingStandardCover.value.key, 'work:2')
+navigationClock.tick(350); animationClock.tick(350); await flush()
+assert.deepEqual(standardCommits, [], 'Standard must not decode after the quiet gap while its sleeve is still leaving')
+const standardSecond = standardNavigation.schedule('work:3'); await flush()
+navigationClock.tick(349); animationClock.tick(349); await flush()
+assert.equal(state.standardCoverVisible.value, false)
+navigationClock.tick(1); animationClock.tick(1); await flush()
+assert.equal(state.standardCover.value.key, 'work:3')
+assert.equal(state.standardCoverEntering.value, true)
+const renderKey = state.standardRenderKey.value
+const sleeve = { getAnimations: () => [], classList: { remove() {} } }
+state.beginStandardCoverChange(sleeve)
+navigationClock.tick(100); animationClock.tick(100); await flush()
+const standardThird = standardNavigation.schedule('work:4'); await flush()
+assert.equal(state.standardRenderKey.value, renderKey, 'a new target during entry reuses the same moving sleeve')
+assert.equal(state.standardCover.value.key, 'work:4')
+assert.equal(state.standardCover.value.artwork, 'album-4', 'preview artwork must not borrow the old actual track artwork')
+assert.equal(state.standardTargetTrack.value.playbackId, 'work:4')
+navigationClock.tick(350); animationClock.tick(350); await flush()
+assert.deepEqual(standardCommits, [], 'both input quiet and final Standard entry completion are required')
+state.finishStandardCoverChange(sleeve); await flush()
+assert.deepEqual(standardCommits, ['work:4'])
+assert.deepEqual(await Promise.all([standardFirst, standardSecond, standardThird]), [true, true, true])
+assert.equal(state.standardRenderKey.value, renderKey, 'playback confirmation must not create a second sleeve transition')
+assert.equal(state.standardCoverVisible.value, true)
+assert.equal(state.pendingStandardCover.value, null)
+assert.equal(state.standardCoverEntering.value, false)
+console.log('PASS: Standard previews before decoding, merges vacant targets, retargets entry in place and plays only the final arrived sleeve')
+
+const standardFourth = standardNavigation.schedule('work:5'); await flush()
+navigationClock.tick(540); animationClock.tick(540); await flush()
+const newerSleeve = { getAnimations: () => [], classList: { remove() {} } }
+state.beginStandardCoverChange(newerSleeve)
+state.finishStandardCoverChange(sleeve); await flush()
+assert.equal(state.standardCoverEntering.value, true, 'stale entry completion cannot acknowledge a new sleeve')
+assert.deepEqual(standardCommits, ['work:4'])
+animationClock.tick(751); await flush()
+assert.equal(await standardFourth, true)
+assert.deepEqual(standardCommits, ['work:4', 'work:5'])
+assert.equal(state.standardCoverEntering.value, false)
+console.log('PASS: Standard ignores stale sleeve callbacks and recovers a stalled CSS entry before acknowledging playback')
+
+props.playbackTracks[6] = { ...props.playbackTracks[5], playbackId: 'work:6', sourceIndex: 6, title: 'Repeated file occurrence' }
+const duplicate = standardNavigation.schedule('work:6'); await flush()
+assert.equal(state.pendingStandardCover.value.key, 'work:6', 'a repeated file still has a distinct preview occurrence')
+navigationClock.tick(540); animationClock.tick(540); await flush()
+const duplicateSleeve = { getAnimations: () => [], classList: { remove() {} } }
+state.beginStandardCoverChange(duplicateSleeve)
+const duplicateRender = state.standardRenderKey.value
+standardNavigation.cancel(); await flush()
+assert.equal(await duplicate, false)
+assert.equal(state.standardCover.value.key, 'work:5')
+assert.equal(state.standardRenderKey.value, duplicateRender, 'cancelling an unplayed target retargets the same incoming sleeve')
+state.finishStandardCoverChange(duplicateSleeve); await flush()
+assert.deepEqual(standardCommits, ['work:4', 'work:5'])
+assert.equal(state.standardCoverEntering.value, false)
+console.log('PASS: duplicate-file previews retain occurrence identity; cancellation restores the actual sleeve without decoding')
+
+const hidden = standardNavigation.schedule('work:7'); await flush()
+navigationClock.tick(350); animationClock.tick(350); await flush()
+props.open = false; await flush()
+assert.equal(await hidden, true, 'closing the view releases visual waiting rather than blocking a selected track indefinitely')
+props.open = true; await flush()
+assert.equal(state.standardCover.value.key, 'work:7')
+assert.equal(state.standardCoverVisible.value, true)
+assert.equal(state.standardCoverEntering.value, false)
+assert.equal(state.pendingStandardCover.value, null)
+console.log('PASS: closing and reopening Standard restores the actual sleeve and releases obsolete animation state')
 hooks.forEach(fn => fn()); scope.stop()
 
 const railScript = compileScript(parse(readFileSync('src/components/AlphabetIndexRail.vue', 'utf8')).descriptor, { id: 'rail-test' })
