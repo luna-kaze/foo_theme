@@ -3218,7 +3218,8 @@ async function reloadInterface() {
 
 function toggleNowPlaying(tab = state.nowPlayingTab) {
   state.nowPlayingTab = tab
-  if (state.nowPlayingOpen) void closeNowPlaying()
+  if (state.nowPlayingOpen && (fullscreenIntent ?? state.isFullscreen)) void setFullscreen(false)
+  else if (state.nowPlayingOpen) void closeNowPlaying()
   else state.nowPlayingOpen = true
 }
 

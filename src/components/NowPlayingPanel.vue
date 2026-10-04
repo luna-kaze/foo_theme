@@ -480,8 +480,12 @@ function resumeAutoFollow() {
   void nextTick(() => scrollToActive())
 }
 
+function canSeekLyric(line: ParsedLyric) {
+  return Number.isFinite(line.time) && line.time >= 0 && props.lyricsSynced && props.canSeek
+}
+
 function seekLyric(line: ParsedLyric) {
-  if (line.time < 0 || !props.lyricsSynced || !props.canSeek) return
+  if (!canSeekLyric(line)) return
   emit('seek', line.time)
   resumeAutoFollow()
 }
@@ -909,9 +913,11 @@ onBeforeUnmount(() => {
                 :key="`${line.time}-${index}`"
                 :ref="(element) => setLyricRow(element, index)"
                 :class="{ active: index === activeLyric, past: index < activeLyric }"
-                :disabled="line.time < 0 || !lyricsSynced || !canSeek"
-                @click="seekLyric(line)"
-              >{{ line.text }}</button>
+                :disabled="!canSeekLyric(line)"
+                :title="canSeekLyric(line) ? `点击跳转到 ${formatTime(line.time)}` : '此歌词无法定位播放时间'"
+                :aria-label="canSeekLyric(line) ? `跳转到 ${formatTime(line.time)}：${line.text}` : line.text"
+                @click.stop="seekLyric(line)"
+              ><span>{{ line.text }}</span><small v-if="canSeekLyric(line)" class="lyric-seek-time">{{ formatTime(line.time) }}</small></button>
               <button v-if="autoFollowPaused" class="lyrics-follow" @click.stop="resumeAutoFollow"><LocateFixed :size="15" /> 跟随当前歌词</button>
             </template>
             <div v-else class="immersive-empty"><Mic2 :size="30" /><strong>{{ track ? '暂无歌词' : '当前没有播放' }}</strong><span>{{ track ? '内嵌歌词和同名歌词文件会显示在这里。' : '选择一首曲目开始播放。' }}</span></div>

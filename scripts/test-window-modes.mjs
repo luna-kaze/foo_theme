@@ -56,9 +56,14 @@ function fixture() {
   assert.equal(f.calls.length, 0, 'ordinary mode cannot request fullscreen')
   p.toggleNowPlaying()
   assert.equal(p.state.nowPlayingOpen, true)
-  assert.equal(f.calls.length, 0, 'right-side immersive button remains windowed')
+  assert.equal(f.calls.length, 0, 'left-side track card remains windowed')
   await p.toggleFullscreen()
   assert.equal(p.state.isFullscreen, true)
+  p.toggleNowPlaying()
+  for (let index = 0; index < 8; index++) await Promise.resolve()
+  assert.equal(p.state.nowPlayingOpen, true, 'windowed entry from fullscreen keeps immersion open')
+  assert.equal(p.state.isFullscreen, false)
+  await p.toggleFullscreen()
   await p.toggleFullscreen()
   assert.equal(p.state.nowPlayingOpen, true, 'F11 exit retains windowed immersion')
   assert.equal(p.state.isFullscreen, false)
@@ -66,8 +71,8 @@ function fixture() {
   assert.equal(p.state.isFullscreen, true)
   await p.toggleFullscreenNowPlaying()
   assert.equal(p.state.isFullscreen, false)
-  assert.equal(p.state.nowPlayingOpen, false, 'left card exits fullscreen immersion into the normal window')
-  console.log('PASS: ordinary fullscreen is blocked; right entry is windowed, left entry is fullscreen and left exit restores the normal window')
+  assert.equal(p.state.nowPlayingOpen, false, 'right fullscreen button exits into the normal window')
+  console.log('PASS: ordinary fullscreen is blocked; left entry is windowed, right entry is fullscreen and fullscreen exit restores the normal window')
 }
 
 {

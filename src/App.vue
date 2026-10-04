@@ -1065,8 +1065,7 @@ function onDrop(event: DragEvent) {
     @seek="player.seek"
     @mute="player.toggleMute"
     @drag="player.startWindowDrag"
-    @restore="player.restoreMainPlayer"
-    @close="player.closeWindow"
+    @close="player.restoreMainPlayer"
   />
   <div v-else class="app-shell" :class="{ 'immersive-fullscreen-active': immersiveFullscreenTarget }" :style="immersiveShellStyle" @contextmenu.prevent>
     <AppSidebar
@@ -1230,6 +1229,7 @@ function onDrop(event: DragEvent) {
       :shuffle-pending="state.shufflePending"
       :shuffle-staged="state.shuffleStaged"
       :now-playing-open="state.nowPlayingOpen"
+      :fullscreen="state.isFullscreen"
       :queue-open="queueOpen"
       @toggle="player.togglePlayback"
       @next="player.next"

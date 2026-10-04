@@ -369,6 +369,20 @@ state.lightFieldReady.value = false
 assert.equal(state.legacyBackgroundVisible.value, true, 'generation failure keeps the existing background rather than blacking out')
 props.fullscreenProgress = 0
 console.log('PASS: ordinary-window background remains unchanged; fullscreen progress crossfades to the ready field with a legacy fallback')
+props.lyrics = [{ time: 0, text: 'Intro' }, { time: 35, text: 'Middle line' }, { time: 75, text: 'Last line' }]
+props.lyricsSynced = true; props.canSeek = true; props.position = 10
+state.pauseAutoFollow()
+state.seekLyric(props.lyrics[1])
+assert.equal(events.filter(event => event.name === 'seek').at(-1).value, 35)
+assert.equal(state.autoFollowPaused.value, false, 'selecting a timestamped lyric resumes timeline following')
+props.position = 35; await flush()
+assert.equal(state.activeLyric.value, 1, 'the target lyric follows the newly selected playback time')
+const lyricSeeks = events.filter(event => event.name === 'seek').length
+for (const time of [-1, NaN, Infinity]) state.seekLyric({ time, text: 'Invalid timestamp' })
+props.lyricsSynced = false; state.seekLyric(props.lyrics[2])
+props.lyricsSynced = true; props.canSeek = false; state.seekLyric(props.lyrics[2])
+assert.equal(events.filter(event => event.name === 'seek').length, lyricSeeks)
+console.log('PASS: Standard lyric click seeks to its exact timestamp and follows the target; unsynced, invalid and unseekable lyrics never issue a seek')
 hooks.forEach(fn => fn()); scope.stop()
 
 const railScript = compileScript(parse(readFileSync('src/components/AlphabetIndexRail.vue', 'utf8')).descriptor, { id: 'rail-test' })

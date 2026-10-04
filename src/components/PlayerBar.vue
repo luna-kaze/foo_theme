@@ -20,6 +20,7 @@ const props = defineProps<{
   shufflePending: boolean
   shuffleStaged: boolean
   nowPlayingOpen: boolean
+  fullscreen: boolean
   queueOpen: boolean
 }>()
 
@@ -59,13 +60,13 @@ const emit = defineEmits<{
 
 <template>
   <footer class="player-bar">
-    <button class="player-track" aria-label="切换全屏沉浸播放" @click="emit('fullscreenImmersive')" @contextmenu.prevent.stop="track && emit('menu', track, $event)">
+    <button class="player-track" aria-label="切换窗口沉浸播放" :aria-pressed="nowPlayingOpen && !fullscreen" @click="emit('immersive')" @contextmenu.prevent.stop="track && emit('menu', track, $event)">
       <ArtworkImage :src="artwork || track?.artworkUrl" :alt="`${track?.album ?? '当前曲目'} 封面`" />
       <span class="player-track__copy">
         <strong>{{ track?.title || '当前没有播放' }}</strong>
         <small>{{ track?.artist || '从音乐库中选择一首曲目' }}</small>
       </span>
-      <Maximize2 :size="15" class="player-track__expand" />
+      <Mic2 :size="15" class="player-track__expand" />
     </button>
 
     <div class="transport">
@@ -101,7 +102,7 @@ const emit = defineEmits<{
         <Repeat1 v-if="playbackOrder === 2" :size="17" />
         <Repeat v-else :size="17" />
       </button>
-      <button :class="{ active: nowPlayingOpen }" aria-label="沉浸播放" @click="emit('immersive')"><Mic2 :size="17" /></button>
+      <button :class="{ active: nowPlayingOpen && fullscreen }" :aria-pressed="nowPlayingOpen && fullscreen" aria-label="切换全屏沉浸播放" @click="emit('fullscreenImmersive')"><Maximize2 :size="17" /></button>
       <button :class="{ active: queueOpen }" aria-label="播放队列" @click="emit('queue')"><ListMusic :size="18" /></button>
       <button aria-label="静音" @click="emit('mute')">
         <VolumeX v-if="muted || volume === 0" :size="18" />

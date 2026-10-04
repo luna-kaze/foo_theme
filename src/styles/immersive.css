@@ -154,6 +154,11 @@
 .immersive-lyrics__scroll > button.past { color: rgba(255,255,255,.075); }
 .immersive-lyrics__scroll > button.active { color: rgba(255,255,255,.96); transform: translateX(8px); }
 .immersive-lyrics__scroll > button:hover { color: rgba(255,255,255,.54); }
+.immersive-lyrics__scroll > button:not(.lyrics-follow) { position: relative; padding-right: 50px; }
+.immersive-lyrics__scroll > button:not(.lyrics-follow):not(:disabled) { cursor: pointer; }
+.immersive-lyrics__scroll > button:not(.lyrics-follow):focus-visible { color: white; outline: 1px solid rgba(255,255,255,.3); outline-offset: 4px; border-radius: 6px; }
+.lyric-seek-time { position: absolute; top: 50%; right: 0; color: rgba(255,255,255,.6); font-size: 10px; font-weight: 500; font-variant-numeric: tabular-nums; letter-spacing: 0; opacity: 0; transform: translateY(-50%); transition: opacity 160ms ease; }
+.immersive-lyrics__scroll > button:hover:not(:disabled) .lyric-seek-time, .immersive-lyrics__scroll > button:focus-visible .lyric-seek-time { opacity: 1; }
 .immersive-lyrics .lyrics-follow { position: sticky; bottom: 20px; align-self: center; display: flex; align-items: center; gap: 7px; padding: 9px 13px; color: white; font-size: 10px; background: rgba(23,23,27,.8); border: 1px solid rgba(255,255,255,.1); border-radius: 999px; backdrop-filter: blur(18px); }
 .immersive-empty { display: grid; height: 100%; place-content: center; justify-items: center; gap: 8px; color: rgba(255,255,255,.25); text-align: center; }
 .immersive-empty strong { color: rgba(255,255,255,.62); font-size: 13px; }
@@ -237,7 +242,6 @@ body.mini-window #app { min-width: 0; min-height: 0; }
 .mini-player__transport button:hover, .mini-player__close:hover { color: white; background: rgba(255,255,255,.08); }
 .mini-player__transport .mini-player__play { color: #171719; background: #f0eeeb; }
 .mini-player__close { position: absolute; top: 7px; right: 7px; z-index: 4; }
-.mini-player__restore { right: 39px; }
 .mini-player [data-tip]::after { position: absolute; bottom: -25px; left: 50%; padding: 4px 6px; content: attr(data-tip); color: white; font-size: 8px; pointer-events: none; background: rgba(10,10,12,.9); border-radius: 5px; opacity: 0; transform: translate(-50%,-2px); transition: 120ms ease; white-space: nowrap; }
 .mini-player [data-tip]:hover::after { opacity: 1; transform: translate(-50%,0); }
 
