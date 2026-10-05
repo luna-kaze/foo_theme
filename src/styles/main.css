@@ -2443,6 +2443,9 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 }
 
 .drop-overlay strong { color: white; font-size: 18px; }
+.external-drop-marker { position: fixed; z-index: 13010; pointer-events: none; border: 2px solid var(--accent-bright); border-radius: 6px; background: rgba(105,225,158,.12); box-shadow: 0 0 15px rgba(105,225,158,.2); }
+.external-drop-hint { position: fixed; z-index: 13011; pointer-events: none; bottom: 112px; left: 50%; display: flex; align-items: center; gap: 10px; max-width: calc(100vw - 36px); padding: 12px 18px; border: 1px solid var(--accent-bright); border-radius: 12px; background: rgba(22,25,29,.96); color: var(--text); transform: translateX(-50%); font-size: 12px; box-shadow: 0 12px 35px rgba(0,0,0,.4); }
+.external-drop-marker.rejected, .external-drop-hint.rejected { border-color: #e87878; color: #f3aaaa; }
 .drop-overlay span { color: var(--muted); font-size: 11px; }
 .drop-overlay-enter-active, .drop-overlay-leave-active { transition: opacity 160ms ease; }
 .drop-overlay-enter-from, .drop-overlay-leave-to { opacity: 0; }

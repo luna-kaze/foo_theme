@@ -400,6 +400,14 @@ await flush()
 assert.equal(state.standardCover.value.key, 'airplay:airplay://live/200', 'confirmed live snapshots bypass the local 350ms input wait')
 assert.equal(state.pendingStandardCover.value, null)
 console.log('PASS: AirPlay arrows emit remote actions, history/wheel cannot browse locally, focus gates are inactive and Standard updates only from confirmed snapshots')
+state.railState.active = false
+props.remoteDirection = -1
+assert.equal(state.coverflowOffset({ index: state.coverflowIndex.value - 1, track: null }), 1, 'Previous moves the outgoing current cover to the opposite side')
+props.remoteDirection = 1
+assert.equal(state.coverflowOffset({ index: state.coverflowIndex.value - 1, track: null }), -1)
+props.remoteDirection = 0
+assert.equal(state.visibleCoverflowItems.value.filter(item => !item.leaving).length, 1, 'unknown sender direction presents only the neutral current cover')
+console.log('PASS: AirPlay Previous and Next mirror the deck direction; unknown iOS switches use a single-cover neutral presentation')
 hooks.forEach(fn => fn()); scope.stop()
 
 const railScript = compileScript(parse(readFileSync('src/components/AlphabetIndexRail.vue', 'utf8')).descriptor, { id: 'rail-test' })

@@ -21,7 +21,7 @@ type Dependencies = {
 
 /** Remote commands never preview/replay a URL; received snapshots own the screen. */
 export function createAirplayPlayback(deps: Dependencies) {
-  const state = reactive({ active: false, path: '', pending: false, direction: 0, message: '', history: [] as DisplayTrack[] })
+  const state = reactive({ active: false, path: '', pending: false, direction: 0, confirmedDirection: 0, message: '', history: [] as DisplayTrack[] })
   let epoch = 0, revision = 0, commandRevision = 0
   let refreshTimer: ReturnType<typeof setTimeout> | null = null
   let pendingTimer: ReturnType<typeof setTimeout> | null = null
@@ -36,7 +36,7 @@ export function createAirplayPlayback(deps: Dependencies) {
     if (refreshTimer) clearTimeout(refreshTimer)
     if (pendingTimer) clearTimeout(pendingTimer)
     refreshTimer = pendingTimer = null; entry = null; current = null; currentArtwork = ''; currentArtworkPath = ''
-    Object.assign(state, { active: false, path: '', pending: false, direction: 0, message: '', history: [] })
+    Object.assign(state, { active: false, path: '', pending: false, direction: 0, confirmedDirection: 0, message: '', history: [] })
   }
   function publish(position?: number) {
     if (!current) return
@@ -51,7 +51,7 @@ export function createAirplayPlayback(deps: Dependencies) {
     if (entering) { state.active = true; epoch += 1; entry = deps.enter() }
     const owner = epoch, request = ++revision
     state.path = path
-    if (changed) { emptyArtworkAttempts = 0; awaitingArtwork = true; if (!state.pending) state.direction = 0 }
+    if (changed) { emptyArtworkAttempts = 0; awaitingArtwork = true; state.confirmedDirection = state.pending ? state.direction : 0; if (!state.pending) state.direction = 0 }
     if (changed && current) state.history = [...state.history, { ...current, artworkUrl: currentArtworkPath === airplayPath(current) ? currentArtwork : '', playbackId: `airplay:${airplayPath(current)}`, sourceIndex: state.history.length }].slice(-6)
     current = { ...snapshot.track, path, absolutePath: path, title: snapshot.track.title || 'AirPlay 实时音频', duration: snapshot.duration ?? snapshot.track.duration }
     // Keep the outgoing image until the current stream's image arrives; never clear it just to reload.

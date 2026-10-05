@@ -150,7 +150,7 @@ const focusIndex = computed(() => {
 const globalFocusIndex = computed(() => props.playbackBrowseIndex ?? props.playbackTracks[focusIndex.value]?.sourceIndex ?? focusIndex.value)
 
 const coverflowItems = computed<CoverflowItem[]>(() => {
-  if ((railState.distant || props.playbackWindowDeferred) && frozenDeck.value.length) return frozenDeck.value
+  if (!props.airplay && (railState.distant || props.playbackWindowDeferred) && frozenDeck.value.length) return frozenDeck.value
   coverflowPerformance.record('coverModelBuild', 0, props.playbackTracks.length)
   if (props.playbackTracks.length) return props.playbackTracks.map((track, index) => ({
     track,
@@ -168,6 +168,10 @@ const coverflowItems = computed<CoverflowItem[]>(() => {
   }]
 })
 const visibleCoverflowItems = computed(() => {
+  if (props.airplay && !props.remoteDirection) {
+    const item = coverflowItems.value[focusIndex.value]
+    return [...(item ? [{ ...item, index: focusIndex.value, leaving: false, removed: false }] : []), ...outgoingCovers.value.filter(previous => previous.key !== item?.key)]
+  }
   if (railState.distant) return railState.zoom < .6 ? frozenCovers.value : []
   const center = railState.active ? Math.round(railState.position - (props.playbackTracks[0]?.sourceIndex ?? 0)) : coverflowIndex.value
   const start = Math.max(0, center - 3)
@@ -210,6 +214,7 @@ const rail = createCoverflowRail({
 })
 function coverflowOffset(item: { index: number; track: DisplayTrack | null }) {
   const offset = railState.active ? (item.track?.sourceIndex ?? item.index) - railState.position : item.index - coverflowIndex.value
+  if (props.airplay) return offset * ((props.remoteDirection ?? 0) < 0 ? -1 : 1)
   return railState.distant ? Math.max(-4, Math.min(4, offset)) : offset
 }
 
@@ -263,7 +268,8 @@ function cancelOrderAnimation() {
 watch(coverflowItems, (items) => { if (!orderReflowing.value && !railState.active) previousDeck = [...items] }, { immediate: true, flush: 'post' })
 // Capture the old DOM before Vue patches the committed deck. A revision can
 // arrive before its async projection, so it cannot be the animation trigger.
-watch([() => coverflowItems.value.map((item) => item.key).join('\u0000'), focusIndex, () => props.playbackPlanIds.join('\u0000'), () => props.open, mode, modeTransition], async (_values, [, , previousPlan]) => {
+watch([() => coverflowItems.value.map((item) => item.key).join('\u0000'), focusIndex, () => props.playbackPlanIds.join('\u0000'), () => props.open, mode, modeTransition, () => props.remoteDirection], async (_values, [, , previousPlan]) => {
+  if (props.airplay && railState.active) { rail.dispose(); railState.active = false; railState.distant = false; railState.zoom = 0; frozenDeck.value = []; frozenCovers.value = [] }
   if (!props.open || mode.value !== 'coverflow' || modeTransition.value) {
     if (props.playbackWindowDeferred && props.playbackBrowseIndex != null) emit('browsePosition', props.playbackBrowseIndex, false)
     railSettledKey = null
@@ -323,9 +329,10 @@ watch([() => coverflowItems.value.map((item) => item.key).join('\u0000'), focusI
       const leaving = element.classList.contains('is-order-leaving')
       const removed = element.classList.contains('is-order-removed')
       const offset = Number(element.style.getPropertyValue('--cover-offset'))
-      const startTransform = oldPose?.transform || `${end.transform} translateX(${props.airplay ? (props.remoteDirection ?? 0) * 110 : Math.sign(offset) * 110}px) translateZ(-180px) scale(.88)`
+      const neutral = props.airplay && !props.remoteDirection
+      const startTransform = oldPose?.transform || (neutral ? end.transform : `${end.transform} translateX(${props.airplay ? (props.remoteDirection ?? 0) * 110 : Math.sign(offset) * 110}px) translateZ(-180px) scale(.88)`)
       const oldOffset = poses.get(element.dataset.coverKey!)?.offset ?? offset
-      const endTransform = leaving ? `${startTransform} translateX(${removed ? 0 : Math.sign(oldOffset) * 160}px) translateY(${removed ? 64 : 0}px) translateZ(-140px) scale(${removed ? .82 : .94})` : end.transform
+      const endTransform = leaving ? neutral ? startTransform : `${startTransform} translateX(${removed ? 0 : Math.sign(oldOffset) * 160}px) translateY(${removed ? 64 : 0}px) translateZ(-140px) scale(${removed ? .82 : .94})` : end.transform
       orderAnimations.push(element.animate([
         { transform: startTransform, opacity: oldPose?.opacity ?? '0' },
         { transform: endTransform, opacity: leaving ? 0 : Number(end.opacity) },

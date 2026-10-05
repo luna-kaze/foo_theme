@@ -600,6 +600,8 @@ function isCurrent(track: DisplayTrack, currentTrack: DisplayTrack | null) {
          :class="{ current: isCurrent(track, currentTrack), selected: selected.has(index), 'drag-source': dragging && dragSourcePlaylistIndex === playlistIndex && dragIndex === index, 'dragged-item': dragging && dragSourcePlaylistIndex === playlistIndex && draggedIndexes.has(index) }"
        :data-reorder-index="reorderable ? index : undefined"
        :data-track-index="index"
+       :data-source-index="track.sourceIndex"
+       :data-track-identity="encodeURIComponent(trackKey(track))"
       role="button"
        tabindex="0"
        @click="selectRow(track, index, $event)"

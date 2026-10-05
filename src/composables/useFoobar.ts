@@ -30,6 +30,8 @@ import type {
 import { albumKey, isSameTrack, localFilePath, playablePath, trackKey, trackSubsong } from '../utils/track'
 import { findNativeMenuCommand, findNativeTools, type NativeMenuNode } from '../utils/nativeMenu'
 import { airplayPath, createAirplayPlayback } from '../utils/airplayPlayback'
+import { createExternalImporter } from '../utils/externalImport'
+import type { ExternalDropTarget } from '../utils/externalDrop'
 
 const state = reactive<PlayerUiState>({
   connected: false,
@@ -118,6 +120,7 @@ let libraryStatusTimer: ReturnType<typeof setTimeout> | null = null
 let noDragResizeTimer: ReturnType<typeof setTimeout> | null = null
 let playcountLibraryGeneration = -1
 let favouritePlaylistIndex: number | null = null
+let externalDropHandler: ((event: { sessionId: string; paths: string[]; x: number; y: number }) => void) | null = null
 const insertingPlaylistIndexes = new Set<number>()
 const favouriteTrackKeys = new Set<string>()
 let desktopLyricsCommand: { guid: string; subGuid?: string } | null = null
@@ -748,7 +751,8 @@ async function loadPlaylists() {
 }
 
 function isThemeInternalPlaylist(playlist: PlaylistInfo, ownerId: string) {
-  return playlist.name.trim().toLocaleLowerCase() === 'airplay'
+  return playlist.name === `拖放解析 [foo-theme:${ownerId}]`
+    || playlist.name.trim().toLocaleLowerCase() === 'airplay'
     || playlist.name === `正在播放 [foo-theme:${ownerId}]`
     || playlist.name === `收藏 [foo-theme:${ownerId}]`
     || playlist.name === '[WebView Queue]'
@@ -1081,6 +1085,7 @@ function bindEvents() {
       state.dndSupported = capabilities.paths
     }),
     fb.on('dnd:drop', (event) => {
+      if (externalDropHandler) { externalDropHandler(event); return }
       if (event.paths.length) refreshSafely(() => importPaths(event.paths))
       else refreshSafely(importDroppedPaths)
     }),
@@ -2785,7 +2790,7 @@ async function expandImportPaths(paths: string[]) {
     const result = await fb.file.list(path, { recursive: true })
     if (result.success === false) throw new Error(result.error || `无法扫描文件夹：${path}`)
     const files = result.files ?? result.items ?? []
-    expanded.push(...files)
+    expanded.push(...files.sort((left, right) => left.localeCompare(right, 'zh-CN', { numeric: true, sensitivity: 'base' })))
   }
   const unique = [...new Map(expanded.map((path) => [windowsPathKey(path), path])).values()]
   return removeDescriptorDuplicates(unique)
@@ -2877,6 +2882,31 @@ async function importDroppedPaths() {
   const paths = Array.isArray(result.paths) ? result.paths.filter((path): path is string => typeof path === 'string') : []
   await importPaths(paths)
 }
+
+const externalImporter = createExternalImporter({
+  owner: getOwnerId, expand: expandImportPaths, tracks: getAllPlaylistTracks,
+  reorder: reorderPlaylists, visible: () => state.playlists,
+  refresh: async index => {
+    await loadPlaylists()
+    if (index != null && state.route.view === 'playlist' && state.route.playlistIndex === index) await refreshActivePlaylist()
+  },
+  select: selectActivePlaylist,
+  play: async (tracks, name) => {
+    if (tracks.some(track => Boolean(airplayPath(track)))) return false
+    const success = await playGeneratedCollection(tracks, 0, false, name)
+    if (success) { await syncCurrentTrack(); await refreshWorkspace() }
+    return success
+  },
+  fallback: importPaths,
+})
+let externalImports = 0
+async function importExternalPaths(paths: string[], target: ExternalDropTarget) {
+  if (!state.connected) return
+  externalImports += 1; state.importing = true
+  try { await externalImporter.importPaths(paths, target); notify('已完成拖放导入。', 'success') }
+  finally { externalImports -= 1; state.importing = externalImports > 0 }
+}
+function setExternalDropHandler(handler: typeof externalDropHandler) { externalDropHandler = handler }
 
 async function ensureFavouritePlaylist() {
   if (favouritePlaylistIndex != null) return favouritePlaylistIndex
@@ -3493,6 +3523,8 @@ export function useFoobar() {
     openFiles,
     openFolder,
     importDroppedPaths,
+    importExternalPaths,
+    setExternalDropHandler,
     removeQueueItem,
     playQueueItem,
     playPlaybackTrack,

@@ -21,6 +21,7 @@ import fb, { consoleApi, type ArtistInfo, type OutputDevice, type PlaylistInfo }
 import type { AlbumCard, ArtistCard, DisplayTrack, LibraryFolderCard, RouteSceneData, TrackDetails, ViewId } from './types/music'
 import { menuIcons, showContextMenu, type ContextMenuItem } from './utils/contextMenu'
 import type { NativeMenuNode } from './utils/nativeMenu'
+import { createExternalDropSession, externalDropLabel, sidebarDropZone, type ExternalDropTarget } from './utils/externalDrop'
 import { isSameTrack, localFilePath, playablePath, trackKey } from './utils/track'
 import { createNavigationTransitions } from './utils/navigationTransition'
 import { installAutoHideScrollbars } from './utils/autoHideScrollbars'
@@ -36,7 +37,32 @@ const navigationTransitions = createNavigationTransitions()
 const miniMode = computed(() => player.miniPlayerMode.value)
 watch(miniMode, value => document.body.classList.toggle('mini-window', value), { immediate: true })
 const trackMenu = reactive({ open: false, track: null as DisplayTrack | null, tracks: [] as DisplayTrack[], index: -1, x: 0, y: 0 })
-const dragState = reactive({ active: false, depth: 0 })
+const dragState = reactive({ active: false, depth: 0, label: '', rejected: false, left: 0, top: 0, width: 0, height: 0, marker: false, clickUntil: 0 })
+let nativeDragFiles = false
+let externalHoverTimer: ReturnType<typeof setTimeout> | null = null
+let externalHoverIndex = -1
+let externalScrollFrame = 0
+let externalScrollElement: HTMLElement | null = null
+let externalPoint = { x: 0, y: 0 }
+let externalScrollDelta = 0
+const externalDropSubscriptions: Array<() => void> = []
+const externalDrop = createExternalDropSession({
+  paths: async sessionId => {
+    const result = await fb.dnd.getPathsAsync(sessionId)
+    if (result.success === false) throw new Error(typeof result.error === 'string' ? result.error : '无法取得拖放文件路径。')
+    if (sessionId && result.sessionId && result.sessionId !== sessionId) throw new Error('拖放会话已变化，请重新拖入文件。')
+    return { sessionId: result.sessionId || sessionId || '', paths: Array.isArray(result.paths) ? result.paths.filter((path): path is string => typeof path === 'string' && Boolean(path.trim())) : [] }
+  },
+  execute: (paths, target) => player.importExternalPaths(paths, target),
+  error: error => player.notify(error instanceof Error ? error.message : '拖放导入失败。', 'error'),
+})
+player.setExternalDropHandler(event => {
+  const ratio = window.devicePixelRatio || 1
+  const target = externalDropTarget(event.x / ratio, event.y / ratio)
+  dragState.clickUntil = Date.now() + 350
+  finishExternalDrag()
+  void externalDrop.native(event, target)
+})
 const queueOpen = ref(false)
 const coverflowPerformanceReport = ref<CoverflowPerformanceReport | null>(null)
 const themeSettingsOpen = ref(false)
@@ -216,7 +242,7 @@ watch(player.routeNavigation, (navigation) => {
   // with a newer generation without becoming a new visual navigation.
   requestedSceneTransition = {
     key: routeKey(navigation.to), generation: navigation.generation,
-    animate: Boolean(navigation.animate && !trackDragRouteKey.value && !navigationTransitions.targetKey),
+    animate: Boolean(navigation.animate && !trackDragRouteKey.value && !dragState.active && !navigationTransitions.targetKey),
   }
 }, { flush: 'sync' })
 
@@ -527,9 +553,15 @@ onMounted(() => {
   window.addEventListener('dragover', onDragOver)
   window.addEventListener('dragleave', onDragLeave)
   window.addEventListener('drop', onDrop)
+  externalDropSubscriptions.push(
+    fb.on('dnd:enter', event => { nativeDragFiles = event.hasFiles; externalDrop.begin(event.sessionId); if (event.hasFiles && state.dndSupported) dragState.active = true }),
+    fb.on('dnd:leave', () => finishExternalDrag()),
+  )
 })
 
 onBeforeUnmount(() => {
+  finishExternalDrag(); externalDrop.dispose(); player.setExternalDropHandler(null)
+  externalDropSubscriptions.forEach(unsubscribe => unsubscribe())
   disposePerformance?.()
   disposeScrollbars?.()
   sceneWaiters.forEach((finish) => finish())
@@ -550,11 +582,13 @@ onBeforeUnmount(() => {
 })
 
 function openNowPlaying() {
+  if (Date.now() < dragState.clickUntil) return
   queueOpen.value = false
   player.toggleNowPlaying('lyrics')
 }
 
 function openFullscreenNowPlaying() {
+  if (Date.now() < dragState.clickUntil) return
   queueOpen.value = false
   void player.toggleFullscreenNowPlaying()
 }
@@ -1035,31 +1069,118 @@ async function handlePlayTrack(track: DisplayTrack, index?: number) {
   await player.playTrack(track, index)
 }
 
+function isExternalDrag(event: DragEvent) {
+  return nativeDragFiles || Array.from(event.dataTransfer?.types ?? []).includes('Files')
+}
+function finishExternalDrag() {
+  dragState.active = false; dragState.depth = 0; dragState.marker = false; nativeDragFiles = false
+  if (externalHoverTimer) clearTimeout(externalHoverTimer)
+  externalHoverTimer = null; externalHoverIndex = -1
+  if (externalScrollFrame) cancelAnimationFrame(externalScrollFrame)
+  externalScrollFrame = 0; externalScrollElement = null
+}
+function markExternalDrop(element: HTMLElement, line?: number) {
+  const rect = element.getBoundingClientRect()
+  Object.assign(dragState, { marker: true, left: rect.left + (line == null ? 0 : 8), top: line ?? rect.top, width: Math.max(0, rect.width - (line == null ? 0 : 16)), height: line == null ? rect.height : 3 })
+}
+function externalDropTarget(x: number, y: number): ExternalDropTarget {
+  dragState.marker = false
+  const hit = document.elementFromPoint(x, y)
+  if (!hit || hit.closest('.modal-backdrop, .track-inspector-scrim, .context-menu')) return { kind: 'reject', reason: '请先关闭当前弹出界面再拖放。' }
+  const card = hit.closest<HTMLElement>('[data-external-play-target]')
+  if (card) { markExternalDrop(card); return { kind: 'temporary' } }
+  const row = hit.closest<HTMLElement>('.playlist-nav__item[data-playlist-index]')
+  if (row) {
+    const index = Number(row.dataset.playlistIndex), playlist = state.playlists.find(item => item.index === index)
+    if (!playlist || row.dataset.playlistName && row.dataset.playlistName !== playlist.name) return { kind: 'reject', reason: '播放列表已变化。' }
+    const rect = row.getBoundingClientRect(), zone = sidebarDropZone(y, rect.top, rect.height)
+    const identity = { index, name: playlist.name }
+    if (zone !== 'append') { markExternalDrop(row, zone === 'before' ? rect.top : rect.bottom); return { kind: 'create', anchor: identity, after: zone === 'after' } }
+    markExternalDrop(row)
+    if (playlist.isLocked || playlist.isAutoplaylist) return { kind: 'reject', reason: '此播放列表不可写。' }
+    return { kind: 'append', playlist: identity }
+  }
+  const navigation = hit.closest<HTMLElement>('.playlist-nav')
+  if (navigation) {
+    const last = [...navigation.querySelectorAll<HTMLElement>('.playlist-nav__item')].at(-1)
+    if (last) {
+      const index = Number(last.dataset.playlistIndex), playlist = state.playlists.find(item => item.index === index)
+      if (playlist) { markExternalDrop(last, last.getBoundingClientRect().bottom); return { kind: 'create', anchor: { index, name: playlist.name }, after: true } }
+    }
+    markExternalDrop(navigation); return { kind: 'create' }
+  }
+  const list = hit.closest<HTMLElement>('.track-list[data-playlist-index]')
+  if (list) {
+    if (scenePending.value || sceneSwitching.value || displayedScene.value.route.view !== 'playlist') return { kind: 'reject', reason: '等待播放列表加载完成后再插入。' }
+    const index = Number(list.dataset.playlistIndex), playlist = state.playlists.find(item => item.index === index)
+    if (displayedScene.value.route.playlistIndex !== index || displayedScene.value.route.playlistName !== playlist?.name) return { kind: 'reject', reason: '当前列表位置已变化，请等待界面更新。' }
+    if (!playlist || playlist.isLocked || playlist.isAutoplaylist) return { kind: 'reject', reason: '此列表不支持插入音乐。' }
+    const trackRow = hit.closest<HTMLElement>('.track-row[data-track-index]')
+    if (!trackRow) { markExternalDrop(list, list.getBoundingClientRect().bottom); return { kind: 'append', playlist: { index, name: playlist.name } } }
+    const track = state.visibleTracks[Number(trackRow.dataset.trackIndex)]
+    const sourceIndex = trackRow.dataset.sourceIndex == null ? track?.sourceIndex : Number(trackRow.dataset.sourceIndex)
+    const key = trackRow.dataset.trackIdentity ? decodeURIComponent(trackRow.dataset.trackIdentity) : trackKey(track)
+    if (sourceIndex == null || !Number.isInteger(sourceIndex) || !key) return { kind: 'reject', reason: '无法定位原播放列表歌曲。' }
+    const rect = trackRow.getBoundingClientRect(), after = y >= rect.top + rect.height / 2
+    markExternalDrop(trackRow, after ? rect.bottom : rect.top)
+    return { kind: 'insert', playlist: { index, name: playlist.name }, sourceIndex, key, after }
+  }
+  if (hit.closest('.track-list')) return { kind: 'reject', reason: '仅播放列表支持插入歌曲，请拖到左侧歌单或左下卡片。' }
+  return { kind: 'open' }
+}
+function updateExternalHover(target: ExternalDropTarget, x: number, y: number) {
+  const index = target.kind === 'append' ? target.playlist.index : -1
+  if (index !== externalHoverIndex) {
+    if (externalHoverTimer) clearTimeout(externalHoverTimer)
+    externalHoverIndex = index
+    if (index >= 0) externalHoverTimer = setTimeout(() => { externalHoverTimer = null; if (dragState.active) selectPrimaryPlaylist(index) }, 700)
+  }
+  const element = document.elementFromPoint(x, y)?.closest<HTMLElement>('.playlist-nav, .workspace-scroll') ?? null
+  externalPoint = { x, y }; externalScrollElement = element
+  const rect = element?.getBoundingClientRect()
+  externalScrollDelta = rect && y < rect.top + 40 ? -9 : rect && y > rect.bottom - 40 ? 9 : 0
+  if (!externalScrollFrame && externalScrollDelta) {
+    const scroll = () => {
+      externalScrollFrame = 0
+      if (!dragState.active || !externalScrollElement || !externalScrollDelta) return
+      externalScrollElement.scrollTop += externalScrollDelta
+      const current = externalDropTarget(externalPoint.x, externalPoint.y)
+      dragState.label = externalDropLabel(current); dragState.rejected = current.kind === 'reject'
+      externalScrollFrame = requestAnimationFrame(scroll)
+    }
+    externalScrollFrame = requestAnimationFrame(scroll)
+  }
+}
 function onDragEnter(event: DragEvent) {
-  if (!state.connected || !state.dndSupported) return
+  if (!state.connected || !isExternalDrag(event)) return
   event.preventDefault()
   dragState.depth += 1
   dragState.active = true
 }
 
 function onDragOver(event: DragEvent) {
-  if (!state.connected || !state.dndSupported) return
+  if (!state.connected || !isExternalDrag(event)) return
   event.preventDefault()
-  if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+  const target: ExternalDropTarget = state.dndSupported ? externalDropTarget(event.clientX, event.clientY) : { kind: 'reject', reason: '此窗口无法取得真实文件路径。' }
+  dragState.active = true; dragState.label = externalDropLabel(target); dragState.rejected = target.kind === 'reject'
+  if (event.dataTransfer) event.dataTransfer.dropEffect = dragState.rejected ? 'none' : 'copy'
+  updateExternalHover(target, event.clientX, event.clientY)
 }
 
 function onDragLeave(event: DragEvent) {
-  if (!state.connected || !state.dndSupported) return
+  if (!state.connected || !isExternalDrag(event)) return
   event.preventDefault()
   dragState.depth = Math.max(0, dragState.depth - 1)
-  if (!dragState.depth) dragState.active = false
+  if (!dragState.depth) finishExternalDrag()
 }
 
 function onDrop(event: DragEvent) {
-  if (!state.connected || !state.dndSupported) return
+  if (!state.connected || !isExternalDrag(event)) return
   event.preventDefault()
-  dragState.depth = 0
-  dragState.active = false
+  const target: ExternalDropTarget = state.dndSupported ? externalDropTarget(event.clientX, event.clientY) : { kind: 'reject', reason: '此窗口不支持文件拖放。' }
+  dragState.clickUntil = Date.now() + 350
+  finishExternalDrag()
+  void externalDrop.html(target)
 }
 </script>
 
@@ -1178,7 +1299,7 @@ function onDrop(event: DragEvent) {
       :airplay="player.airplayState.active"
       :remote-pending="player.airplayState.pending"
       :remote-message="player.airplayState.message"
-      :remote-direction="player.airplayState.direction"
+      :remote-direction="player.airplayState.confirmedDirection"
       @next="player.next"
       @previous="player.previous"
       :track="state.currentTrack"
@@ -1330,11 +1451,8 @@ function onDrop(event: DragEvent) {
     </div>
     <CoverflowPerformanceDialog v-if="coverflowPerformanceReport" :report="coverflowPerformanceReport" @close="coverflowPerformanceReport = null" />
 
-    <Transition name="drop-overlay">
-      <div v-if="dragState.active" class="drop-overlay">
-        <div><FileMusic :size="34" /><strong>拖放以打开音乐</strong><span>文件和文件夹将添加到“已打开的音乐”。</span></div>
-      </div>
-    </Transition>
+    <Teleport to="body"><div v-if="dragState.active && dragState.marker" class="external-drop-marker" :class="{ rejected: dragState.rejected }" :style="{ left: `${dragState.left}px`, top: `${dragState.top}px`, width: `${dragState.width}px`, height: `${dragState.height}px` }" />
+      <div v-if="dragState.active" class="external-drop-hint" :class="{ rejected: dragState.rejected }"><FileMusic :size="20" /><span>{{ dragState.label || '拖到播放列表、歌曲之间或左下卡片' }}</span></div></Teleport>
 
     <Transition name="toast">
       <div v-if="state.toast" class="app-toast" :class="`app-toast--${state.toast.tone}`">

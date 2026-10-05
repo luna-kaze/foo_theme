@@ -58,6 +58,15 @@ const timeout = [...timers.tasks.values()].find(task => task.ms === 6000)
 timeout.run()
 assert.equal(player.state.pending, false)
 assert.equal(commands.length, 4, 'timeout must never retransmit a remote command')
+await player.remote(-1)
+const beforeDirection = player.state.confirmedDirection
+assert.equal(beforeDirection, 0, 'pressing a remote button cannot move the existing deck before metadata confirms it')
+await player.accept({ track: stream(4) })
+assert.equal(player.state.confirmedDirection, -1)
+await player.remote(1); await player.accept({ track: stream(5) })
+assert.equal(player.state.confirmedDirection, 1)
+await player.accept({ track: stream(6) })
+assert.equal(player.state.confirmedDirection, 0, 'unknown iOS changes use neutral animation')
 for (let generation = 4; generation < 15; generation++) await player.accept({ track: stream(generation) })
 assert.equal(publications.at(-1).history.length, 7)
 actual = { ...stream(20), path: 'C:\\Music\\Local.flac' }
@@ -67,6 +76,7 @@ const count = publications.length
 player.reconcile(); player.dispose()
 assert.equal(publications.length, count)
 console.log('PASS: FIFO remote semantics, same-song restart, no retry on timeout, seven-cover bound and clean local handover')
+console.log('PASS: animation direction commits only with received snapshots; external iOS changes remain direction-neutral')
 
 const source = readFileSync('src/composables/useFoobar.ts', 'utf8') + '\nexport { syncCurrentTrack, bindEvents }\n'
 const theme = await build({ stdin: { contents: source, resolveDir: `${process.cwd()}/src/composables`, loader: 'ts' }, bundle: true, platform: 'node', format: 'cjs', write: false, external: ['vue', 'foo-webview-sdk'] })

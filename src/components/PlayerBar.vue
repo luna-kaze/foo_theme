@@ -62,7 +62,7 @@ const emit = defineEmits<{
 
 <template>
   <footer class="player-bar">
-    <button class="player-track" aria-label="切换窗口沉浸播放" :aria-pressed="nowPlayingOpen && !fullscreen" @click="emit('immersive')" @contextmenu.prevent.stop="track && emit('menu', track, $event)">
+    <button class="player-track" data-external-play-target aria-label="切换窗口沉浸播放" :aria-pressed="nowPlayingOpen && !fullscreen" @click="emit('immersive')" @contextmenu.prevent.stop="track && emit('menu', track, $event)">
       <ArtworkImage :src="artwork || track?.artworkUrl" :alt="`${track?.album ?? '当前曲目'} 封面`" />
       <span class="player-track__copy">
         <strong>{{ track?.title || '当前没有播放' }}</strong>
