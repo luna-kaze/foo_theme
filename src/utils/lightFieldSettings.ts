@@ -15,12 +15,12 @@ export const lightFieldControls: { key: LightFieldNumericKey; label: string; min
   { key: 'hue', label: '色相偏移', min: -180, max: 180, step: 1, unit: '°' },
   { key: 'opacity', label: '背景不透明度', min: 0, max: 1, step: .05 },
   { key: 'baseOpacity', label: '底色层强度', min: 0, max: 1, step: .05 },
-  { key: 'primaryIntensity', label: '主光晕强度', min: 0, max: 2, step: .05 },
-  { key: 'secondaryIntensity', label: '副光晕强度', min: 0, max: 2, step: .05 },
-  { key: 'glowScale', label: '光晕大小', min: .6, max: 1.6, step: .05 },
+  { key: 'primaryIntensity', label: '中心旋转层强度', min: 0, max: 2, step: .05 },
+  { key: 'secondaryIntensity', label: '边缘旋转层强度', min: 0, max: 2, step: .05 },
+  { key: 'glowScale', label: '旋转色域大小', min: .6, max: 1.6, step: .05 },
   { key: 'blur', label: '柔化模糊', min: 0, max: 80, step: 1, unit: 'px' },
   { key: 'speed', label: '流动速度', min: .25, max: 3, step: .05 },
-  { key: 'motion', label: '位移幅度', min: 0, max: 3, step: .05 },
+  { key: 'motion', label: '旋转与位移幅度', min: 0, max: 3, step: .05 },
   { key: 'vignette', label: '暗角与遮罩', min: 0, max: 3, step: .05 },
 ]
 export const lightFieldSettings = reactive<LightFieldSettings>({ ...lightFieldDefaults })

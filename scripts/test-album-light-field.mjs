@@ -64,9 +64,9 @@ console.log('PASS: latest-only asynchronous publication, reusable generation cac
 
 const script = compileScript(parse(readFileSync('src/components/FullscreenLightField.vue', 'utf8')).descriptor, { id: 'light-field-test' })
 const component = await build({ stdin: { contents: script.content, sourcefile: 'FullscreenLightField.vue.ts', resolveDir: `${process.cwd()}/src/components`, loader: 'ts' }, bundle: true, platform: 'node', format: 'cjs', write: false, external: ['vue', 'foo-webview-sdk'] })
-const hooks = [], events = [], sdk = { artwork: { getForTrack: async () => ({ available: true, dataUrl: 'data:image/png;base64,green' }) } }
+const hooks = [], mounted = [], events = [], sdk = { artwork: { getForTrack: async () => ({ available: true, dataUrl: 'data:image/png;base64,green' }) } }
 const exported = { exports: {} }
-runInNewContext(component.outputFiles[0].text, { module: exported, exports: exported.exports, require: id => id === 'vue' ? { ...vue, onBeforeUnmount: fn => hooks.push(fn) } : id === 'foo-webview-sdk' ? { ...sdk, __esModule: true, default: sdk } : require(id), Image, document, setTimeout, clearTimeout, performance })
+runInNewContext(component.outputFiles[0].text, { module: exported, exports: exported.exports, require: id => id === 'vue' ? { ...vue, onBeforeUnmount: fn => hooks.push(fn), onMounted: fn => mounted.push(fn) } : id === 'foo-webview-sdk' ? { ...sdk, __esModule: true, default: sdk } : require(id), Image, document, setTimeout, clearTimeout, performance })
 const props = vue.reactive({ active: false, source: 'data:image/png;base64,green', path: 'green.flac', progress: 0, suspended: false })
 const scope = vue.effectScope()
 const state = scope.run(() => exported.exports.default.setup(props, { expose() {}, emit: (name, value) => events.push({ name, value }) }))

@@ -1,5 +1,5 @@
 export type LightColor = { r: number; g: number; b: number }
-export type AlbumLightField = { key: string; base: string; primary: string; secondary: string; palette: LightColor[]; fallback: boolean }
+export type AlbumLightField = { key: string; base: string; primary: string; secondary: string; palette: LightColor[]; fallback: boolean; disc?: HTMLCanvasElement }
 type WeightedColor = LightColor & { weight: number }
 const limit = (value: number, min = 0, max = 255) => Math.max(min, Math.min(max, value))
 const distance = (a: LightColor, b: LightColor) => (a.r - b.r) ** 2 + (a.g - b.g) ** 2 + (a.b - b.b) ** 2

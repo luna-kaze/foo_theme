@@ -34,7 +34,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', keyboard, true); i
     <div class="modal-backdrop light-settings-backdrop" @click.self="emit('close')" @contextmenu.prevent.stop>
       <section ref="root" class="light-settings-panel" role="dialog" aria-modal="true" aria-labelledby="light-settings-title">
         <header><SlidersHorizontal :size="20" /><div><h2 id="light-settings-title">全屏背景调节</h2><small>Ctrl+Alt+B · 实时预览</small></div><button aria-label="关闭背景调节" @click="emit('close')"><X :size="18" /></button></header>
-        <p class="light-settings-note">{{ fullscreen ? '拖动滑块即可实时观察背景变化。' : '参数仅作用于全屏背景，进入全屏沉浸即可预览。' }}修改后点击保存。</p>
+        <p class="light-settings-note">封面预模糊后由 GPU 绘制多层旋转色域。{{ fullscreen ? '拖动滑块即可实时观察变化。' : '进入全屏沉浸即可预览。' }}修改后点击保存。</p>
         <div class="light-settings-controls">
           <label v-for="control in lightFieldControls" :key="control.key" :for="`light-setting-${control.key}`">
             <span>{{ control.label }}<output :for="`light-setting-${control.key}`">{{ control.step < 1 ? lightFieldSettings[control.key].toFixed(2) : Math.round(lightFieldSettings[control.key]) }}{{ control.unit || '×' }}</output></span>
