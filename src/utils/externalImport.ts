@@ -84,7 +84,7 @@ export function createExternalImporter(deps: {
           const base = paths.length === 1 ? paths[0]!.replace(/[\\/]+$/, '').split(/[\\/]/).at(-1)! : '导入的音乐'
           const first = info?.isDirectory ? base : base.replace(/\.[^.]+$/, '')
           let createdName = first || '导入的音乐', suffix = 2
-          while (createdName.trim().toLocaleLowerCase() === 'airplay' || currentLists.some(list => list.name === createdName)) createdName = `${first || '导入的音乐'} (${suffix++})`
+          while (['airplay', 'touchremote selection'].includes(createdName.trim().toLocaleLowerCase()) || currentLists.some(list => list.name === createdName)) createdName = `${first || '导入的音乐'} (${suffix++})`
           const created = await fb.playlist.create(createdName)
           let populated = false
           try {

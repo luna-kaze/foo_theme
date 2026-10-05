@@ -4,23 +4,33 @@ import { extractLightPalette, renderAlbumLightField, type AlbumLightField } from
 import { normalizeLightFieldSettings, lightFieldDefaults, type LightFieldSettings } from './lightFieldSettings'
 
 export const waveFragmentShader = `
+#ifdef GL_FRAGMENT_PRECISION_HIGH
+precision highp float;
+#else
 precision mediump float;
-uniform sampler2D uA, uB;
+#endif
+uniform sampler2D uA, uB, uSnapshot;
 uniform vec2 uResolution;
 uniform float uTime, uMix, uFrozen, uMotion, uScale;
 uniform vec4 uCircles[4];
 uniform vec4 uOpacity;
-vec4 disc(sampler2D image, vec2 p, vec4 c) {
+vec4 disc(sampler2D image, vec2 p, vec4 c, float scale) {
   vec2 drift = vec2(sin(uTime*.17+c.w),cos(uTime*.13-c.w))*uResolution*.025*uMotion;
-  vec2 d=(p-c.xy-drift)/(c.z*uScale);
-  if(dot(d,d)>1.0) return vec4(0.0);
+  vec2 d=(p-c.xy-drift)/(c.z*scale);
+  float radius=length(d);
+  if(radius>=1.0) return vec4(0.0);
   float a=uTime*c.w*uMotion, s=sin(a), k=cos(a);
-  return texture2D(image, mat2(k,-s,s,k)*d*.5+.5);
+  vec4 sampleColor=texture2D(image, mat2(k,-s,s,k)*d*.5+.5);
+  sampleColor.a*=1.0-smoothstep(.70,1.0,radius);
+  return sampleColor;
 }
 vec3 swirl(sampler2D image, vec2 p) {
-  vec3 color=mix(vec3(.12,.12,.14),disc(image,p,uCircles[0]).rgb,uOpacity.x);
+  // The full-viewport base is not shrunk with the accent discs. Respect its
+  // alpha: transparent padded RGB must never become an opaque circular edge.
+  vec4 base=disc(image,p,uCircles[0],1.0);
+  vec3 color=mix(vec3(.12,.12,.14),base.rgb,clamp(base.a*uOpacity.x,0.0,1.0));
   for(int i=1;i<4;i++) {
-    vec4 sampleColor=disc(image,p,uCircles[i]);
+    vec4 sampleColor=disc(image,p,uCircles[i],uScale);
     color=mix(color,sampleColor.rgb,clamp(sampleColor.a*uOpacity[i],0.0,1.0));
   }
   float luminance=dot(color,vec3(.2126,.7152,.0722));
@@ -28,7 +38,7 @@ vec3 swirl(sampler2D image, vec2 p) {
 }
 void main() {
   vec2 p=gl_FragCoord.xy;
-  vec3 oldColor=uFrozen>.5 ? texture2D(uA,p/uResolution).rgb : swirl(uA,p);
+  vec3 oldColor=uFrozen>.5 ? texture2D(uSnapshot,p/uResolution).rgb : swirl(uA,p);
   gl_FragColor=vec4(mix(oldColor,swirl(uB,p),uMix),1.0);
 }`
 const vertexShader = 'attribute vec2 v; void main(){gl_Position=vec4(v,0.0,1.0);}'
@@ -90,6 +100,7 @@ export function waveRenderSize(width: number, height: number, dpr: number) {
 export function createWaveBackgroundRenderer(canvas: HTMLCanvasElement, notify: (ready: boolean) => void) {
   let gl: WebGLRenderingContext | null = null, program: WebGLProgram | null = null, buffer: WebGLBuffer | null = null
   let textures: WebGLTexture[] = [], shaders: WebGLShader[] = []
+  let snapshotTexture: WebGLTexture | null = null
   let uniforms: Record<string, WebGLUniformLocation | null> = {}
   let field: HTMLCanvasElement | null = null, settings = { ...lightFieldDefaults }
   let active = false, disposed = false, initialized = false, frozen = false
@@ -101,10 +112,11 @@ export function createWaveBackgroundRenderer(canvas: HTMLCanvasElement, notify: 
     stopLoop()
     if (gl) {
       textures.forEach(texture => gl!.deleteTexture(texture)); shaders.forEach(shader => gl!.deleteShader(shader))
+      if (snapshotTexture) gl.deleteTexture(snapshotTexture)
       if (buffer) gl.deleteBuffer(buffer)
       if (program) gl.deleteProgram(program)
     }
-    textures = []; shaders = []; buffer = program = null; gl = null; initialized = false
+    textures = []; snapshotTexture = null; shaders = []; buffer = program = null; gl = null; initialized = false
   }
   function size() {
     if (!gl) return
@@ -129,6 +141,7 @@ export function createWaveBackgroundRenderer(canvas: HTMLCanvasElement, notify: 
   function bind() {
     if (!gl) return
     textures.forEach((texture, index) => { gl!.activeTexture(gl!.TEXTURE0 + index); gl!.bindTexture(gl!.TEXTURE_2D, texture) })
+    gl.activeTexture(gl.TEXTURE0 + 2); gl.bindTexture(gl.TEXTURE_2D, snapshotTexture)
   }
   function draw(now: number) {
     if (!gl || !initialized) return
@@ -177,14 +190,16 @@ export function createWaveBackgroundRenderer(canvas: HTMLCanvasElement, notify: 
       if (!buffer) throw new Error('Vertex buffer unavailable')
       gl.bindBuffer(gl.ARRAY_BUFFER, buffer); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), gl.STATIC_DRAW)
       const location = gl.getAttribLocation(program, 'v'); gl.enableVertexAttribArray(location); gl.vertexAttribPointer(location, 2, gl.FLOAT, false, 0, 0)
-      uniforms = Object.fromEntries(['uA','uB','uResolution','uTime','uMix','uFrozen','uMotion','uScale','uOpacity','uCircles[0]'].map(name => [name, gl!.getUniformLocation(program!, name)]))
-      gl.uniform1i(uniforms.uA!, 0); gl.uniform1i(uniforms.uB!, 1)
-      for (let index = 0; index < 2; index++) {
+      uniforms = Object.fromEntries(['uA','uB','uSnapshot','uResolution','uTime','uMix','uFrozen','uMotion','uScale','uOpacity','uCircles[0]'].map(name => [name, gl!.getUniformLocation(program!, name)]))
+      gl.uniform1i(uniforms.uA!, 0); gl.uniform1i(uniforms.uB!, 1); gl.uniform1i(uniforms.uSnapshot!, 2)
+      for (let index = 0; index < 3; index++) {
         const texture = gl.createTexture()
         if (!texture) throw new Error('Texture unavailable')
-        textures.push(texture); gl.activeTexture(gl.TEXTURE0 + index); gl.bindTexture(gl.TEXTURE_2D, texture)
+        if (index < 2) textures.push(texture); else snapshotTexture = texture
+        gl.activeTexture(gl.TEXTURE0 + index); gl.bindTexture(gl.TEXTURE_2D, texture)
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+        if (index === 2) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, 1, 1, 0, gl.RGB, gl.UNSIGNED_BYTE, new Uint8Array([30,30,36]))
       }
       size(); if (field) setField(field)
     } catch { fail() }
@@ -201,8 +216,12 @@ export function createWaveBackgroundRenderer(canvas: HTMLCanvasElement, notify: 
         const now = performance.now()
         if (fadeAt >= 0) {
           draw(now)
-          gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, textures[0]!)
-          gl.copyTexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 0, 0, canvas.width, canvas.height, 0)
+          gl.activeTexture(gl.TEXTURE0 + 2); gl.bindTexture(gl.TEXTURE_2D, snapshotTexture)
+          // alpha:false creates an RGB default framebuffer. RGBA copies fail
+          // with INVALID_OPERATION on Chromium/ANGLE and leave a disc as the
+          // supposed full-screen snapshot (visible as a huge hard-edged ring).
+          gl.copyTexImage2D(gl.TEXTURE_2D, 0, gl.RGB, 0, 0, canvas.width, canvas.height, 0)
+          if (gl.getError() !== gl.NO_ERROR) throw new Error('Background snapshot unavailable')
           frozen = true
         }
         gl.activeTexture(gl.TEXTURE1); upload(textures[1]!, value); fadeAt = now

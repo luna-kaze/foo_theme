@@ -771,6 +771,7 @@ async function loadPlaylists() {
 function isThemeInternalPlaylist(playlist: PlaylistInfo, ownerId: string) {
   return playlist.name === `拖放解析 [foo-theme:${ownerId}]`
     || playlist.name.trim().toLocaleLowerCase() === 'airplay'
+    || playlist.name.trim().toLocaleLowerCase() === 'touchremote selection'
     || playlist.name === `正在播放 [foo-theme:${ownerId}]`
     || playlist.name === `收藏 [foo-theme:${ownerId}]`
     || playlist.name === '[WebView Queue]'

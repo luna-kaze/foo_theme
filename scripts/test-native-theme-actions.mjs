@@ -13,6 +13,7 @@ const lists = [
   { index: 2, name: `正在播放 A [foo-theme:${ownerId}]`, trackCount: 3 },
   { index: 3, name: 'Other', trackCount: 1 },
   { index: 4, name: 'Locked', trackCount: 1, isLocked: true },
+  { index: 5, name: 'TouchRemote Selection', trackCount: 13, isLocked: true },
 ]
 let active = lists[0], failMain = false
 const track = { path: 'C:\\Users\\AB296\\Music\\Apple Music\\Machico\\Machibito Sagashi\\03 Million Smile.m4a', subsong: 0, title: 'Million Smile', artist: 'Machico', album: 'Machibito Sagashi', duration: 200 }
@@ -87,5 +88,7 @@ assert.equal(await player.runNativePlaylistCleanup(0, 'duplicates'), false)
 console.log('PASS: native playlist cleanup runs on the target playlist, respects locks and reports failures; AirPlay and internal lists stay hidden')
 
 await player.reorderPlaylists([3, 0, 4])
-assert.deepEqual(calls.find(call => call[0] === 'reorder'), ['reorder', [3, 1, 2, 0, 4]])
+assert.deepEqual(calls.find(call => call[0] === 'reorder'), ['reorder', [3, 1, 2, 0, 4, 5]])
+assert.ok(lists.some(item => item.name === 'TouchRemote Selection'), 'filtering never deletes or unlocks the remote selection list')
 console.log('PASS: reordering visible playlists preserves AirPlay and hidden playback buffers in their native slots')
+console.log('PASS: TouchRemote Selection is excluded from theme playlists while remaining intact in the native host and reorder slots')
