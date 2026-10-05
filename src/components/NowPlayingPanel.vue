@@ -37,6 +37,7 @@ const props = defineProps<{
   remotePending?: boolean
   remoteMessage?: string
   remoteDirection?: number
+  artworkRevision?: number
   shuffleBusy: boolean
   shufflePending: boolean
   shuffleStaged: boolean
@@ -58,6 +59,7 @@ const emit = defineEmits<{
   restoreOrder: []
   next: []
   previous: []
+  artworkError: []
 }>()
 
 const mode = ref<'standard' | 'coverflow'>('standard')
@@ -121,6 +123,7 @@ const playbackProgress = computed(() => {
 const tonearmAngle = computed(() => tonearmDragAngle.value ?? (props.playbackState === 'playing' ? 3 + playbackProgress.value * 33 : -10))
 
 type CoverflowItem = {
+  neutralCenter?: boolean
   track: DisplayTrack | null
   artwork: string
   current: boolean
@@ -168,17 +171,13 @@ const coverflowItems = computed<CoverflowItem[]>(() => {
   }]
 })
 const visibleCoverflowItems = computed(() => {
-  if (props.airplay && !props.remoteDirection) {
-    const item = coverflowItems.value[focusIndex.value]
-    return [...(item ? [{ ...item, index: focusIndex.value, leaving: false, removed: false }] : []), ...outgoingCovers.value.filter(previous => previous.key !== item?.key)]
-  }
   if (railState.distant) return railState.zoom < .6 ? frozenCovers.value : []
   const center = railState.active ? Math.round(railState.position - (props.playbackTracks[0]?.sourceIndex ?? 0)) : coverflowIndex.value
   const start = Math.max(0, center - 3)
   const end = Math.min(coverflowItems.value.length, center + 4)
   const visible = coverflowItems.value.slice(start, end).map((item, offset) => ({ ...item, index: start + offset, leaving: false, removed: false }))
   const keys = new Set(visible.map((item) => item.key))
-  return [...visible, ...outgoingCovers.value.filter((item) => !keys.has(item.key))]
+  return [...visible, ...outgoingCovers.value.filter((item) => !keys.has(item.key) || item.neutralCenter)]
 })
 const railPoints = computed(() => {
   if (!railState.distant && railState.zoom < .005) return []
@@ -311,7 +310,7 @@ watch([() => coverflowItems.value.map((item) => item.key).join('\u0000'), focusI
   // The rendered deck is windowed. A shuffled card outside that window is
   // leaving the viewport, not deleted from the committed plan.
   const committedKeys = new Set(props.playbackPlanIds)
-  outgoingCovers.value = old.filter((item, index, all) => !remapped.has(item.key) && poses.has(item.key) && all.findIndex((other) => other.key === item.key) === index).map((item) => ({ ...item, current: false, index: coverflowIndex.value + poses.get(item.key)!.offset, leaving: true, removed: !committedKeys.has(item.key) }))
+  outgoingCovers.value = old.filter((item, index, all) => !remapped.has(item.key) && poses.has(item.key) && all.findIndex((other) => other.key === item.key) === index).map((item) => ({ ...item, current: false, index: coverflowIndex.value + poses.get(item.key)!.offset, leaving: true, removed: !committedKeys.has(item.key), neutralCenter: Boolean(props.airplay && !props.remoteDirection && poses.get(item.key)!.offset === 0) }))
   orderReflowing.value = true
   publishFocusState()
   await nextTick()
@@ -330,11 +329,12 @@ watch([() => coverflowItems.value.map((item) => item.key).join('\u0000'), focusI
       const removed = element.classList.contains('is-order-removed')
       const offset = Number(element.style.getPropertyValue('--cover-offset'))
       const neutral = props.airplay && !props.remoteDirection
-      const startTransform = oldPose?.transform || (neutral ? end.transform : `${end.transform} translateX(${props.airplay ? (props.remoteDirection ?? 0) * 110 : Math.sign(offset) * 110}px) translateZ(-180px) scale(.88)`)
+      const stationaryHistory = neutral && !leaving && element.dataset.coverKey !== previousFocusKey
+      const startTransform = stationaryHistory ? end.transform : oldPose?.transform || (neutral ? end.transform : `${end.transform} translateX(${props.airplay ? (props.remoteDirection ?? 0) * 110 : Math.sign(offset) * 110}px) translateZ(-180px) scale(.88)`)
       const oldOffset = poses.get(element.dataset.coverKey!)?.offset ?? offset
       const endTransform = leaving ? neutral ? startTransform : `${startTransform} translateX(${removed ? 0 : Math.sign(oldOffset) * 160}px) translateY(${removed ? 64 : 0}px) translateZ(-140px) scale(${removed ? .82 : .94})` : end.transform
       orderAnimations.push(element.animate([
-        { transform: startTransform, opacity: oldPose?.opacity ?? '0' },
+        { transform: startTransform, opacity: stationaryHistory ? Number(end.opacity) : oldPose?.opacity ?? '0' },
         { transform: endTransform, opacity: leaving ? 0 : Number(end.opacity) },
       ], { duration: props.airplay ? 420 : removed ? 300 : 620, easing: 'cubic-bezier(.18,.82,.16,1)', fill: 'both' }))
     }
@@ -896,7 +896,7 @@ onBeforeUnmount(() => {
         <section class="vinyl-stage" :class="{ 'cover-forward': coverForward }">
           <Transition :name="airplay ? 'airplay-cover-change' : 'standard-cover-change'" @before-enter="beginStandardCoverChange" @after-enter="finishStandardCoverChange">
             <div v-if="standardCoverVisible" :key="standardRenderKey" class="album-sleeve" :class="{ interactive: !lyricsVisible, expanded: standardCover.expanded }" :role="lyricsVisible ? undefined : 'button'" :tabindex="lyricsVisible ? -1 : 0" :aria-label="lyricsVisible ? undefined : '切换封套位置'" @click="toggleCoverPosition" @keydown.enter="toggleCoverPosition">
-              <ArtworkImage :src="standardCover.artwork" :alt="`${standardCover.album} 封面`" />
+              <ArtworkImage :src="standardCover.artwork" :alt="`${standardCover.album} 封面`" :eager="airplay" :retry-key="airplay ? artworkRevision : undefined" @load-error="airplay && emit('artworkError')" />
               <span class="album-sleeve__hint">{{ standardCover.expanded ? '收回封套' : '展开封套' }}</span>
             </div>
           </Transition>
@@ -904,7 +904,7 @@ onBeforeUnmount(() => {
           <div ref="recordZone" class="record-zone">
             <button class="vinyl-record" :class="{ spinning: isPlaying && !tonearmDragging }" :aria-label="isPlaying ? '暂停播放' : '继续播放'" @click="emit('toggle')">
               <span class="vinyl-record__grooves" />
-              <span class="vinyl-record__label"><ArtworkImage :src="standardCover.artwork" alt="唱片标签" /></span>
+              <span class="vinyl-record__label"><ArtworkImage :src="standardCover.artwork" alt="唱片标签" :eager="airplay" :retry-key="airplay ? artworkRevision : undefined" @load-error="airplay && emit('artworkError')" /></span>
               <span class="vinyl-record__spindle" />
               <span class="vinyl-record__hint">{{ isPlaying ? '暂停' : '播放' }}</span>
             </button>
@@ -957,7 +957,7 @@ onBeforeUnmount(() => {
           <div class="coverflow__covers" :style="{ opacity: Math.max(0, 1 - railState.zoom * 1.7), transform: `scale(${1 - railState.zoom * .92})` }">
           <button
             v-for="item in visibleCoverflowItems"
-            :key="item.key"
+            :key="item.neutralCenter ? `${item.key}:outgoing:${orderRequest}` : item.key"
             :data-cover-index="item.index"
             :data-cover-key="item.key"
             :disabled="airplay && !item.current"
@@ -967,7 +967,7 @@ onBeforeUnmount(() => {
             @keydown.enter.prevent="activateCoverflow(item.index)"
           >
             <span class="coverflow-card__sleeve">
-              <span class="coverflow-card__face"><ArtworkImage :src="item.artwork" :alt="`${item.track?.album ?? standardCover.album} 封面`" /></span>
+              <span class="coverflow-card__face"><ArtworkImage :src="item.artwork" :alt="`${item.track?.album ?? standardCover.album} 封面`" :eager="airplay" :retry-key="airplay && item.current ? artworkRevision : undefined" @load-error="airplay && item.current && emit('artworkError')" /></span>
               <i class="coverflow-card__edge coverflow-card__edge--left" />
               <i class="coverflow-card__edge coverflow-card__edge--right" />
               <i class="coverflow-card__edge coverflow-card__edge--bottom"><b>{{ item.track ? `${item.track.title} · ${item.track.artist}` : standardCover.album }}</b></i>

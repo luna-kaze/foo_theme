@@ -29,9 +29,10 @@ import type {
 } from '../types/music'
 import { albumKey, isSameTrack, localFilePath, playablePath, trackKey, trackSubsong } from '../utils/track'
 import { findNativeMenuCommand, findNativeTools, type NativeMenuNode } from '../utils/nativeMenu'
-import { airplayPath, createAirplayPlayback } from '../utils/airplayPlayback'
+import { airplayPath, createAirplayPlayback, decodeAirplayArtwork } from '../utils/airplayPlayback'
 import { createExternalImporter } from '../utils/externalImport'
 import type { ExternalDropTarget } from '../utils/externalDrop'
+import { filterImportCandidates } from '../utils/importFilters'
 
 const state = reactive<PlayerUiState>({
   connected: false,
@@ -165,10 +166,12 @@ const airplay = createAirplayPlayback({
     return playbackWorkspace.suspend()
   },
   read: async () => {
-    const [track, position, formatted] = await Promise.all([
+    const [track, position, formatted, playback] = await Promise.all([
       fb.player.getCurrentTrack(), fb.player.getPosition(),
       (fb.titleformat?.eval('[%path%]\u001f[%title%]\u001f[%artist%]\u001f[%album%]') ?? Promise.resolve(null)).catch(() => null),
+      (fb.player.getState?.() ?? Promise.resolve(null)).catch(() => null),
     ])
+    if (playback?.state === 'stopped') return { track: null }
     if (track && position.path && airplayPath(track) && airplayPath(track) !== airplayPath({ path: position.path })) return { track: null }
     const normalized = track ? normalizeTrack(track) : null
     const fields = formatted?.success ? formatted.result.split('\u001f') : []
@@ -176,11 +179,26 @@ const airplay = createAirplayPlayback({
       if (fields[1]) normalized.title = fields[1]
       normalized.artist = fields[2] ?? ''; normalized.album = fields[3] ?? ''
     }
-    return { track: normalized, position: position.position, duration: position.duration && position.duration > 0 ? position.duration : track?.duration }
+    return { track: normalized, position: position.position, duration: position.duration && position.duration > 0 ? position.duration : track?.duration, receiving: playback?.state === 'playing' || playback?.state === 'paused' }
   },
   artwork: async path => {
-    const result = await fb.artwork.getForTrack(path, 'front', { maxSize: 1000 })
-    return result.available ? result.dataUrl ?? result.url ?? '' : ''
+    const providers = [
+      () => fb.artwork.getForTrack(path, 'front', { maxSize: 1000 }),
+      () => fb.artwork.getByPath?.(path, 'front'),
+      async () => {
+        if (airplayPath(await fb.player.getCurrentTrack()) !== path) return undefined
+        const image = await fb.artwork.getCurrent?.('front')
+        return airplayPath(await fb.player.getCurrentTrack()) === path ? image : undefined
+      },
+    ]
+    for (const provider of providers) {
+      try {
+        const result = await provider()
+        const source = result?.available ? result.dataUrl || result.url || '' : ''
+        if (source && await decodeAirplayArtwork(source)) return source
+      } catch { /* Keep looking for a readable image without dropping the outgoing cover. */ }
+    }
+    return ''
   },
   leave: async track => { await playbackWorkspace.resume(); await syncCurrentTrack(track); await loadPlaybackSequence(true) },
   publish: (track, artwork, history, position) => {
@@ -192,10 +210,10 @@ const airplay = createAirplayPlayback({
     state.playbackTrackIndex = history.length - 1
     state.shufflePending = state.shuffleStaged = false; state.shuffleSourceName = ''
   },
-  command: async direction => {
+  command: async (direction, vacantPath) => {
     const actual = await fb.player.getCurrentTrack()
     if (!airplay.state.active || actual && !airplayPath(actual)) return false
-    if (!actual && !(airplay.state.pending && state.playbackState === 'stopped')) return false
+    if (!actual && !(vacantPath && airplay.state.phase === 'handover' && state.playbackState === 'stopped')) return false
     return Boolean(await runAction(() => direction > 0 ? fb.player.next() : fb.player.prev()))
   },
   notify: message => notify(message, 'error'),
@@ -921,6 +939,7 @@ async function syncCurrentTrack(track?: TrackInfo | PlaybackTrackChangedPayload 
     }
   }
   if (request !== mediaRequest) return
+  if (!nextTrack && airplay.state.active) { airplay.decoderStopped(); return }
   if (airplayPath(nextTrack)) {
     await airplay.accept({ track: normalizeTrack(nextTrack!), position: state.position })
     airplay.reconcile()
@@ -978,6 +997,10 @@ function bindEvents() {
     }
   }
   subscriptions = [
+    fb.on('playback:starting', event => {
+      if (airplay.state.active && airplayPath(state.currentTrack) && (event.command === 'next' || event.command === 'prev')) airplay.recordStarting(event.command === 'next' ? 1 : -1)
+      else if (airplay.state.active) airplay.reconcile()
+    }),
     fb.on('playback:trackChanged', (track) => {
       state.position = 0
       refreshSafely(() => syncCurrentTrack(track))
@@ -990,19 +1013,19 @@ function bindEvents() {
       state.isPlaying = event.state === 'playing'
       if (event.position != null) state.position = event.position
       if (event.duration != null) state.duration = event.duration
+      if (airplay.state.active && event.state !== 'stopped') airplay.reconcile()
     }),
     fb.on('playback:paused', (event) => {
       state.playbackState = event.paused ? 'paused' : 'playing'
       state.isPlaying = !event.paused
+      if (airplay.state.active) airplay.reconcile()
     }),
     fb.on('playback:stopped', (event) => {
       if (event.reason === 'starting_another') return
-      if (airplay.state.active && airplay.state.pending && event.reason !== 'user') {
-        state.isPlaying = false; state.playbackState = 'stopped'; airplay.reconcile(); return
-      }
       if (airplay.state.active) {
-        airplay.stop()
-        state.playbackTracks = []; state.playbackPlanIds = []; state.playbackTrackIndex = -1; state.playingPlaylistIndex = -1
+        if (event.reason === 'shutting_down') { airplay.dispose(); return }
+        state.isPlaying = false; state.playbackState = 'stopped'; state.canSeek = false
+        airplay.decoderStopped(); return
       }
       if (state.playbackPreviewPending && event.reason === 'unknown') return
       state.playbackState = 'stopped'
@@ -2793,7 +2816,7 @@ async function expandImportPaths(paths: string[]) {
     expanded.push(...files.sort((left, right) => left.localeCompare(right, 'zh-CN', { numeric: true, sensitivity: 'base' })))
   }
   const unique = [...new Map(expanded.map((path) => [windowsPathKey(path), path])).values()]
-  return removeDescriptorDuplicates(unique)
+  return removeDescriptorDuplicates(await filterImportCandidates(unique))
 }
 
 async function importPaths(paths: string[]) {
@@ -3411,6 +3434,7 @@ export function useFoobar() {
   return {
     state,
     airplayState: airplay.state,
+    retryAirplayArtwork: airplay.artworkFailed,
     routeNavigation,
     routeReady,
     filteredAlbums,

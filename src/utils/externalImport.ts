@@ -2,6 +2,7 @@ import fb, { type PlaylistInfo } from 'foo-webview-sdk'
 import type { DisplayTrack } from '../types/music'
 import { playablePath, trackKey } from './track'
 import type { ExternalDropTarget } from './externalDrop'
+import { isExcludedImport } from './importFilters'
 
 export function createExternalImporter(deps: {
   owner: () => Promise<string>
@@ -48,7 +49,28 @@ export function createExternalImporter(deps: {
       await check(fb.playlist.clear(await stageIndex()))
       try {
         for (let start = 0; start < expanded.length; start += 500) await check(fb.playlist.addSequential(await stageIndex(), expanded.slice(start, start + 500)))
-        const tracks = await deps.tracks(await stageIndex())
+        const resolved = await deps.tracks(await stageIndex())
+        const tracks: DisplayTrack[] = []
+        const checkedFiles = new Map<string, boolean>()
+        for (const track of resolved) {
+          let path = (track.absolutePath || track.path || '').replace(/\|subsong:\d+$/i, '')
+          if (!path || isExcludedImport(path)) continue
+          if (/^file:\/\//i.test(path)) {
+            try { path = decodeURIComponent(path.replace(/^file:/i, '')) } catch { continue }
+            path = path.replace(/^\/+([a-z]:)/i, '$1')
+            if (path.startsWith('//')) path = path.replaceAll('/', '\\')
+          }
+          if (isExcludedImport(path)) continue
+          if (/^[a-z]:[\\/]|^\\\\/i.test(path)) {
+            const key = path.replaceAll('/', '\\').toLowerCase()
+            if (!checkedFiles.has(key)) {
+              const info = await fb.file.getInfo(path)
+              checkedFiles.set(key, info.success !== false && info.exists && !info.isDirectory && info.isFile !== false)
+            }
+            if (!checkedFiles.get(key)) continue
+          }
+          tracks.push(track)
+        }
         if (!tracks.length) throw new Error('没有解析出可播放的音轨。')
         if (target.kind === 'temporary') {
           if (await deps.play(tracks, '临时打开的音乐') === false) throw new Error('未能开始临时播放。')

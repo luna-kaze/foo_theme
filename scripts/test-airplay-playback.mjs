@@ -36,6 +36,24 @@ assert.equal(publications.at(-1).image, 'cover-corrected')
 assert.equal(publications.at(-1).history.length, 1, 'same-generation corrections never add a fake song occurrence')
 console.log('PASS: URI-only recognition and same-generation title, album, cover and timeline refresh')
 
+deferred = true
+const sameSourceImage = player.accept({ track: { ...actual, title: 'Image pending' } })
+for (let step = 0; step < 16 && typeof deferred !== 'function'; step++) await Promise.resolve()
+const releaseSameSource = deferred
+await player.accept({ track: { ...actual, title: 'Latest metadata' } })
+releaseSameSource('slow-valid-same-source'); deferred = null
+await sameSourceImage
+assert.equal(publications.at(-1).image, 'slow-valid-same-source')
+assert.equal(publications.at(-1).track.title, 'Latest metadata')
+artwork = ''
+for (let attempt = 0; attempt < 5; attempt++) await player.accept({ track: actual })
+assert.equal(publications.at(-1).image, 'slow-valid-same-source', 'repeated unavailable covers must never blank the last decoded cover')
+assert.equal(player.state.artworkPending, true)
+artwork = 'late-valid-cover'
+await player.refresh()
+assert.equal(publications.at(-1).image, 'late-valid-cover')
+console.log('PASS: slow same-source covers survive metadata edits; repeated empty results preserve the last image and late covers can recover')
+
 deferred = true; actual = stream(2)
 const slow = player.accept({ track: actual })
 for (let step = 0; step < 16 && typeof deferred !== 'function'; step++) await Promise.resolve()
@@ -100,9 +118,14 @@ const sdk = {
   queue: { get: async () => ({ items: [] }) },
 }
 const exported = { exports: {} }
+class Image {
+  naturalWidth = 100; naturalHeight = 100
+  set src(value) { this.value = value; queueMicrotask(() => this.onload?.()) }
+  decode() { return Promise.resolve() }
+}
 runInNewContext(theme.outputFiles[0].text, { module: exported, exports: exported.exports,
   require: id => id === 'foo-webview-sdk' ? { ...sdk, __esModule: true, default: sdk } : require(id),
-  crypto: { randomUUID }, URL, URLSearchParams, performance, console, ...themeClock,
+  crypto: { randomUUID }, URL, URLSearchParams, performance, console, Image, ...themeClock,
   window: { location: { search: '', href: 'https://theme.test/' }, removeEventListener() {} },
   document: { removeEventListener() {} },
 })
@@ -138,8 +161,55 @@ await exported.exports.syncCurrentTrack(nativeTrack)
 assert.equal(themePlayer.state.currentTrack.title, 'Song 102')
 assert.equal(themePlayer.state.playbackTracks.length, 2)
 callbacks.get('playback:stopped')({ reason: 'user' })
-assert.equal(themePlayer.airplayState.active, false)
-assert.equal(themePlayer.state.currentTrack, null)
-assert.equal(themePlayer.state.playbackTracks.length, 0, 'disconnect cannot expose obsolete stream history as a normal playlist')
+assert.equal(themePlayer.airplayState.active, true)
+assert.equal(themePlayer.state.currentTrack.title, 'Song 102')
+assert.equal(themePlayer.state.playbackTracks.length, 2, 'decoder stop must not clear the received cover history')
+const sent = nativeCalls.length
+callbacks.get('playback:starting')({ command: 'prev' })
+callbacks.get('playback:timeHighRes')({ position: 0 })
+callbacks.get('playback:stopped')({ reason: 'user' })
+nativeTrack = stream(103)
+await exported.exports.syncCurrentTrack(nativeTrack)
+assert.equal(themePlayer.airplayState.confirmedDirection, -1)
+assert.equal(nativeCalls.length, sent, 'observing native Previous never sends another control request')
+assert.equal(themePlayer.state.playbackTracks.length, 3)
+callbacks.get('playback:starting')({ command: 'next' })
+callbacks.get('playback:stopped')({ reason: 'eof' })
+nativeTrack = stream(104)
+await exported.exports.syncCurrentTrack(nativeTrack)
+assert.equal(themePlayer.airplayState.confirmedDirection, 1)
+nativeTrack = null
+callbacks.get('playback:stopped')({ reason: 'user' })
+await exported.exports.syncCurrentTrack(null)
+assert.equal(themePlayer.state.playbackTracks.length, 4)
+assert.equal(themePlayer.state.currentTrack.title, 'Song 104')
 themePlayer.dispose()
-console.log('PASS: actual theme handlers call native AirPlay Next/Previous before workset logic, reject seek/history replay and preserve transient handovers')
+console.log('PASS: actual native Next/Previous, user/eof stops, empty handles and time resets preserve the cover deck and confirmed direction without duplicate commands')
+
+const images = { exports: {} }
+class CheckedImage {
+  naturalWidth = 0; naturalHeight = 0
+  set src(value) { if (value === 'valid-image') { this.naturalWidth = 320; this.naturalHeight = 320 } }
+  decode() { return this.naturalWidth ? Promise.resolve() : Promise.reject(new Error('Bad image')) }
+}
+runInNewContext(compiled.outputFiles[0].text, { module: images, exports: images.exports, require, Image: CheckedImage, ...clock() })
+assert.equal(await images.exports.decodeAirplayArtwork('valid-image'), true)
+assert.equal(await images.exports.decodeAirplayArtwork('corrupt-image'), false)
+assert.equal(await images.exports.decodeAirplayArtwork(''), false)
+console.log('PASS: malformed image responses are rejected before replacing a decoded cover')
+
+const { parse, compileScript } = require('@vue/compiler-sfc')
+const vue = require('vue')
+const artScript = compileScript(parse(readFileSync('src/components/ArtworkImage.vue', 'utf8')).descriptor, { id: 'art-retry' })
+const artBundle = await build({ stdin: { contents: artScript.content, resolveDir: `${process.cwd()}/src/components`, loader: 'ts' }, bundle: true, platform: 'node', format: 'cjs', write: false, external: ['vue'] })
+const artModule = { exports: {} }
+runInNewContext(artBundle.outputFiles[0].text, { module: artModule, exports: artModule.exports, require })
+const imageProps = vue.reactive({ src: 'unchanged-uri', alt: 'cover', retryKey: 1, eager: true })
+const scope = vue.effectScope()
+const artworkState = scope.run(() => artModule.exports.default.setup(imageProps, { expose() {}, emit() {} }))
+artworkState.failed.value = true
+imageProps.retryKey = 2
+await vue.nextTick()
+assert.equal(artworkState.failed.value, false, 'a failed unchanged URI can recover on an explicit validated retry')
+scope.stop()
+console.log('PASS: ArtworkImage resets failed state on a validated retry even when the URI is unchanged')

@@ -31,7 +31,7 @@ for (const nativeFirst of [true, false]) {
 }
 console.log('PASS: sidebar boundary/append zones and exactly-once processing in either native/HTML drop ordering')
 
-const compiled = await build({ entryPoints: ['src/utils/externalImport.ts'], bundle: true, platform: 'node', format: 'cjs', write: false, external: ['foo-webview-sdk'] })
+const compiled = await build({ entryPoints: ['src/utils/externalImport.ts'], bundle: true, platform: 'node', format: 'cjs', write: false, external: ['foo-webview-sdk', 'vue'] })
 const track = (name, subsong = 0) => ({ path: `C:\\Music\\${name}`, title: name, artist: 'Artist', album: 'Album', duration: 180, subsong })
 function fixture() {
   let lists = [{ name: 'Music', tracks: [track('A.flac'), track('B.flac'), track('C.flac')] }, { name: 'AirPlay', tracks: [] }, { name: 'Other', tracks: [track('Last.flac')] }]
@@ -47,19 +47,19 @@ function fixture() {
       clear: async index => { calls.push(['clear', lists[index].name]); lists[index].tracks = []; return { success: true } },
       addSequential: async (index, paths) => {
         calls.push(['resolve', paths.length])
-        const items = paths.flatMap(path => path.endsWith('.txt') ? [] : path.endsWith('.cue') ? [{ ...track('disc.cue', 0), path }, { ...track('disc.cue', 1), path }] : [{ ...track(path), path }])
+        const items = paths.flatMap(path => path.endsWith('.txt') ? [] : path.endsWith('.m3u') ? [track('real.flac'), track('lyrics.LRC'), track('directory.wav')] : path.endsWith('.cue') ? [{ ...track('disc.cue', 0), path }, { ...track('disc.cue', 1), path }] : [{ ...track(path), path }])
         lists[index].tracks.push(...items); return { success: true, addedCount: items.length }
       },
       addHandles: async (index, paths) => { lists[index].tracks.push(...paths.map(path => ({ ...track(path), path }))); return { success: true, addedCount: paths.length } },
       insertTracks: async (index, position, paths) => { calls.push(['insert', lists[index].name, position, [...paths]]); lists[index].tracks.splice(position, 0, ...paths.map(path => ({ ...track(path), path }))); return { success: true, addedCount: paths.length } },
     },
     queue: { get: async () => ({ items: [] }) },
-    file: { getInfo: async path => ({ exists: true, isDirectory: path.endsWith('folder.v2') }) },
+    file: { getInfo: async path => ({ exists: true, isDirectory: path.endsWith('folder.v2') || path.endsWith('directory.wav') }) },
   }
   const exports = { exports: {} }
   runInNewContext(compiled.outputFiles[0].text, { module: exports, exports: exports.exports, require: id => id === 'foo-webview-sdk' ? { ...sdk, __esModule: true, default: sdk } : require(id) })
   const importer = exports.exports.createExternalImporter({
-    owner: async () => 'owner', expand: async paths => { mutate?.(); return [...paths] },
+    owner: async () => 'owner', expand: async paths => { mutate?.(); return paths.flatMap(path => path.endsWith('folder.v2') ? [`${path}\\Song.flac`] : [path]) },
     tracks: async index => lists[index].tracks.map((item, sourceIndex) => ({ ...item, sourceIndex })),
     visible: () => visible,
     refresh: async () => { visible = info().filter(item => item.name !== 'AirPlay' && !item.name.includes('[foo-theme:')) },
@@ -138,3 +138,12 @@ assert.equal(exported.exports(20, 139).key, 'rendered-track-identity')
 hit = { closest: selector => selector === '[data-external-play-target]' ? {} : null }
 assert.equal(exported.exports(20, 700).kind, 'temporary')
 console.log('PASS: actual hit resolver uses original source indices for filtered rows and gives the bottom card its temporary-play semantics')
+{
+  const f = fixture()
+  await f.importer.importPaths(['C:\\Music\\mixed.m3u'], { kind: 'append', playlist: { index: 0, name: 'Music' } })
+  const inserted = f.calls.find(call => call[0] === 'insert')[3]
+  assert.equal(inserted.length, 1)
+  assert.ok(inserted[0].includes('real.flac'))
+  assert.ok(!inserted.some(path => /lrc|directory/i.test(path)))
+  console.log('PASS: descriptor-expanded lyrics and directory handles are rejected before insertion, even if the host parser returned them')
+}
