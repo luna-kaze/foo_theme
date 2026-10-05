@@ -33,6 +33,10 @@ const props = defineProps<{
   playbackWindowDeferred?: boolean
   fullscreen: boolean
   fullscreenProgress?: number
+  airplay?: boolean
+  remotePending?: boolean
+  remoteMessage?: string
+  remoteDirection?: number
   shuffleBusy: boolean
   shufflePending: boolean
   shuffleStaged: boolean
@@ -52,6 +56,8 @@ const emit = defineEmits<{
   focusState: [state: PlaybackFocusState]
   shuffle: []
   restoreOrder: []
+  next: []
+  previous: []
 }>()
 
 const mode = ref<'standard' | 'coverflow'>('standard')
@@ -208,6 +214,7 @@ function coverflowOffset(item: { index: number; track: DisplayTrack | null }) {
 }
 
 function publishFocusState() {
+  if (props.airplay) { emit('focusState', { active: false, id: null, request: 0, settled: true }); return }
   if (!props.open || mode.value !== 'coverflow') coverflowPerformance.setTier('inactive')
   else if (!railState.active && railState.zoom === 0) coverflowPerformance.setTier('near')
   if (mode.value === 'standard') {
@@ -316,13 +323,13 @@ watch([() => coverflowItems.value.map((item) => item.key).join('\u0000'), focusI
       const leaving = element.classList.contains('is-order-leaving')
       const removed = element.classList.contains('is-order-removed')
       const offset = Number(element.style.getPropertyValue('--cover-offset'))
-      const startTransform = oldPose?.transform || `${end.transform} translateX(${Math.sign(offset) * 110}px) translateZ(-180px) scale(.88)`
+      const startTransform = oldPose?.transform || `${end.transform} translateX(${props.airplay ? (props.remoteDirection ?? 0) * 110 : Math.sign(offset) * 110}px) translateZ(-180px) scale(.88)`
       const oldOffset = poses.get(element.dataset.coverKey!)?.offset ?? offset
       const endTransform = leaving ? `${startTransform} translateX(${removed ? 0 : Math.sign(oldOffset) * 160}px) translateY(${removed ? 64 : 0}px) translateZ(-140px) scale(${removed ? .82 : .94})` : end.transform
       orderAnimations.push(element.animate([
         { transform: startTransform, opacity: oldPose?.opacity ?? '0' },
         { transform: endTransform, opacity: leaving ? 0 : Number(end.opacity) },
-      ], { duration: removed ? 300 : 620, easing: 'cubic-bezier(.18,.82,.16,1)', fill: 'both' }))
+      ], { duration: props.airplay ? 420 : removed ? 300 : 620, easing: 'cubic-bezier(.18,.82,.16,1)', fill: 'both' }))
     }
   } catch {
     cancelOrderAnimation(); previousDeck = [...coverflowItems.value]; publishFocusState(); return
@@ -506,7 +513,7 @@ function beginStandardCoverChange(element: Element) {
     element.getAnimations?.().filter(animation => (animation as CSSAnimation).animationName === 'standard-cover-in').forEach(animation => {
       try { animation.finish() } catch { animation.cancel() }
     })
-    element.classList.remove('standard-cover-change-enter-active', 'standard-cover-change-enter-from', 'standard-cover-change-enter-to')
+    element.classList.remove('standard-cover-change-enter-active', 'standard-cover-change-enter-from', 'standard-cover-change-enter-to', 'airplay-cover-change-enter-active', 'airplay-cover-change-enter-from', 'airplay-cover-change-enter-to')
     finishStandardCoverChange(element)
   }, 750)
   publishFocusState()
@@ -556,6 +563,13 @@ function scheduleStandardCoverChange() {
     return
   }
   const generation = ++standardCoverGeneration
+  if (props.airplay) {
+    if (standardCoverTimer) clearTimeout(standardCoverTimer)
+    standardCoverTimer = null
+    standardCover.value = nextCover; pendingStandardCover.value = null
+    standardRenderKey.value += 1; standardCoverVisible.value = true; standardCoverEntering.value = false
+    publishFocusState(); return
+  }
   if (mode.value !== 'standard' || !props.open) {
     standardCover.value = nextCover
     pendingStandardCover.value = null
@@ -631,12 +645,14 @@ function cancelTonearm() {
 }
 
 function moveCoverflow(direction: number) {
+  if (props.airplay) { if (direction < 0) emit('previous'); else emit('next'); return }
   lastCoverflowPointer = { index: -1, key: '', track: null, time: 0, x: 0, y: 0 }
   if (props.playbackWindowDeferred) { railSource = 'wheel'; rail.aim(globalFocusIndex.value + direction); return }
   selectCoverflow(Math.min(coverflowItems.value.length - 1, Math.max(0, focusIndex.value + direction)))
 }
 
 function selectCoverflow(index: number) {
+  if (props.airplay) return
   const item = coverflowItems.value[index]
   if (item?.track && !item.idle) emit('browseTrack', item.track)
 }
@@ -644,6 +660,7 @@ function selectCoverflow(index: number) {
 function activateCoverflow(index: number) {
   const item = coverflowItems.value[index]
   if (!item || item.idle || !item.track) return
+  if (props.airplay) { if (item.current) emit('toggle'); return }
   if (item.current) emit('toggle')
   else emit('playTrack', item.track)
 }
@@ -739,6 +756,7 @@ async function setMode(nextMode: 'standard' | 'coverflow') {
 }
 
 function onCoverflowWheel(event: WheelEvent) {
+  if (props.airplay) return
   if (idleCoverflow.value || modeTransition.value || event.ctrlKey) return
   const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY
   if (!delta) return
@@ -855,20 +873,21 @@ onBeforeUnmount(() => {
           <button type="button" :class="{ active: mode === 'coverflow' }" aria-label="Coverflow" @pointerdown.stop @click.stop="setMode('coverflow')"><Layers3 :size="17" /><span>Coverflow</span></button>
         </div>
         <div class="immersive-toolbar__actions">
-          <button v-if="mode === 'coverflow'" class="immersive-tool" :disabled="shuffleBusy || !playbackTracks.length" aria-label="随机重排待播放曲目" @click="emit('shuffle')"><Shuffle :size="18" /><span>随机重排</span></button>
-          <button v-if="mode === 'coverflow'" class="immersive-tool" :disabled="shuffleBusy || !playbackTracks.length" aria-label="恢复待播放原序，保留人工编辑" title="恢复待播放原序，保留人工编辑；当前曲及播放历史不变" @click="emit('restoreOrder')"><RotateCcw :size="18" /><span>恢复原序</span></button>
+          <button v-if="mode === 'coverflow' && !airplay" class="immersive-tool" :disabled="shuffleBusy || !playbackTracks.length" aria-label="随机重排待播放曲目" @click="emit('shuffle')"><Shuffle :size="18" /><span>随机重排</span></button>
+          <button v-if="mode === 'coverflow' && !airplay" class="immersive-tool" :disabled="shuffleBusy || !playbackTracks.length" aria-label="恢复待播放原序，保留人工编辑" title="恢复待播放原序，保留人工编辑；当前曲及播放历史不变" @click="emit('restoreOrder')"><RotateCcw :size="18" /><span>恢复原序</span></button>
           <button v-if="mode === 'standard'" class="immersive-tool" :aria-label="lyricsVisible ? '隐藏歌词' : '显示歌词'" @click="lyricsVisible = !lyricsVisible">
             <EyeOff v-if="lyricsVisible" :size="18" /><Eye v-else :size="18" /><span>{{ lyricsVisible ? '隐藏歌词' : '显示歌词' }}</span>
           </button>
-          <button class="immersive-tool" :aria-label="track?.isFavourite ? '取消收藏' : '收藏当前歌曲'" @click="track && emit('favourite', track)">
+          <button v-if="!airplay" class="immersive-tool" :aria-label="track?.isFavourite ? '取消收藏' : '收藏当前歌曲'" @click="track && emit('favourite', track)">
             <Heart :size="18" :fill="track?.isFavourite ? 'currentColor' : 'none'" /><span>{{ track?.isFavourite ? '取消收藏' : '收藏' }}</span>
           </button>
         </div>
       </header>
+      <div v-if="airplay" class="airplay-live-status" role="status"><strong>AirPlay · 实时接收</strong><span>{{ remoteMessage || '播放与切歌由发送端控制 · 进度只读' }}</span></div>
 
       <div v-if="mode === 'standard'" key="standard" class="immersive-standard" :class="{ 'lyrics-hidden': !lyricsVisible }">
         <section class="vinyl-stage" :class="{ 'cover-forward': coverForward }">
-          <Transition name="standard-cover-change" @before-enter="beginStandardCoverChange" @after-enter="finishStandardCoverChange">
+          <Transition :name="airplay ? 'airplay-cover-change' : 'standard-cover-change'" @before-enter="beginStandardCoverChange" @after-enter="finishStandardCoverChange">
             <div v-if="standardCoverVisible" :key="standardRenderKey" class="album-sleeve" :class="{ interactive: !lyricsVisible, expanded: standardCover.expanded }" :role="lyricsVisible ? undefined : 'button'" :tabindex="lyricsVisible ? -1 : 0" :aria-label="lyricsVisible ? undefined : '切换封套位置'" @click="toggleCoverPosition" @keydown.enter="toggleCoverPosition">
               <ArtworkImage :src="standardCover.artwork" :alt="`${standardCover.album} 封面`" />
               <span class="album-sleeve__hint">{{ standardCover.expanded ? '收回封套' : '展开封套' }}</span>
@@ -887,7 +906,8 @@ onBeforeUnmount(() => {
               class="tonearm"
               :class="{ parked: playbackState !== 'playing' && !tonearmDragging, dragging: tonearmDragging, 'will-pause': tonearmWillPause }"
               :style="{ '--tonearm-angle': `${tonearmAngle}deg` }"
-              aria-label="拖动唱针调整进度，拖出唱片暂停"
+              :aria-label="airplay ? 'AirPlay 发送端播放进度，只读' : '拖动唱针调整进度，拖出唱片暂停'"
+              :disabled="airplay"
               @pointerdown.prevent="beginTonearm"
               @pointermove.prevent="updateTonearm"
               @pointerup.prevent="finishTonearm"
@@ -933,6 +953,7 @@ onBeforeUnmount(() => {
             :key="item.key"
             :data-cover-index="item.index"
             :data-cover-key="item.key"
+            :disabled="airplay && !item.current"
             class="coverflow-card"
             :class="{ active: !item.leaving && Math.abs(coverflowOffset(item)) < .01, current: item.current || item.idle, idle: item.idle, 'is-order-leaving': item.leaving, 'is-order-removed': item.removed }"
             :style="{ '--cover-offset': coverflowOffset(item), '--cover-distance': Math.abs(coverflowOffset(item)), '--cover-image': item.artwork ? `url(${item.artwork})` : 'none' }"
@@ -950,15 +971,15 @@ onBeforeUnmount(() => {
             <button v-for="index in railPoints" :key="index" class="coverflow__dot" :class="{ active: index === Math.round(railState.position) }" :style="{ '--point-offset': index - railState.position, '--point-distance': Math.abs(index - railState.position) }" :aria-label="`浏览第 ${index + 1} 首`" @pointerup.stop.prevent="railSource = 'wheel'; rail.aim(index)" />
           </div>
         </div>
-        <button v-if="!idleCoverflow" class="coverflow__arrow coverflow__arrow--left" :disabled="globalFocusIndex === 0" aria-label="上一张封面" @click="moveCoverflow(-1)"><ChevronLeft :size="22" /><span>上一张</span></button>
-        <button v-if="!idleCoverflow" class="coverflow__arrow coverflow__arrow--right" :disabled="globalFocusIndex >= playbackPlanIds.length - 1" aria-label="下一张封面" @click="moveCoverflow(1)"><ChevronRight :size="22" /><span>下一张</span></button>
+        <button v-if="airplay || !idleCoverflow" class="coverflow__arrow coverflow__arrow--left" :disabled="!airplay && globalFocusIndex === 0" :aria-label="airplay ? '发送端上一首' : '上一张封面'" @click="moveCoverflow(-1)"><ChevronLeft :size="22" /><span>{{ airplay ? '上一首' : '上一张' }}</span></button>
+        <button v-if="airplay || !idleCoverflow" class="coverflow__arrow coverflow__arrow--right" :disabled="!airplay && globalFocusIndex >= playbackPlanIds.length - 1" :aria-label="airplay ? '发送端下一首' : '下一张封面'" @click="moveCoverflow(1)"><ChevronRight :size="22" /><span>{{ airplay ? '下一首' : '下一张' }}</span></button>
         <div v-if="selectedCoverflow" class="coverflow__copy">
           <small v-if="shuffleSourceName" class="coverflow__shuffle-info">{{ shuffleSourceName }} · {{ shuffleStaged ? '最新编辑待提交，封面显示已提交计划' : shufflePending ? '计划待下一曲接管' : '播放工作集' }}</small>
           <p>{{ railState.distant ? `高速浏览 · 第 ${Math.round(railState.target) + 1} 首` : playbackPreviewPending && selectedCoverflow.key === playbackPreviewId ? '准备播放' : selectedCoverflow.idle ? (selectedCoverflow.track ? '未加入播放列表' : '当前没有播放') : selectedCoverflow.current ? '正在播放' : `播放列表第 ${(selectedCoverflow.track?.sourceIndex ?? coverflowIndex) + 1} 首` }}</p>
           <h1>{{ selectedCoverflow.track?.title || standardCover.album || '当前没有播放' }}</h1>
           <span v-if="selectedCoverflow.track">{{ selectedCoverflow.track.artist }} · {{ selectedCoverflow.track.album }}</span>
           <span v-else>最后播放的专辑封面会保留在这里</span>
-          <small>{{ selectedCoverflow.idle ? '播放列表开始后会在此展开封面流' : selectedCoverflow.current ? `双击封面${isPlaying ? '暂停' : '播放'}` : '单击选择，双击播放' }}</small>
+          <small>{{ airplay ? '历史封面仅展示 · 双击当前封面播放 / 暂停' : selectedCoverflow.idle ? '播放列表开始后会在此展开封面流' : selectedCoverflow.current ? `双击封面${isPlaying ? '暂停' : '播放'}` : '单击选择，双击播放' }}</small>
         </div>
       </section>
 

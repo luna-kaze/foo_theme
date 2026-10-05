@@ -1175,6 +1175,12 @@ function onDrop(event: DragEvent) {
 
     <NowPlayingPanel
       :open="state.nowPlayingOpen"
+      :airplay="player.airplayState.active"
+      :remote-pending="player.airplayState.pending"
+      :remote-message="player.airplayState.message"
+      :remote-direction="player.airplayState.direction"
+      @next="player.next"
+      @previous="player.previous"
       :track="state.currentTrack"
       :artwork="state.currentArtwork"
       :is-playing="state.isPlaying"
@@ -1244,6 +1250,8 @@ function onDrop(event: DragEvent) {
       :shuffle-pending="state.shufflePending"
       :shuffle-staged="state.shuffleStaged"
       :now-playing-open="state.nowPlayingOpen"
+      :airplay="player.airplayState.active"
+      :remote-message="player.airplayState.message"
       :fullscreen="state.isFullscreen"
       :queue-open="queueOpen"
       @toggle="player.togglePlayback"

@@ -29,6 +29,7 @@ import type {
 } from '../types/music'
 import { albumKey, isSameTrack, localFilePath, playablePath, trackKey, trackSubsong } from '../utils/track'
 import { findNativeMenuCommand, findNativeTools, type NativeMenuNode } from '../utils/nativeMenu'
+import { airplayPath, createAirplayPlayback } from '../utils/airplayPlayback'
 
 const state = reactive<PlayerUiState>({
   connected: false,
@@ -139,6 +140,7 @@ let namedAlbumArtwork = new Map<string, string | null>()
 const playbackWorkspace = createPlaybackWorkspace({
   connected: () => state.connected, owner: getOwnerId, tracks: getAllPlaylistTracks, notify,
   publish: () => {
+    if (airplay.state.active) return
     state.shuffleBusy = playbackWorkspace.status.busy
     if (playbackWorkspace.status.ready) state.playbackOrder = playbackWorkspace.status.mode
     state.shufflePending = playbackWorkspace.status.pending
@@ -148,7 +150,56 @@ const playbackWorkspace = createPlaybackWorkspace({
   },
 })
 
+const airplay = createAirplayPlayback({
+  enter: async () => {
+    workspaceProjectionGeneration += 1; playbackSequenceGeneration += 1; queueGeneration += 1
+    settledSkip.cancel(); playbackSelectionVersion += 1
+    state.playbackPreviewId = null; state.playbackPreviewPending = false
+    state.playbackBrowseIndex = null; state.playbackBrowseTrack = null; state.playbackWindowDeferred = false
+    state.shufflePending = state.shuffleStaged = false; state.shuffleSourceName = ''; state.canSeek = false
+    state.shuffleBusy = false
+    state.queue = []
+    return playbackWorkspace.suspend()
+  },
+  read: async () => {
+    const [track, position, formatted] = await Promise.all([
+      fb.player.getCurrentTrack(), fb.player.getPosition(),
+      (fb.titleformat?.eval('[%path%]\u001f[%title%]\u001f[%artist%]\u001f[%album%]') ?? Promise.resolve(null)).catch(() => null),
+    ])
+    if (track && position.path && airplayPath(track) && airplayPath(track) !== airplayPath({ path: position.path })) return { track: null }
+    const normalized = track ? normalizeTrack(track) : null
+    const fields = formatted?.success ? formatted.result.split('\u001f') : []
+    if (normalized && fields.length === 4 && airplayPath(normalized) && airplayPath(normalized) === airplayPath({ path: fields[0] })) {
+      if (fields[1]) normalized.title = fields[1]
+      normalized.artist = fields[2] ?? ''; normalized.album = fields[3] ?? ''
+    }
+    return { track: normalized, position: position.position, duration: position.duration && position.duration > 0 ? position.duration : track?.duration }
+  },
+  artwork: async path => {
+    const result = await fb.artwork.getForTrack(path, 'front', { maxSize: 1000 })
+    return result.available ? result.dataUrl ?? result.url ?? '' : ''
+  },
+  leave: async track => { await playbackWorkspace.resume(); await syncCurrentTrack(track); await loadPlaybackSequence(true) },
+  publish: (track, artwork, history, position) => {
+    state.currentTrack = track; state.currentArtwork = artwork; state.duration = track.duration
+    state.canSeek = false; state.lyrics = []; state.lyricsSynced = false
+    if (position != null) state.position = position
+    state.playbackTracks = history.map((item, index) => ({ ...item, sourceIndex: index }))
+    state.playbackPlanIds = state.playbackTracks.map(item => item.playbackId!)
+    state.playbackTrackIndex = history.length - 1
+    state.shufflePending = state.shuffleStaged = false; state.shuffleSourceName = ''
+  },
+  command: async direction => {
+    const actual = await fb.player.getCurrentTrack()
+    if (!airplay.state.active || actual && !airplayPath(actual)) return false
+    if (!actual && !(airplay.state.pending && state.playbackState === 'stopped')) return false
+    return Boolean(await runAction(() => direction > 0 ? fb.player.next() : fb.player.prev()))
+  },
+  notify: message => notify(message, 'error'),
+})
+
 async function syncWorkspaceProjection() {
+  if (airplay.state.active) return
   const generation = ++workspaceProjectionGeneration
   await playbackWorkspace.sync()
   if (state.connected) {
@@ -186,6 +237,7 @@ async function syncWorkspaceProjection() {
 
 let workspaceAdoption: Promise<boolean> | null = null
 async function ensurePlaybackWorkspace() {
+  if (airplay.state.active || airplayPath(state.currentTrack)) return false
   if (workspaceAdoption) return workspaceAdoption
   if (playbackWorkspace.status.ready) return true
   workspaceAdoption = (async () => {
@@ -285,6 +337,7 @@ function previewSkip(direction: number) {
 function setPlaybackFocusState(focus: PlaybackFocusState) { playbackFocusGate.report(focus) }
 
 function beginPlaybackBrowse() {
+  if (airplay.state.active) return
   settledSkip.cancel(false)
   playbackSelectionVersion += 1
   state.playbackPreviewPending = false
@@ -304,6 +357,7 @@ function lookupWorkspaceTrack(track: DisplayTrack) {
 }
 
 async function browsePlaybackTrack(track: DisplayTrack) {
+  if (airplay.state.active || airplayPath(track)) return
   settledSkip.cancel(false)
   playbackSelectionVersion += 1
   const version = playbackSelectionVersion
@@ -321,6 +375,7 @@ async function browsePlaybackTrack(track: DisplayTrack) {
 }
 
 function browsePlaybackPosition(index: number, distant = false) {
+  if (airplay.state.active) return
   const snapshot = playbackWorkspace.projection(undefined, true)
   if (!snapshot) return
   const selected = Math.max(0, Math.min(snapshot.order.length - 1, Math.round(index)))
@@ -702,6 +757,7 @@ function isThemeInternalPlaylist(playlist: PlaylistInfo, ownerId: string) {
 }
 
 async function loadQueue() {
+  if (airplay.state.active) return
   const generation = ++queueGeneration
   const result = await fb.queue.get()
   const artworkByAlbum = new Map(state.albums.map((album) => [albumKey(album), album.artworkUrl]))
@@ -783,6 +839,7 @@ function setPlaybackWindow(tracks: DisplayTrack[], currentIndex: number, playlis
 }
 
 async function loadPlaybackSequence(force = false) {
+  if (airplay.state.active) return
   const generation = ++playbackSequenceGeneration
   const [playing, current] = await Promise.all([fb.player.getPlayingPlaylist(), fb.player.getCurrentTrackIndex(true)])
   if (generation !== playbackSequenceGeneration) return
@@ -860,6 +917,13 @@ async function syncCurrentTrack(track?: TrackInfo | PlaybackTrackChangedPayload 
     }
   }
   if (request !== mediaRequest) return
+  if (airplayPath(nextTrack)) {
+    await airplay.accept({ track: normalizeTrack(nextTrack!), position: state.position })
+    airplay.reconcile()
+    return
+  }
+  if (airplay.state.active) { airplay.stop(); await playbackWorkspace.resume() }
+  if (request !== mediaRequest) return
   const normalized = nextTrack ? attachArtwork([normalizeTrack(nextTrack)])[0] : null
   state.currentTrack = normalized
   state.duration = state.currentTrack?.duration ?? 0
@@ -929,6 +993,13 @@ function bindEvents() {
     }),
     fb.on('playback:stopped', (event) => {
       if (event.reason === 'starting_another') return
+      if (airplay.state.active && airplay.state.pending && event.reason !== 'user') {
+        state.isPlaying = false; state.playbackState = 'stopped'; airplay.reconcile(); return
+      }
+      if (airplay.state.active) {
+        airplay.stop()
+        state.playbackTracks = []; state.playbackPlanIds = []; state.playbackTrackIndex = -1; state.playingPlaylistIndex = -1
+      }
       if (state.playbackPreviewPending && event.reason === 'unknown') return
       state.playbackState = 'stopped'
       state.isPlaying = false
@@ -943,6 +1014,7 @@ function bindEvents() {
     }),
     fb.on('playback:timeHighRes', (event) => {
       state.position = event.position
+      airplay.observePosition(event.position)
     }),
     fb.on('playback:seeked', (event) => {
       state.position = event.position
@@ -996,6 +1068,7 @@ function bindEvents() {
     }),
     fb.on('playback:edited', (track) => refreshSafely(() => syncCurrentTrack(track))),
     fb.on('playback:dynamicInfoTrack', (event) => {
+      if (airplay.state.active) { airplay.reconcile(); return }
       if (!state.currentTrack) return
       if (event.artist != null) state.currentTrack.artist = event.artist
       if (event.title != null) state.currentTrack.title = event.title
@@ -1564,6 +1637,7 @@ async function loadRadio(pushHistory = true) {
 }
 
 async function playTrack(track: DisplayTrack, index?: number) {
+  if (airplayPath(track)) return
   settledSkip.cancel()
   if (!track) return
   if (isSameTrack(track, state.currentTrack) && state.playbackState !== 'stopped') {
@@ -1630,6 +1704,7 @@ async function setAlphabetIndexView(enabled: boolean) {
 }
 
 async function playGeneratedCollection(tracks: DisplayTrack[], playIndex = 0, random = false, message?: string) {
+  if (tracks.some(track => Boolean(airplayPath(track)))) return
   settledSkip.cancel()
   const requestedIndex = Number.isInteger(playIndex) ? playIndex : 0
   const entries = tracks.map((track, originalIndex) => ({ originalIndex, path: playablePath(track) })).filter((item) => item.path)
@@ -1962,6 +2037,7 @@ async function togglePlayback() {
 }
 
 async function next() {
+  if (airplay.state.active || airplayPath(state.currentTrack)) { await airplay.remote(1); return }
   if (!playbackWorkspace.status.ready) await ensurePlaybackWorkspace()
   const pending = previewSkip(1)
   if (pending) { await pending; return }
@@ -1975,6 +2051,7 @@ async function next() {
 }
 
 async function previous() {
+  if (airplay.state.active || airplayPath(state.currentTrack)) { await airplay.remote(-1); return }
   if (!playbackWorkspace.status.ready) await ensurePlaybackWorkspace()
   const pending = previewSkip(-1)
   if (pending) { await pending; return }
@@ -1995,6 +2072,7 @@ async function previous() {
 }
 
 async function seek(position: number) {
+  if (airplay.state.active || airplayPath(state.currentTrack)) return false
   settledSkip.cancel(state.playbackPreviewPending)
   if (!state.canSeek || !Number.isFinite(position)) return false
   const previous = state.position
@@ -2023,13 +2101,19 @@ async function seekAndPlay(position: number) {
 
 async function syncPlaybackCapabilities() {
   if (!state.connected) return
+  const key = trackKey(state.currentTrack)
   const playback = await fb.player.getState()
-  state.canSeek = playback.canSeek
+  if (key !== trackKey(state.currentTrack)) return
+  state.canSeek = !airplay.state.active && !airplayPath(state.currentTrack) && playback.canSeek
   state.playbackState = playback.state
   state.isPlaying = playback.state === 'playing'
 }
 
 async function playPlaybackTrack(track: DisplayTrack) {
+  if (airplayPath(track)) {
+    if (airplay.state.active && airplayPath(track) === airplay.state.path) await togglePlayback()
+    return
+  }
   let target = lookupWorkspaceTrack(track)
   if (!target) {
     settledSkip.cancel()
@@ -2080,6 +2164,7 @@ function currentPlaybackMode(): PlaybackMode {
 }
 
 async function cyclePlaybackOrder() {
+  if (airplay.state.active) { notify('AirPlay 播放顺序由发送端控制。', 'info'); return }
   const mode = ((currentPlaybackMode() + 1) % 3) as PlaybackMode
   await ensurePlaybackWorkspace()
   if (!await playbackWorkspace.setMode(mode)) return
@@ -2089,6 +2174,7 @@ async function cyclePlaybackOrder() {
 }
 
 async function shufflePlaybackPlan() {
+  if (airplay.state.active) return
   if (!await ensurePlaybackWorkspace()) { notify('请先选择曲目建立播放工作集。', 'info'); return }
   if (!await playbackWorkspace.shuffle()) return
   await refreshWorkspace()
@@ -2096,6 +2182,7 @@ async function shufflePlaybackPlan() {
 }
 
 async function restorePlaybackPlan() {
+  if (airplay.state.active) return
   if (!await ensurePlaybackWorkspace()) return
   if (!await playbackWorkspace.restoreOrder()) return
   await refreshWorkspace()
@@ -2138,6 +2225,7 @@ async function addToQueue(track: DisplayTrack) {
 }
 
 async function addTracksToQueue(tracks: DisplayTrack[]) {
+  if (airplay.state.active) { notify('AirPlay 队列由发送端管理，请切回本地播放后编辑待播曲目。', 'info'); return }
   if (!tracks.length) return
   const success = await ensurePlaybackWorkspace() ? await playbackWorkspace.add(tracks) : await playbackWorkspace.seed(tracks)
   if (!success) return
@@ -2274,6 +2362,7 @@ async function addToPlaylist(track: DisplayTrack, playlistIndex: number) {
   }
 
 async function playNext(track: DisplayTrack) {
+  if (airplay.state.active) { notify('AirPlay 下一首由发送端控制，不能插入本地曲目。', 'info'); return }
   const success = await ensurePlaybackWorkspace() ? await playbackWorkspace.add([track], true) : await playbackWorkspace.seed([track])
   if (!success) return
   await refreshWorkspace()
@@ -3229,6 +3318,7 @@ async function closeNowPlaying() {
 }
 
 function dispose() {
+  airplay.dispose()
   settledSkip.cancel()
   lifecycleGeneration += 1
   routeGeneration += 1
@@ -3290,6 +3380,7 @@ export function useFoobar() {
 
   return {
     state,
+    airplayState: airplay.state,
     routeNavigation,
     routeReady,
     filteredAlbums,

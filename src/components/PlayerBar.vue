@@ -21,6 +21,8 @@ const props = defineProps<{
   shuffleStaged: boolean
   nowPlayingOpen: boolean
   fullscreen: boolean
+  airplay?: boolean
+  remoteMessage?: string
   queueOpen: boolean
 }>()
 
@@ -64,19 +66,19 @@ const emit = defineEmits<{
       <ArtworkImage :src="artwork || track?.artworkUrl" :alt="`${track?.album ?? '当前曲目'} 封面`" />
       <span class="player-track__copy">
         <strong>{{ track?.title || '当前没有播放' }}</strong>
-        <small>{{ track?.artist || '从音乐库中选择一首曲目' }}</small>
+        <small>{{ airplay ? `AirPlay · ${remoteMessage || track?.artist || '实时音频'}` : track?.artist || '从音乐库中选择一首曲目' }}</small>
       </span>
       <Mic2 :size="15" class="player-track__expand" />
     </button>
 
     <div class="transport">
       <div class="transport__buttons">
-        <button aria-label="上一首" @click="emit('previous')"><SkipBack :size="18" fill="currentColor" /></button>
+        <button :aria-label="airplay ? 'AirPlay 发送端上一首' : '上一首'" @click="emit('previous')"><SkipBack :size="18" fill="currentColor" /></button>
         <button class="transport__play" :aria-label="isPlaying ? '暂停' : '播放'" @click="emit('toggle')">
           <Pause v-if="isPlaying" :size="20" fill="currentColor" />
           <Play v-else :size="20" fill="currentColor" />
         </button>
-        <button aria-label="下一首" @click="emit('next')"><SkipForward :size="18" fill="currentColor" /></button>
+        <button :aria-label="airplay ? 'AirPlay 发送端下一首' : '下一首'" @click="emit('next')"><SkipForward :size="18" fill="currentColor" /></button>
       </div>
       <div class="player-progress">
         <span>{{ formatTime(shownPosition) }}</span>
@@ -98,7 +100,7 @@ const emit = defineEmits<{
     </div>
 
     <div class="player-actions">
-      <button :class="{ active: playbackOrder !== 0 }" :disabled="shuffleBusy" :aria-label="modeTitle" :title="modeTitle" @click="emit('order')">
+      <button :class="{ active: playbackOrder !== 0 }" :disabled="shuffleBusy || airplay" :aria-label="airplay ? '播放顺序由 AirPlay 发送端控制' : modeTitle" :title="airplay ? '播放顺序由 AirPlay 发送端控制' : modeTitle" @click="emit('order')">
         <Repeat1 v-if="playbackOrder === 2" :size="17" />
         <Repeat v-else :size="17" />
       </button>

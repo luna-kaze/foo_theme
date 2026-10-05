@@ -383,6 +383,23 @@ props.lyricsSynced = false; state.seekLyric(props.lyrics[2])
 props.lyricsSynced = true; props.canSeek = false; state.seekLyric(props.lyrics[2])
 assert.equal(events.filter(event => event.name === 'seek').length, lyricSeeks)
 console.log('PASS: Standard lyric click seeks to its exact timestamp and follows the target; unsynced, invalid and unseekable lyrics never issue a seek')
+props.airplay = true; props.canSeek = false
+const localBrowse = events.filter(event => event.name === 'browseTrack' || event.name === 'browsePosition').length
+state.mode.value = 'coverflow'
+state.moveCoverflow(1); state.moveCoverflow(-1)
+state.selectCoverflow(0)
+state.onCoverflowWheel({ deltaY: 900, deltaX: 0, deltaMode: 0, ctrlKey: false })
+assert.deepEqual(events.filter(event => event.name === 'next' || event.name === 'previous').slice(-2).map(event => event.name), ['next', 'previous'])
+assert.equal(events.filter(event => event.name === 'browseTrack' || event.name === 'browsePosition').length, localBrowse)
+state.publishFocusState()
+assert.equal(events.filter(event => event.name === 'focusState').at(-1).value.active, false, 'remote playback is never gated by the local preview animation')
+state.mode.value = 'standard'; await flush()
+props.playbackTracks = [{ ...tracks[0], path: 'airplay://live/200', playbackId: 'airplay:airplay://live/200' }]
+props.playbackTrackIndex = 0; props.playbackPreviewPending = false
+await flush()
+assert.equal(state.standardCover.value.key, 'airplay:airplay://live/200', 'confirmed live snapshots bypass the local 350ms input wait')
+assert.equal(state.pendingStandardCover.value, null)
+console.log('PASS: AirPlay arrows emit remote actions, history/wheel cannot browse locally, focus gates are inactive and Standard updates only from confirmed snapshots')
 hooks.forEach(fn => fn()); scope.stop()
 
 const railScript = compileScript(parse(readFileSync('src/components/AlphabetIndexRail.vue', 'utf8')).descriptor, { id: 'rail-test' })

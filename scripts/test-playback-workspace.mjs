@@ -18,6 +18,7 @@ function fixture(random = Math.random) {
     config: { get: async key => ({ value: preferences.get(key) }), set: async (key, value) => { preferences.set(key, structuredClone(value)); return { success: true } } },
     player: {
       getState: async () => ({ state: playback.state }),
+      getCurrentTrack: async () => lists[playing]?.tracks[current] ?? null,
       getPlayingPlaylist: async () => ({ playlist: hiddenLocation ? -1 : playing }),
       getCurrentTrackIndex: async () => ({ index: hiddenLocation ? -1 : current }),
       getStopAfterCurrent: async () => ({ enabled: stopAfter }),
@@ -77,6 +78,35 @@ function fixture(random = Math.random) {
     release: reference => { queue.splice(queue.indexOf(reference), 1) },
     order: () => workspace.projection(current), editor: () => workspace.projection(current, true),
   }
+}
+
+{
+  const f = fixture(), w = f.workspace
+  await w.start(source, 1, 'Source')
+  await w.add([source[5]])
+  const ids = f.order().order.map(track => track.playbackId)
+  const local = f.live()
+  const foreign = { playlist: 0, playlistItem: 0 }; f.queue.push(foreign)
+  f.lists.push({ name: 'AirPlay', tracks: [{ ...source[0], path: 'airplay://live/1' }] })
+  await f.sdk.playlist.playTrack(f.lists.length - 1, 0)
+  const copyCount = f.calls.filter(call => call[0] === 'clear').length
+  assert.equal(await w.suspend(), true)
+  assert.equal(w.status.suspended, true)
+  assert.equal(w.status.ready, false)
+  assert.deepEqual(f.queue, [foreign], 'only the theme scheduling reference is withdrawn')
+  await w.adopt(source, 0, 'Source')
+  assert.equal(w.status.suspended, true, 'late background adoption cannot replace the plan after AirPlay has taken over')
+  await w.sync()
+  assert.equal(f.calls.filter(call => call[0] === 'clear').length, copyCount)
+  const restored = f.create()
+  await restored.restore()
+  assert.equal(restored.status.suspended, true, 'theme reload during a live AirPlay stream retains the suspended local plan')
+  await f.sdk.playlist.playTrack(local.playing, local.current)
+  assert.equal(await restored.resume(), true)
+  assert.equal(restored.status.suspended, false)
+  assert.deepEqual([...restored.projection(local.current).order.map(track => track.playbackId)], [...ids])
+  assert.equal(f.queue.length, 2, 'returning to the original local plan restores its theme reference')
+  console.log('PASS: AirPlay suspension preserves local plans and foreign queue items; resume restores only the owned scheduler')
 }
 
 {

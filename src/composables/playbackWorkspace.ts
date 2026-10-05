@@ -3,6 +3,7 @@ import fb from 'foo-webview-sdk'
 import type { DisplayTrack } from '../types/music'
 import { playablePath, trackKey } from '../utils/track'
 import { shuffleIndices } from '../utils/shuffleOrder'
+import { airplayPath } from '../utils/airplayPlayback'
 
 export type PlaybackMode = 0 | 1 | 2
 type Buffer = { name: string; index: number; tracks: DisplayTrack[] }
@@ -17,7 +18,9 @@ type Dependencies = {
 }
 
 export function createPlaybackWorkspace(deps: Dependencies) {
-  const status = reactive({ ready: false, mode: 0 as PlaybackMode, busy: false, pending: false, staged: false, revision: 0, sourceName: '' })
+  const status = reactive({ ready: false, suspended: false, mode: 0 as PlaybackMode, busy: false, pending: false, staged: false, revision: 0, sourceName: '' })
+  let suspendedBridge: Bridge | null = null
+  let suspendedStop = false
   let actual: Buffer | null = null
   let planned: Buffer | null = null
   let bridge: Bridge | null = null
@@ -75,6 +78,7 @@ export function createPlaybackWorkspace(deps: Dependencies) {
     try {
       await fb.config.set(key, {
         baselineVersion: 2,
+        suspended: status.suspended, suspendedBridge, suspendedStop, actualPosition,
         mode: status.mode, sourceName: status.sourceName, actual: actual.name, planned: planned?.name ?? '', bridge, ownedStop,
         seed: actualPosition < 0 && !planned && bridge?.name === actual.name,
         actualIds: actual.tracks.map((track) => track.playbackId), actualKeys: actual.tracks.map(trackKey),
@@ -258,6 +262,7 @@ export function createPlaybackWorkspace(deps: Dependencies) {
     return next.restoreOrder ? restoreRemaining(next.base, order, history.length - 1) : order
   }
   async function syncInternal() {
+    if (status.suspended) return
     if (!actual) return
     const live = await location()
     // Decoder handover can briefly expose no playlist/item. It is not evidence
@@ -285,6 +290,7 @@ export function createPlaybackWorkspace(deps: Dependencies) {
     if (planned && deps.connected()) planned.index = await locate(planned.name)
   }
   async function startInternal(tracks: DisplayTrack[], index: number, sourceName: string, mode: PlaybackMode, random = false) {
+    status.suspended = false; suspendedBridge = null; suspendedStop = false
     if (!tracks.length || !tracks[index]) throw new Error('没有可播放的曲目。')
     const entries = identify(tracks)
     const chosen = entries[index]
@@ -408,11 +414,33 @@ export function createPlaybackWorkspace(deps: Dependencies) {
     setMode: (mode: PlaybackMode) => transaction(() => setModeInternal(mode)),
     start: (tracks: DisplayTrack[], index: number, name: string, mode: PlaybackMode = status.mode, random = false) => transaction(() => startInternal(tracks, index, name, mode, random)),
     sync: () => transaction(syncInternal),
+    suspend: () => {
+      const first = !status.suspended
+      status.suspended = true; status.ready = false
+      return transaction(async () => {
+        if (first) { suspendedBridge = bridge; suspendedStop = ownedStop }
+        await removeBridge(); await stopAtBoundary(false)
+        await save()
+      })
+    },
+    resume: () => transaction(async () => {
+      if (!status.suspended) return
+      const live = await location()
+      status.suspended = false
+      if (live.name === actual?.name || live.name === planned?.name) {
+        await restoreScheduling(planned, suspendedBridge)
+        await stopAtBoundary(suspendedStop)
+      }
+      suspendedBridge = null; suspendedStop = false
+      await syncInternal()
+    }),
     projection,
     locationName: () => actual?.name ?? '',
     bridge: () => bridge,
     contains: (name: string) => name === actual?.name || name === planned?.name,
     adopt: (tracks: DisplayTrack[], index: number, name: string, sourceName = name, demoIndex = 0, mode: PlaybackMode = status.mode) => transaction(async () => {
+      if (status.suspended) return
+      status.suspended = false; suspendedBridge = null; suspendedStop = false
       actual = { name, index, tracks: identify(tracks) }
       canonical = actual.tracks; planned = null; deferred = null; bridge = null
       status.ready = true; status.sourceName = sourceName; status.mode = mode
@@ -420,6 +448,7 @@ export function createPlaybackWorkspace(deps: Dependencies) {
       publish()
     }),
     seed: (tracks: DisplayTrack[]) => transaction(async () => {
+      if (status.suspended) throw new Error('实时流播放期间不能登记本地待播曲目。')
       const entries = identify(tracks).map((track) => ({ ...track, playbackQueued: true }))
       const target = deps.connected() ? await buffer('A') : { name: 'demo:A', index: -1, tracks: [] }
       await fill(target, entries)
@@ -445,6 +474,7 @@ export function createPlaybackWorkspace(deps: Dependencies) {
     }),
     clear: () => edit((order, index) => order.slice(0, index + 1)),
     next: () => transaction(async () => {
+      if (status.suspended) return
       await syncInternal()
       if (!actual) return
       if (deps.connected()) {
@@ -471,6 +501,7 @@ export function createPlaybackWorkspace(deps: Dependencies) {
     }),
     demoIndex: () => activeDemoIndex,
     jump: (track: DisplayTrack, isCurrent: () => boolean = () => true) => transaction(async () => {
+      if (status.suspended) return
       if (!actual) return
       await syncInternal()
       if (deferred) throw new Error('最新计划正在等待宿主释放缓冲，请稍后播放该条目。')
@@ -513,7 +544,7 @@ export function createPlaybackWorkspace(deps: Dependencies) {
     restore: async () => {
       if (!deps.connected()) return
       try {
-        const saved = (await fb.config.get(key)).value as { baselineVersion?: number; mode: PlaybackMode; sourceName: string; actual: string; planned: string; bridge: Bridge | null; ownedStop?: boolean; seed?: boolean; actualIds: string[]; actualKeys: string[]; plannedIds: string[]; plannedKeys: string[]; queuedIds?: string[]; base: DisplayTrack[]; deferred?: typeof deferred } | null
+        const saved = (await fb.config.get(key)).value as { baselineVersion?: number; suspended?: boolean; suspendedBridge?: Bridge | null; suspendedStop?: boolean; actualPosition?: number; mode: PlaybackMode; sourceName: string; actual: string; planned: string; bridge: Bridge | null; ownedStop?: boolean; seed?: boolean; actualIds: string[]; actualKeys: string[]; plannedIds: string[]; plannedKeys: string[]; queuedIds?: string[]; base: DisplayTrack[]; deferred?: typeof deferred } | null
         if (!saved?.actual || ![0, 1, 2, 3].includes(saved.mode)) return
         const suffix = `[foo-theme:${await deps.owner()}]`
         const ownedNames = [`正在播放 A ${suffix}`, `正在播放 B ${suffix}`]
@@ -522,7 +553,8 @@ export function createPlaybackWorkspace(deps: Dependencies) {
         const savedBridgeIndex = saved.bridge && ownedNames.includes(saved.bridge.name) ? await locate(saved.bridge.name) : -1
         const queuedSeed = saved.seed && !saved.planned && saved.bridge?.name === saved.actual && queue.items.some((item) => item.playlist === savedBridgeIndex && item.playlistItem === saved.bridge!.item)
         const active = playback.state !== 'stopped' && live.index >= 0 && (live.name === saved.actual || live.name === saved.planned)
-        if (!active && !queuedSeed) {
+        const liveSuspension = Boolean(saved.suspended && airplayPath(await fb.player.getCurrentTrack()))
+        if (!active && !queuedSeed && !liveSuspension) {
           if (saved.bridge && savedBridgeIndex >= 0) { bridge = saved.bridge; await removeBridge() }
           ownedStop = Boolean(saved.ownedStop)
           await stopAtBoundary(false)
@@ -561,6 +593,15 @@ export function createPlaybackWorkspace(deps: Dependencies) {
         bridge = candidate && target?.tracks[candidate.item] && currentQueue.items.some((item) => item.playlist === target.index && item.playlistItem === candidate.item) ? candidate : null
         ownedStop = Boolean(saved.ownedStop)
         status.mode = Number(saved.mode) === 3 ? 0 : saved.mode; status.sourceName = saved.sourceName; status.ready = true
+        if (liveSuspension) {
+          status.suspended = true; status.ready = false
+          actualPosition = saved.actualPosition ?? -1
+          const suspended = saved.suspendedBridge
+          const buffer = suspended && (suspended.name === actual.name ? actual : suspended.name === planned?.name ? planned : null)
+          suspendedBridge = suspended && buffer?.tracks[suspended.item] ? suspended : null
+          suspendedStop = Boolean(saved.suspendedStop)
+          bridge = null; ownedStop = false
+        }
         if (deferred) deferred.mode = status.mode
         await syncInternal(); publish(); await save()
       } catch { /* Invalid saved data leaves native playback untouched. */ }

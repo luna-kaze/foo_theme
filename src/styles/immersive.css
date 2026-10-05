@@ -39,6 +39,12 @@
 .immersive-toolbar { position: absolute; top: calc(18px + var(--immersive-p) * 10px); left: calc(22px + var(--immersive-p) * 14px); right: calc(22px + var(--immersive-p) * 14px); display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr); align-items: center; pointer-events: none; -webkit-app-region: no-drag; z-index: 20; }
 .immersive-toolbar > .immersive-tool { justify-self: start; }
 .immersive-toolbar button { pointer-events: auto; }
+.airplay-live-status { position: absolute; top: calc(74px + var(--immersive-p) * 10px); left: 50%; display: flex; align-items: center; gap: 10px; max-width: 75%; color: rgba(255,255,255,.66); font-size: 10px; transform: translateX(-50%); pointer-events: none; z-index: 21; }
+.airplay-live-status strong { flex-shrink: 0; color: rgba(255,255,255,.88); }
+.airplay-live-status span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.airplay-cover-change-enter-active, .airplay-cover-change-leave-active { transition: opacity 400ms ease; }
+.airplay-cover-change-enter-from, .airplay-cover-change-leave-to { opacity: 0; }
+@media (prefers-reduced-motion: reduce) { .airplay-cover-change-enter-active, .airplay-cover-change-leave-active { transition: none; } }
 .immersive-toolbar__actions { display: flex; justify-self: end; gap: 7px; pointer-events: auto; }
 .immersive-tool, .immersive-mode-switch button, .coverflow__arrow { position: relative; display: grid; width: 38px; height: 38px; place-items: center; color: rgba(255,255,255,.68); background: rgba(24,24,28,.48); border: 1px solid rgba(255,255,255,.08); border-radius: 11px; box-shadow: 0 8px 30px rgba(0,0,0,.16); backdrop-filter: blur(18px); }
 .immersive-tool:hover, .immersive-mode-switch button:hover, .immersive-mode-switch button.active, .coverflow__arrow:hover:not(:disabled) { color: white; background: rgba(255,255,255,.12); }
