@@ -37,6 +37,7 @@ const props = defineProps<{
   remotePending?: boolean
   remoteMessage?: string
   artworkRevision?: number
+  airplayArtworkPending?: boolean
   shuffleBusy: boolean
   shufflePending: boolean
   shuffleStaged: boolean
@@ -96,6 +97,7 @@ let standardCoverTimer: ReturnType<typeof setTimeout> | null = null
 let standardCoverLeaveDeadline = 0
 let standardCoverGeneration = 0
 let standardCoverLastChangeAt = 0
+let airplayCoverWaitDeadline = 0
 const standardCoverLeaveMs = 400
 const standardCoverGapMs = 140
 const standardCoverIdleMs = 350
@@ -310,7 +312,7 @@ watch([() => coverflowItems.value.map((item) => item.key).join('\u0000'), focusI
   // The rendered deck is windowed. A shuffled card outside that window is
   // leaving the viewport, not deleted from the committed plan.
   const committedKeys = new Set(props.playbackPlanIds)
-  outgoingCovers.value = old.filter((item, index, all) => !remapped.has(item.key) && poses.has(item.key) && all.findIndex((other) => other.key === item.key) === index).map((item) => ({ ...item, current: false, index: coverflowIndex.value + poses.get(item.key)!.offset, leaving: true, removed: !committedKeys.has(item.key) }))
+  outgoingCovers.value = old.filter((item, index, all) => (!props.airplay || Boolean(item.artwork)) && !remapped.has(item.key) && poses.has(item.key) && all.findIndex((other) => other.key === item.key) === index).map((item) => ({ ...item, current: false, index: coverflowIndex.value + poses.get(item.key)!.offset, leaving: true, removed: !committedKeys.has(item.key) }))
   orderReflowing.value = true
   publishFocusState()
   await nextTick()
@@ -516,7 +518,7 @@ function beginStandardCoverChange(element: Element) {
   const owner = standardRenderKey.value
   standardEnterTimer = setTimeout(() => {
     if (owner !== standardRenderKey.value || !standardCoverVisible.value) return
-    element.getAnimations?.().filter(animation => (animation as CSSAnimation).animationName === 'standard-cover-in').forEach(animation => {
+    element.getAnimations?.().filter(animation => ['standard-cover-in', 'airplay-sleeve-in'].includes((animation as CSSAnimation).animationName)).forEach(animation => {
       try { animation.finish() } catch { animation.cancel() }
     })
     element.classList.remove('standard-cover-change-enter-active', 'standard-cover-change-enter-from', 'standard-cover-change-enter-to', 'airplay-cover-change-enter-active', 'airplay-cover-change-enter-from', 'airplay-cover-change-enter-to')
@@ -572,9 +574,17 @@ function scheduleStandardCoverChange() {
   if (props.airplay) {
     if (standardCoverTimer) clearTimeout(standardCoverTimer)
     standardCoverTimer = null
-    standardCover.value = nextCover; pendingStandardCover.value = null
-    standardRenderKey.value += 1; standardCoverVisible.value = true; standardCoverEntering.value = false
-    publishFocusState(); return
+    if (mode.value === 'standard' && props.open && props.airplayArtworkPending && standardCover.value.artwork) {
+      if (!pendingStandardCover.value) airplayCoverWaitDeadline = performance.now() + 1200
+      pendingStandardCover.value = nextCover
+      const owner = generation
+      standardCoverTimer = setTimeout(() => {
+        if (owner !== standardCoverGeneration || !props.airplay || !pendingStandardCover.value) return
+        commitAirplayCover(currentStandardCover())
+      }, Math.max(0, airplayCoverWaitDeadline - performance.now()))
+      publishFocusState(); return
+    }
+    commitAirplayCover(nextCover); return
   }
   if (mode.value !== 'standard' || !props.open) {
     standardCover.value = nextCover
@@ -601,6 +611,15 @@ function scheduleStandardCoverChange() {
   if (standardCoverTimer) clearTimeout(standardCoverTimer)
   const showAt = Math.max(standardCoverLeaveDeadline + standardCoverGapMs, now + standardCoverIdleMs)
   standardCoverTimer = setTimeout(() => flushPendingStandardCover(generation), Math.max(0, showAt - now))
+  publishFocusState()
+}
+
+function commitAirplayCover(cover: StandardCoverSnapshot) {
+  if (standardCoverTimer) clearTimeout(standardCoverTimer)
+  standardCoverTimer = null; airplayCoverWaitDeadline = 0
+  standardCover.value = cover; pendingStandardCover.value = null
+  standardRenderKey.value += 1; standardCoverVisible.value = true
+  standardCoverEntering.value = mode.value === 'standard' && props.open
   publishFocusState()
 }
 
@@ -803,6 +822,9 @@ watch(() => currentStandardCover().artwork, (artwork) => {
   const key = currentStandardCover().key
   if (pendingStandardCover.value?.key === key) pendingStandardCover.value.artwork = artwork
   if (standardCover.value.key === key) standardCover.value.artwork = artwork
+})
+watch(() => props.airplayArtworkPending, pending => {
+  if (props.airplay && !pending && pendingStandardCover.value) scheduleStandardCoverChange()
 })
 watch(lyricsVisible, (visible) => {
   if (visible) {

@@ -63,7 +63,8 @@ await player.accept({ track: actual })
 release('late-cover-2'); await slow
 assert.equal(publications.at(-1).track.title, 'Song 3')
 assert.equal(publications.at(-1).image, 'cover-3')
-assert.equal(publications.at(-1).history.at(-2).artworkUrl, '', 'an outgoing image is never falsely archived as the pending song’s own cover')
+assert.ok(!publications.at(-1).history.some(track => track.title === 'Song 2'), 'a superseded pending generation must not be archived as a black album')
+assert.ok(publications.at(-1).history.every(track => Boolean(track.artworkUrl)))
 console.log('PASS: newer snapshots reject late covers and preserve a bounded, truthful read-only history')
 
 await Promise.all([player.remote(1), player.remote(1), player.remote(-1)])
@@ -238,3 +239,20 @@ assert.equal(received.at(-1).length, 7)
 assert.equal(received.at(-1).at(-1).path, 'airplay://live/17')
 tail.dispose()
 console.log('PASS: theme Previous, native Next and iOS changes all append at the tail; URI revisits have unique keys, metadata/restarts do not duplicate, and trimming retains newest focus')
+
+const emptyHistory = []
+let emptyArtwork = ''
+const missing = createAirplayPlayback({
+  read: async () => ({ track: null }), artwork: async () => emptyArtwork, enter: async () => true, leave: async () => {},
+  publish: (_track, _image, history) => emptyHistory.push(history), command: async () => true, notify() {},
+})
+await missing.accept({ track: stream(30) })
+await missing.accept({ track: stream(31) })
+emptyArtwork = 'valid-32'; await missing.accept({ track: stream(32) })
+assert.equal(emptyHistory.at(-1).length, 1, 'two unresolved covers must not create permanent black history cards')
+assert.equal(emptyHistory.at(-1)[0].title, 'Song 32')
+await missing.accept({ track: stream(33) })
+assert.equal(emptyHistory.at(-1).length, 2)
+assert.ok(emptyHistory.at(-1).every(track => Boolean(track.artworkUrl)))
+missing.dispose()
+console.log('PASS: missing/superseded AirPlay covers are never archived; only the current pending presentation can lack artwork')

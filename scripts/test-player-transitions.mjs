@@ -414,6 +414,36 @@ assert.equal(state.focusIndex.value, 2, 'stale native playlist index zero cannot
 assert.equal(state.selectedCoverflow.value.key, props.playbackTracks[2].playbackId)
 assert.equal(state.currentStandardCover().key, props.playbackTracks[2].playbackId)
 console.log('PASS: all AirPlay changes use tail focus and identical offsets; stale local preview/index zero never moves focus to the first received cover')
+state.standardCover.value.artwork = 'valid-current-sleeve'
+const oldSleeveKey = state.standardCover.value.key
+props.airplayArtworkPending = true
+props.playbackTracks = [{ ...tracks[0], path: 'airplay://live/204', playbackId: 'airplay:204', artworkUrl: 'outgoing-fallback' }]
+props.playbackTrackIndex = 0
+await flush()
+assert.equal(state.standardCover.value.key, oldSleeveKey, 'the old valid sleeve stays visible while remote artwork is pending')
+assert.equal(state.standardCoverVisible.value, true)
+assert.equal(state.pendingStandardCover.value.key, 'airplay:204')
+props.playbackTracks[0].artworkUrl = 'validated-new-cover'
+props.airplayArtworkPending = false
+await flush()
+assert.equal(state.standardCover.value.key, 'airplay:204')
+assert.equal(state.standardCover.value.artwork, 'validated-new-cover')
+assert.equal(state.standardCoverEntering.value, true)
+const sleeveElement = { getAnimations: () => [], classList: { remove() {} } }
+state.beginStandardCoverChange(sleeveElement)
+state.finishStandardCoverChange(sleeveElement)
+assert.equal(state.standardCoverEntering.value, false)
+props.airplayArtworkPending = true
+props.playbackTracks = [{ ...tracks[1], path: 'airplay://live/205', playbackId: 'airplay:205', artworkUrl: 'validated-new-cover' }]
+await flush()
+const beforeFallback = state.standardCover.value.key
+props.playbackTracks = [{ ...tracks[2], path: 'airplay://live/206', playbackId: 'airplay:206', artworkUrl: 'validated-new-cover' }]
+await flush()
+assert.equal(state.standardCover.value.key, beforeFallback)
+animationClock.tick(1200); await flush()
+assert.equal(state.standardCover.value.key, 'airplay:206', 'bounded fallback uses the latest remote target without delaying decoder commands')
+assert.equal(state.pendingStandardCover.value, null)
+console.log('PASS: AirPlay Standard keeps a decoded outgoing sleeve, commits ready artwork into the animated entry, and collapses rapid pending changes to the newest bounded target')
 hooks.forEach(fn => fn()); scope.stop()
 
 const railScript = compileScript(parse(readFileSync('src/components/AlphabetIndexRail.vue', 'utf8')).descriptor, { id: 'rail-test' })

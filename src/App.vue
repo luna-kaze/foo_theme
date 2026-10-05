@@ -1300,6 +1300,7 @@ function onDrop(event: DragEvent) {
       :remote-pending="player.airplayState.pending"
       :remote-message="player.airplayState.message || (player.airplayState.artworkPending ? '正在补读发送端封面，保留最近图片' : '')"
       :artwork-revision="player.airplayState.artworkRevision"
+      :airplay-artwork-pending="player.airplayState.artworkPending"
       @artwork-error="player.retryAirplayArtwork"
       @next="player.next"
       @previous="player.previous"

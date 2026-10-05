@@ -44,9 +44,6 @@
 .airplay-live-status { position: absolute; top: calc(74px + var(--immersive-p) * 10px); left: 50%; display: flex; align-items: center; gap: 10px; max-width: 75%; color: rgba(255,255,255,.66); font-size: 10px; transform: translateX(-50%); pointer-events: none; z-index: 21; }
 .airplay-live-status strong { flex-shrink: 0; color: rgba(255,255,255,.88); }
 .airplay-live-status span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.airplay-cover-change-enter-active, .airplay-cover-change-leave-active { transition: opacity 400ms ease; }
-.airplay-cover-change-enter-from, .airplay-cover-change-leave-to { opacity: 0; }
-@media (prefers-reduced-motion: reduce) { .airplay-cover-change-enter-active, .airplay-cover-change-leave-active { transition: none; } }
 .immersive-toolbar__actions { display: flex; justify-self: end; gap: 7px; pointer-events: auto; }
 .immersive-tool, .immersive-mode-switch button, .coverflow__arrow { position: relative; display: grid; width: 38px; height: 38px; place-items: center; color: rgba(255,255,255,.68); background: rgba(24,24,28,.48); border: 1px solid rgba(255,255,255,.08); border-radius: 11px; box-shadow: 0 8px 30px rgba(0,0,0,.16); backdrop-filter: blur(18px); }
 .immersive-tool:hover, .immersive-mode-switch button:hover, .immersive-mode-switch button.active, .coverflow__arrow:hover:not(:disabled) { color: white; background: rgba(255,255,255,.12); }
@@ -114,6 +111,26 @@
 .standard-cover-change-enter-active { animation: standard-cover-in 460ms cubic-bezier(.18,.82,.16,1) both; z-index: 5; }
 .standard-cover-change-leave-active { pointer-events: none; animation: standard-cover-out 360ms cubic-bezier(.45,0,.3,1) both; z-index: 4; }
 .standard-cover-change-leave-active.expanded { animation-name: standard-cover-out-expanded; animation-duration: 400ms; }
+.album-sleeve.airplay-cover-change-enter-active { animation: airplay-sleeve-in 560ms cubic-bezier(.18,.82,.16,1) both; transition: none; pointer-events: none; z-index: 5; }
+.album-sleeve.airplay-cover-change-leave-active { animation: airplay-sleeve-out 400ms cubic-bezier(.45,0,.3,1) both; transition: none; pointer-events: none; z-index: 4; }
+.album-sleeve.airplay-cover-change-leave-active.expanded { animation-name: airplay-sleeve-out-expanded; }
+@keyframes airplay-sleeve-in {
+  from { opacity: 0; transform: var(--sleeve-rest-transform) translateX(32%) rotateY(-12deg) scale(.96); }
+  45% { opacity: 1; }
+  to { opacity: 1; transform: var(--sleeve-rest-transform); }
+}
+@keyframes airplay-sleeve-out {
+  from { opacity: 1; transform: var(--sleeve-rest-transform); }
+  to { opacity: 0; transform: var(--sleeve-rest-transform) translateX(-36%) rotateY(9deg) scale(.94); }
+}
+@keyframes airplay-sleeve-out-expanded {
+  from { opacity: 1; transform: var(--sleeve-expanded-transform); }
+  to { opacity: 0; transform: var(--sleeve-rest-transform) translateX(-36%) rotateY(9deg) scale(.94); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .album-sleeve.airplay-cover-change-enter-active, .album-sleeve.airplay-cover-change-leave-active { animation: none; transition: opacity 160ms ease; }
+  .airplay-cover-change-enter-from, .airplay-cover-change-leave-to { opacity: 0; }
+}
 @keyframes standard-cover-in {
   from { transform: translate(-135%,-50%) rotateY(7deg) scale(.96); }
   to { transform: var(--sleeve-rest-transform); }

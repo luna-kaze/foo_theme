@@ -73,7 +73,11 @@ export function createAirplayPlayback(deps: Dependencies) {
     if (!state.active) { state.active = true; epoch++; entry = deps.enter() }
     const owner = epoch
     metadataRevision++
-    if (changed && current) state.history = [...state.history, { ...current, artworkUrl: currentArtworkPath === airplayPath(current) ? currentArtwork : '', playbackId: currentId, sourceIndex: state.history.length }].slice(-6)
+    // A short-lived metadata generation may never receive an image. It is a
+    // pending presentation, not a blank album to permanently archive.
+    if (changed && current && currentArtwork && currentArtworkPath === airplayPath(current)) {
+      state.history = [...state.history, { ...current, artworkUrl: currentArtwork, playbackId: currentId, sourceIndex: state.history.length }].slice(-6)
+    }
     if (changed) {
       currentId = `airplay:${path}:received:${++occurrence}`
       sourceRevision++; imageAttempts = 0; state.artworkPending = true
