@@ -401,16 +401,19 @@ assert.equal(state.standardCover.value.key, 'airplay:airplay://live/200', 'confi
 assert.equal(state.pendingStandardCover.value, null)
 console.log('PASS: AirPlay arrows emit remote actions, history/wheel cannot browse locally, focus gates are inactive and Standard updates only from confirmed snapshots')
 state.railState.active = false
-props.remoteDirection = -1
-assert.equal(state.coverflowOffset({ index: state.coverflowIndex.value - 1, track: null }), 1, 'Previous moves the outgoing current cover to the opposite side')
-props.remoteDirection = 1
-assert.equal(state.coverflowOffset({ index: state.coverflowIndex.value - 1, track: null }), -1)
-props.remoteDirection = 0
 props.playbackTracks = [0, 1, 2].map(index => ({ ...tracks[index], playbackId: `airplay:airplay://live/${201 + index}`, sourceIndex: index }))
 props.playbackTrackIndex = 2
 await flush()
-assert.equal(state.visibleCoverflowItems.value.filter(item => !item.leaving).length, 3, 'unknown sender direction retains the historical cover deck instead of hiding it')
-console.log('PASS: AirPlay Previous and Next mirror the deck direction; neutral changes retain the full received cover history')
+assert.equal(state.visibleCoverflowItems.value.filter(item => !item.leaving).length, 3)
+assert.equal(state.coverflowOffset({ index: 1, track: null }), -1, 'received history stays on the same side for every remote action')
+props.playbackTrackIndex = 0
+props.playbackPreviewId = props.playbackTracks[0].playbackId
+props.playbackPreviewPending = true
+await flush()
+assert.equal(state.focusIndex.value, 2, 'stale native playlist index zero cannot pull the live deck to its first history card')
+assert.equal(state.selectedCoverflow.value.key, props.playbackTracks[2].playbackId)
+assert.equal(state.currentStandardCover().key, props.playbackTracks[2].playbackId)
+console.log('PASS: all AirPlay changes use tail focus and identical offsets; stale local preview/index zero never moves focus to the first received cover')
 hooks.forEach(fn => fn()); scope.stop()
 
 const railScript = compileScript(parse(readFileSync('src/components/AlphabetIndexRail.vue', 'utf8')).descriptor, { id: 'rail-test' })

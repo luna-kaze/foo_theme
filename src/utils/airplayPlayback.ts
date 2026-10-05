@@ -29,6 +29,7 @@ export function createAirplayPlayback(deps: Dependencies) {
   let refreshDue = 0, stoppedUntil = 0, intentUntil = 0, intentDirection = 0
   let entry: Promise<boolean> | null = null, serial: Promise<unknown> = Promise.resolve()
   let current: DisplayTrack | null = null, currentArtwork = '', currentArtworkPath = ''
+  let occurrence = 0, currentId = ''
   let imageBusySource = -1, imageAttempts = 0, lastPosition = 0, commandPosition = 0
   let decoderHeldStopped = false
   function stop() {
@@ -38,11 +39,12 @@ export function createAirplayPlayback(deps: Dependencies) {
     refreshTimer = pendingTimer = null; entry = null; current = null; currentArtwork = ''; currentArtworkPath = ''
     intentUntil = 0; intentDirection = 0; imageBusySource = -1
     decoderHeldStopped = false
+    currentId = ''
     Object.assign(state, { active: false, phase: 'stopped', path: '', pending: false, direction: 0, confirmedDirection: 0, artworkPending: false, message: '', history: [] })
   }
   function publish(position?: number) {
     if (!current) return
-    const track = { ...current, artworkUrl: currentArtwork, playbackId: `airplay:${state.path}`, sourceIndex: state.history.length }
+    const track = { ...current, artworkUrl: currentArtwork, playbackId: currentId, sourceIndex: state.history.length }
     deps.publish(track, currentArtwork, [...state.history, track], position)
   }
   async function fetchArtwork() {
@@ -71,8 +73,9 @@ export function createAirplayPlayback(deps: Dependencies) {
     if (!state.active) { state.active = true; epoch++; entry = deps.enter() }
     const owner = epoch
     metadataRevision++
-    if (changed && current) state.history = [...state.history, { ...current, artworkUrl: currentArtworkPath === airplayPath(current) ? currentArtwork : '', playbackId: `airplay:${airplayPath(current)}`, sourceIndex: state.history.length }].slice(-6)
+    if (changed && current) state.history = [...state.history, { ...current, artworkUrl: currentArtworkPath === airplayPath(current) ? currentArtwork : '', playbackId: currentId, sourceIndex: state.history.length }].slice(-6)
     if (changed) {
+      currentId = `airplay:${path}:received:${++occurrence}`
       sourceRevision++; imageAttempts = 0; state.artworkPending = true
       state.confirmedDirection = intentUntil > Date.now() ? intentDirection : 0
       intentUntil = 0; intentDirection = 0

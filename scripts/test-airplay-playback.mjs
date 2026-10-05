@@ -94,7 +94,7 @@ const count = publications.length
 player.reconcile(); player.dispose()
 assert.equal(publications.length, count)
 console.log('PASS: FIFO remote semantics, same-song restart, no retry on timeout, seven-cover bound and clean local handover')
-console.log('PASS: animation direction commits only with received snapshots; external iOS changes remain direction-neutral')
+console.log('PASS: remote direction stays an intent record, independent of received-history order')
 
 const source = readFileSync('src/composables/useFoobar.ts', 'utf8') + '\nexport { syncCurrentTrack, bindEvents }\n'
 const theme = await build({ stdin: { contents: source, resolveDir: `${process.cwd()}/src/composables`, loader: 'ts' }, bundle: true, platform: 'node', format: 'cjs', write: false, external: ['vue', 'foo-webview-sdk'] })
@@ -213,3 +213,28 @@ await vue.nextTick()
 assert.equal(artworkState.failed.value, false, 'a failed unchanged URI can recover on an explicit validated retry')
 scope.stop()
 console.log('PASS: ArtworkImage resets failed state on a validated retry even when the URI is unchanged')
+
+const received = []
+const tail = createAirplayPlayback({
+  read: async () => ({ track: null }), artwork: async path => `cover:${path}`, enter: async () => true, leave: async () => {},
+  publish: (_track, _image, history) => received.push(history), command: async () => true, notify() {},
+})
+await tail.accept({ track: stream(1) })
+await tail.remote(-1); await tail.accept({ track: stream(2) })
+tail.recordStarting(1); await tail.accept({ track: stream(3) })
+await tail.accept({ track: stream(4) })
+await tail.accept({ track: stream(1) })
+const arrival = received.at(-1)
+assert.deepEqual(Array.from(arrival, track => track.path), [1, 2, 3, 4, 1].map(index => `airplay://live/${index}`))
+assert.equal(new Set(arrival.map(track => track.playbackId)).size, arrival.length, 'revisited URI cannot reuse an old Vue card key and snap to the first occurrence')
+const lastId = arrival.at(-1).playbackId
+await tail.accept({ track: { ...stream(1), title: 'Corrected metadata' } })
+assert.equal(received.at(-1).length, 5)
+assert.equal(received.at(-1).at(-1).playbackId, lastId)
+tail.recordStarting(-1); tail.observePosition(0); await tail.accept({ track: stream(1) })
+assert.equal(received.at(-1).length, 5, 'same-track Previous/restart does not add a false received occurrence')
+for (let index = 5; index < 18; index++) await tail.accept({ track: stream(index) })
+assert.equal(received.at(-1).length, 7)
+assert.equal(received.at(-1).at(-1).path, 'airplay://live/17')
+tail.dispose()
+console.log('PASS: theme Previous, native Next and iOS changes all append at the tail; URI revisits have unique keys, metadata/restarts do not duplicate, and trimming retains newest focus')

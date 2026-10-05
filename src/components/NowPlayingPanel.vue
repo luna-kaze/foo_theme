@@ -36,7 +36,6 @@ const props = defineProps<{
   airplay?: boolean
   remotePending?: boolean
   remoteMessage?: string
-  remoteDirection?: number
   artworkRevision?: number
   shuffleBusy: boolean
   shufflePending: boolean
@@ -79,6 +78,7 @@ const lyricsVisible = ref(true)
 const handoffCover = reactive({ visible: false, top: 0, left: 0, width: 0, height: 0 })
 type StandardCoverSnapshot = { key: string; artwork: string; album: string; expanded: boolean }
 const standardTargetTrack = computed(() => {
+  if (props.airplay) return props.playbackTracks.at(-1) ?? props.track
   const preview = props.playbackPreviewPending ? props.playbackTracks.find(track => track.playbackId === props.playbackPreviewId) : null
   return preview ?? props.playbackTracks[props.playbackTrackIndex] ?? props.track
 })
@@ -123,7 +123,6 @@ const playbackProgress = computed(() => {
 const tonearmAngle = computed(() => tonearmDragAngle.value ?? (props.playbackState === 'playing' ? 3 + playbackProgress.value * 33 : -10))
 
 type CoverflowItem = {
-  neutralCenter?: boolean
   track: DisplayTrack | null
   artwork: string
   current: boolean
@@ -146,11 +145,12 @@ const frozenCovers = ref<Array<CoverflowItem & { index: number; leaving: boolean
 const frozenBackdrop = ref('')
 const frozenDeck = shallowRef<CoverflowItem[]>([])
 const focusIndex = computed(() => {
+  if (props.airplay) return Math.max(0, props.playbackTracks.length - 1)
   if (props.playbackWindowDeferred) return coverflowIndex.value
   const preview = props.playbackTracks.findIndex((track) => track.playbackId === props.playbackPreviewId)
   return preview >= 0 ? preview : Math.max(0, props.playbackTrackIndex)
 })
-const globalFocusIndex = computed(() => props.playbackBrowseIndex ?? props.playbackTracks[focusIndex.value]?.sourceIndex ?? focusIndex.value)
+const globalFocusIndex = computed(() => props.airplay ? focusIndex.value : props.playbackBrowseIndex ?? props.playbackTracks[focusIndex.value]?.sourceIndex ?? focusIndex.value)
 
 const coverflowItems = computed<CoverflowItem[]>(() => {
   if (!props.airplay && (railState.distant || props.playbackWindowDeferred) && frozenDeck.value.length) return frozenDeck.value
@@ -158,7 +158,7 @@ const coverflowItems = computed<CoverflowItem[]>(() => {
   if (props.playbackTracks.length) return props.playbackTracks.map((track, index) => ({
     track,
     artwork: index === props.playbackTrackIndex && isSameTrack(track, props.track) ? props.artwork || track.artworkUrl || '' : track.artworkUrl || '',
-    current: index === props.playbackTrackIndex,
+    current: index === (props.airplay ? focusIndex.value : props.playbackTrackIndex),
     idle: false,
     key: track.playbackId ?? `playlist:${track.sourceIndex ?? index}:${trackKey(track)}`,
   }))
@@ -172,12 +172,12 @@ const coverflowItems = computed<CoverflowItem[]>(() => {
 })
 const visibleCoverflowItems = computed(() => {
   if (railState.distant) return railState.zoom < .6 ? frozenCovers.value : []
-  const center = railState.active ? Math.round(railState.position - (props.playbackTracks[0]?.sourceIndex ?? 0)) : coverflowIndex.value
+  const center = props.airplay ? focusIndex.value : railState.active ? Math.round(railState.position - (props.playbackTracks[0]?.sourceIndex ?? 0)) : coverflowIndex.value
   const start = Math.max(0, center - 3)
   const end = Math.min(coverflowItems.value.length, center + 4)
   const visible = coverflowItems.value.slice(start, end).map((item, offset) => ({ ...item, index: start + offset, leaving: false, removed: false }))
   const keys = new Set(visible.map((item) => item.key))
-  return [...visible, ...outgoingCovers.value.filter((item) => !keys.has(item.key) || item.neutralCenter)]
+  return [...visible, ...outgoingCovers.value.filter((item) => !keys.has(item.key))]
 })
 const railPoints = computed(() => {
   if (!railState.distant && railState.zoom < .005) return []
@@ -212,8 +212,8 @@ const rail = createCoverflowRail({
   },
 })
 function coverflowOffset(item: { index: number; track: DisplayTrack | null }) {
+  if (props.airplay) return item.index - focusIndex.value
   const offset = railState.active ? (item.track?.sourceIndex ?? item.index) - railState.position : item.index - coverflowIndex.value
-  if (props.airplay) return offset * ((props.remoteDirection ?? 0) < 0 ? -1 : 1)
   return railState.distant ? Math.max(-4, Math.min(4, offset)) : offset
 }
 
@@ -267,7 +267,7 @@ function cancelOrderAnimation() {
 watch(coverflowItems, (items) => { if (!orderReflowing.value && !railState.active) previousDeck = [...items] }, { immediate: true, flush: 'post' })
 // Capture the old DOM before Vue patches the committed deck. A revision can
 // arrive before its async projection, so it cannot be the animation trigger.
-watch([() => coverflowItems.value.map((item) => item.key).join('\u0000'), focusIndex, () => props.playbackPlanIds.join('\u0000'), () => props.open, mode, modeTransition, () => props.remoteDirection], async (_values, [, , previousPlan]) => {
+watch([() => coverflowItems.value.map((item) => item.key).join('\u0000'), focusIndex, () => props.playbackPlanIds.join('\u0000'), () => props.open, mode, modeTransition], async (_values, [, , previousPlan]) => {
   if (props.airplay && railState.active) { rail.dispose(); railState.active = false; railState.distant = false; railState.zoom = 0; frozenDeck.value = []; frozenCovers.value = [] }
   if (!props.open || mode.value !== 'coverflow' || modeTransition.value) {
     if (props.playbackWindowDeferred && props.playbackBrowseIndex != null) emit('browsePosition', props.playbackBrowseIndex, false)
@@ -310,7 +310,7 @@ watch([() => coverflowItems.value.map((item) => item.key).join('\u0000'), focusI
   // The rendered deck is windowed. A shuffled card outside that window is
   // leaving the viewport, not deleted from the committed plan.
   const committedKeys = new Set(props.playbackPlanIds)
-  outgoingCovers.value = old.filter((item, index, all) => !remapped.has(item.key) && poses.has(item.key) && all.findIndex((other) => other.key === item.key) === index).map((item) => ({ ...item, current: false, index: coverflowIndex.value + poses.get(item.key)!.offset, leaving: true, removed: !committedKeys.has(item.key), neutralCenter: Boolean(props.airplay && !props.remoteDirection && poses.get(item.key)!.offset === 0) }))
+  outgoingCovers.value = old.filter((item, index, all) => !remapped.has(item.key) && poses.has(item.key) && all.findIndex((other) => other.key === item.key) === index).map((item) => ({ ...item, current: false, index: coverflowIndex.value + poses.get(item.key)!.offset, leaving: true, removed: !committedKeys.has(item.key) }))
   orderReflowing.value = true
   publishFocusState()
   await nextTick()
@@ -328,13 +328,11 @@ watch([() => coverflowItems.value.map((item) => item.key).join('\u0000'), focusI
       const leaving = element.classList.contains('is-order-leaving')
       const removed = element.classList.contains('is-order-removed')
       const offset = Number(element.style.getPropertyValue('--cover-offset'))
-      const neutral = props.airplay && !props.remoteDirection
-      const stationaryHistory = neutral && !leaving && element.dataset.coverKey !== previousFocusKey
-      const startTransform = stationaryHistory ? end.transform : oldPose?.transform || (neutral ? end.transform : `${end.transform} translateX(${props.airplay ? (props.remoteDirection ?? 0) * 110 : Math.sign(offset) * 110}px) translateZ(-180px) scale(.88)`)
+      const startTransform = oldPose?.transform || `${end.transform} translateX(${props.airplay ? 110 : Math.sign(offset) * 110}px) translateZ(-180px) scale(.88)`
       const oldOffset = poses.get(element.dataset.coverKey!)?.offset ?? offset
-      const endTransform = leaving ? neutral ? startTransform : `${startTransform} translateX(${removed ? 0 : Math.sign(oldOffset) * 160}px) translateY(${removed ? 64 : 0}px) translateZ(-140px) scale(${removed ? .82 : .94})` : end.transform
+      const endTransform = leaving ? `${startTransform} translateX(${removed ? 0 : Math.sign(oldOffset) * 160}px) translateY(${removed ? 64 : 0}px) translateZ(-140px) scale(${removed ? .82 : .94})` : end.transform
       orderAnimations.push(element.animate([
-        { transform: startTransform, opacity: stationaryHistory ? Number(end.opacity) : oldPose?.opacity ?? '0' },
+        { transform: startTransform, opacity: oldPose?.opacity ?? '0' },
         { transform: endTransform, opacity: leaving ? 0 : Number(end.opacity) },
       ], { duration: props.airplay ? 420 : removed ? 300 : 620, easing: 'cubic-bezier(.18,.82,.16,1)', fill: 'both' }))
     }
@@ -389,6 +387,7 @@ function preloadCoverflowArtwork(sources: string[]) {
 }
 
 const selectedCoverflow = computed<CoverflowItem | null>(() => {
+  if (props.airplay) return coverflowItems.value[focusIndex.value] ?? null
   if (props.playbackPreviewPending) {
     const target = props.playbackTracks.find(track => track.playbackId === props.playbackPreviewId)
     if (target) return { track: target, artwork: target.artworkUrl || '', idle: false, key: target.playbackId!, current: target.playbackId === props.playbackTracks[props.playbackTrackIndex]?.playbackId }
@@ -400,7 +399,7 @@ const selectedCoverflow = computed<CoverflowItem | null>(() => {
   }
   return coverflowItems.value[coverflowIndex.value] ?? null
 })
-const currentCoverflowIndex = computed(() => Math.max(0, props.playbackTrackIndex))
+const currentCoverflowIndex = computed(() => props.airplay ? focusIndex.value : Math.max(0, props.playbackTrackIndex))
 const idleCoverflow = computed(() => selectedCoverflow.value?.idle === true)
 const backgroundArtwork = computed(() => modeTransition.value ? props.artwork : mode.value === 'coverflow' ? railState.distant ? frozenBackdrop.value : selectedCoverflow.value?.artwork || props.artwork : props.artwork)
 const lightFieldReady = ref(false)
@@ -957,7 +956,7 @@ onBeforeUnmount(() => {
           <div class="coverflow__covers" :style="{ opacity: Math.max(0, 1 - railState.zoom * 1.7), transform: `scale(${1 - railState.zoom * .92})` }">
           <button
             v-for="item in visibleCoverflowItems"
-            :key="item.neutralCenter ? `${item.key}:outgoing:${orderRequest}` : item.key"
+            :key="item.key"
             :data-cover-index="item.index"
             :data-cover-key="item.key"
             :disabled="airplay && !item.current"
