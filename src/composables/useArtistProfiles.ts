@@ -3,7 +3,7 @@ import { fb } from 'foo-webview-sdk'
 import type { DisplayTrack } from '../types/music'
 import { playablePath } from '../utils/track'
 import { pickImageFile } from '../utils/imagePicker'
-import { appleArtistLink, artistServiceSettings, downloadArtistImage, fetchAppleArtist, fetchLastFmArtist, loadArtistServiceSettings, type AppleArtistCandidate } from '../utils/artistProviders'
+import { appleArtistLink, artistServiceSettings, cleanArtistBiography, downloadArtistImage, fetchAppleArtist, fetchLastFmArtist, loadArtistServiceSettings, searchAppleArtistCandidates, type AppleArtistCandidate } from '../utils/artistProviders'
 
 export interface ArtistCandidate {
   id: string; name: string; country?: string; type?: string; disambiguation?: string; score?: number
@@ -14,6 +14,8 @@ export interface ArtistProfile {
   picturePreference: 'auto' | 'manual' | 'local' | 'apple' | 'wikimedia'
   infoPreference: 'auto' | 'lastfm' | 'wiki' | 'apple'
   searchName: string
+  photoSearchName: string
+  picturePinned: boolean
   status: 'idle' | 'loading' | 'ready' | 'ambiguous' | 'error'
   localImage: string; onlineImage: string; manualImage: string
   mbid: string; manualIdentity: boolean; canonicalName: string
@@ -24,7 +26,7 @@ export interface ArtistProfile {
   failedImages: string[]
   photoStatus: 'idle' | 'loading' | 'ready' | 'missing' | 'ambiguous' | 'error'
   photoMessage: string; photoCheckedAt: number
-  appleImage: string; appleId: string; appleUrl: string; appleName: string; appleBiography: string; appleManual: boolean; appleCandidates: AppleArtistCandidate[]
+  appleImage: string; appleId: string; appleUrl: string; appleName: string; appleBiography: string; appleBiographyUrl: string; appleManual: boolean; appleCandidates: AppleArtistCandidate[]
   lastfmStatus: 'idle' | 'loading' | 'ready' | 'error'
   lastfmMessage: string; lastfmBiography: string; lastfmLanguage: string; lastfmTags: string[]
   lastfmSimilar: Array<{ name: string; url: string }>; lastfmListeners: number; lastfmPlaycount: number; lastfmUrl: string
@@ -52,12 +54,12 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 export function getArtistProfile(name: string): ArtistProfile {
   const key = artistKey(name)
   if (!profiles.has(key)) profiles.set(key, {
-    name, picturePreference: 'auto', infoPreference: 'auto', searchName: '', status: 'idle', localImage: '', onlineImage: '', manualImage: '', mbid: '', manualIdentity: false,
+    name, picturePreference: 'auto', infoPreference: 'auto', searchName: '', photoSearchName: '', picturePinned: false, status: 'idle', localImage: '', onlineImage: '', manualImage: '', mbid: '', manualIdentity: false,
     localIdentityMismatch: false,
     canonicalName: '', biography: '', country: '', type: '', years: '', genres: [],
     sourceUrl: '', imageSourceUrl: '', imageCredit: '', imageLicense: '', candidates: [], message: '', updatedAt: 0, revision: 0,
     failedImages: [], photoStatus: 'idle', photoMessage: '', photoCheckedAt: 0,
-    appleImage: '', appleId: '', appleUrl: '', appleName: '', appleBiography: '', appleManual: false, appleCandidates: [],
+    appleImage: '', appleId: '', appleUrl: '', appleName: '', appleBiography: '', appleBiographyUrl: '', appleManual: false, appleCandidates: [],
     lastfmStatus: 'idle', lastfmMessage: '', lastfmBiography: '', lastfmLanguage: '', lastfmTags: [], lastfmSimilar: [], lastfmListeners: 0, lastfmPlaycount: 0, lastfmUrl: '',
   })
   return profiles.get(key)!
@@ -65,11 +67,12 @@ export function getArtistProfile(name: string): ArtistProfile {
 export function artistPortraitChoices(profile: ArtistProfile) {
   const choices = [
     { provider: 'manual', url: profile.manualImage, source: '手动照片', link: '' },
-    { provider: 'local', url: profile.localIdentityMismatch ? '' : profile.localImage, source: '本地艺术家图片', link: '' },
+    { provider: 'local', url: profile.localImage, source: '本地艺术家图片', link: '' },
     { provider: 'apple', url: profile.appleImage, source: 'Apple Music', link: profile.appleUrl },
     { provider: 'wikimedia', url: profile.onlineImage, source: 'Wikimedia Commons', link: profile.imageSourceUrl },
   ]
-  return [...choices.filter((image) => image.provider === profile.picturePreference), ...choices.filter((image) => image.provider !== profile.picturePreference)].filter((image) => image.url && !profile.failedImages.includes(image.url))
+  const ordered = profile.picturePinned ? choices.filter(image => image.provider === profile.picturePreference) : [...choices.filter((image) => image.provider === profile.picturePreference), ...choices.filter((image) => image.provider !== profile.picturePreference)]
+  return ordered.filter((image) => image.url && !profile.failedImages.includes(image.url))
 }
 export function artistPortraitUrl(profile: ArtistProfile) { return artistPortraitChoices(profile)[0]?.url ?? '' }
 export function artistPortraitSource(profile: ArtistProfile) {
@@ -77,13 +80,15 @@ export function artistPortraitSource(profile: ArtistProfile) {
 }
 export function artistPortraitLink(profile: ArtistProfile) { return artistPortraitChoices(profile)[0]?.link ?? '' }
 export function artistBiography(profile: ArtistProfile) {
-  if (profile.infoPreference === 'lastfm' && profile.lastfmBiography) return { text: profile.lastfmBiography, source: 'Last.fm', url: profile.lastfmUrl }
-  if (profile.infoPreference === 'wiki' && profile.biography) return { text: profile.biography, source: 'Wikipedia / Wikidata', url: profile.sourceUrl }
-  if (profile.infoPreference === 'apple' && profile.appleBiography) return { text: profile.appleBiography, source: 'Apple Music', url: profile.appleUrl }
-  if (profile.lastfmBiography && profile.lastfmLanguage === 'zh') return { text: profile.lastfmBiography, source: 'Last.fm', url: profile.lastfmUrl }
-  if (profile.biography) return { text: profile.biography, source: 'Wikipedia / Wikidata', url: profile.sourceUrl }
-  if (profile.lastfmBiography) return { text: profile.lastfmBiography, source: 'Last.fm', url: profile.lastfmUrl }
-  return { text: profile.appleBiography, source: 'Apple Music', url: profile.appleUrl }
+  const lastfm = cleanArtistBiography(profile.lastfmBiography), wiki = cleanArtistBiography(profile.biography)
+  const apple = profile.manualIdentity ? '' : cleanArtistBiography(profile.appleBiography)
+  if (profile.infoPreference === 'lastfm' && lastfm) return { text: lastfm, source: 'Last.fm', url: profile.lastfmUrl }
+  if (profile.infoPreference === 'wiki' && wiki) return { text: wiki, source: 'Wikipedia / Wikidata', url: profile.sourceUrl }
+  if (profile.infoPreference === 'apple' && apple) return { text: apple, source: 'Apple Music', url: profile.appleBiographyUrl || profile.appleUrl }
+  if (lastfm && profile.lastfmLanguage === 'zh') return { text: lastfm, source: 'Last.fm', url: profile.lastfmUrl }
+  if (wiki) return { text: wiki, source: 'Wikipedia / Wikidata', url: profile.sourceUrl }
+  if (lastfm) return { text: lastfm, source: 'Last.fm', url: profile.lastfmUrl }
+  return apple ? { text: apple, source: 'Apple Music', url: profile.appleBiographyUrl || profile.appleUrl } : { text: '', source: '', url: '' }
 }
 
 function sampleTracks(name: string) {
@@ -124,12 +129,13 @@ async function cachePath(name: string) {
   })().catch((error) => { cacheDirectory = null; throw error })
   return `${await cacheDirectory}\\${filename(name)}`
 }
-async function saveProfile(profile: ArtistProfile) {
-  if (!artistProfilesConnected()) return
+async function saveProfile(profile: ArtistProfile, required = false) {
+  if (!artistProfilesConnected()) { if (required) throw new Error('foobar2000 连接已断开，未能保存匹配。'); return }
   try {
     const { status: _status, revision: _revision, failedImages: _failed, ...record } = profile
-    await fb.file.write(await cachePath(profile.name), JSON.stringify({ version: 2, ...record }), { encoding: 'utf-8' })
-  } catch { /* Optional disk cache must not prevent artwork or metadata display. */ }
+    const result = await fb.file.write(await cachePath(profile.name), JSON.stringify({ version: 3, ...record }), { encoding: 'utf-8' })
+    if (result.success === false) throw new Error(result.error || '未能保存艺术家匹配，请重试。')
+  } catch (error) { if (required) throw error /* Automatic cache failure does not block display. */ }
 }
 
 export function ensureLocalArtistProfile(name: string, force = false): Promise<ArtistProfile> {
@@ -144,8 +150,8 @@ export function ensureLocalArtistProfile(name: string, force = false): Promise<A
         const path = await cachePath(name)
         if ((await fb.file.exists(path)).exists) {
           const saved = JSON.parse((await fb.file.read(path, { encoding: 'utf-8' })).content) as Partial<ArtistProfile> & { version?: number }
-          if ((saved.version === 1 || saved.version === 2) && saved.name && artistKey(saved.name) === key) {
-            for (const field of ['onlineImage', 'manualImage', 'canonicalName', 'biography', 'country', 'type', 'years', 'sourceUrl', 'imageSourceUrl', 'imageCredit', 'imageLicense', 'appleImage', 'appleId', 'appleUrl', 'appleName', 'appleBiography', 'lastfmBiography', 'lastfmLanguage', 'lastfmUrl', 'searchName'] as const) {
+          if ([1, 2, 3].includes(saved.version ?? 0) && saved.name && artistKey(saved.name) === key) {
+            for (const field of ['onlineImage', 'manualImage', 'canonicalName', 'biography', 'country', 'type', 'years', 'sourceUrl', 'imageSourceUrl', 'imageCredit', 'imageLicense', 'appleImage', 'appleId', 'appleUrl', 'appleName', 'appleBiography', 'appleBiographyUrl', 'lastfmBiography', 'lastfmLanguage', 'lastfmUrl', 'searchName', 'photoSearchName'] as const) {
               if (typeof saved[field] === 'string') profile[field] = saved[field]!
             }
             if (saved.mbid && uuid.test(saved.mbid)) profile.mbid = saved.mbid
@@ -155,6 +161,12 @@ export function ensureLocalArtistProfile(name: string, force = false): Promise<A
             // v1 conflated missing tags with conflicting tags. Recompute below.
             profile.localIdentityMismatch = false
             profile.appleManual = saved.appleManual === true
+            profile.picturePinned = saved.version === 3 ? saved.picturePinned === true : Boolean(profile.manualImage || profile.appleManual)
+            if (profile.picturePinned && profile.picturePreference === 'auto') profile.picturePreference = profile.manualImage ? 'manual' : 'apple'
+            profile.appleBiography = cleanArtistBiography(profile.appleBiography)
+            if (profile.appleBiography && !profile.appleBiographyUrl) profile.appleBiographyUrl = profile.appleUrl
+            profile.biography = cleanArtistBiography(profile.biography)
+            profile.lastfmBiography = cleanArtistBiography(profile.lastfmBiography)
             profile.photoCheckedAt = Number(saved.photoCheckedAt) || 0
             profile.lastfmListeners = Number(saved.lastfmListeners) || 0
             profile.lastfmPlaycount = Number(saved.lastfmPlaycount) || 0
@@ -196,13 +208,17 @@ export function ensureArtistPortrait(name: string, options: { force?: boolean; a
     await ensureLocalArtistProfile(name)
     if (!artistProfilesConnected()) return profile
     await loadArtistServiceSettings()
+    if (profile.picturePinned && profile.picturePreference !== 'apple') {
+      profile.photoStatus = artistPortraitUrl(profile) ? 'ready' : 'missing'
+      return profile
+    }
     if (!options.force && (artistPortraitUrl(profile) || !artistServiceSettings.autoApple || Date.now() - profile.photoCheckedAt < 24 * 60 * 60 * 1000)) return profile
     profile.photoStatus = 'loading'
     profile.photoMessage = '正在查找艺术家照片…'
     // One active page resolver at a time, with additional iTunes rate limiting.
     const job = photoQueue.catch(() => {}).then(async () => {
       try {
-        const result = await fetchAppleArtist([profile.searchName || name, profile.canonicalName].filter(Boolean), options.appleUrl || profile.appleUrl)
+        const result = await fetchAppleArtist([profile.photoSearchName || name], options.appleUrl || profile.appleUrl)
         profile.appleCandidates = result.candidates
         profile.photoCheckedAt = Date.now()
         if (result.status === 'ambiguous') {
@@ -216,8 +232,8 @@ export function ensureArtistPortrait(name: string, options: { force?: boolean; a
           profile.appleId = result.id
           profile.appleUrl = result.url
           profile.appleName = result.name
-          profile.appleBiography = result.biography
-          if (options.appleUrl) profile.appleManual = true
+          if (!profile.picturePinned) { profile.appleBiography = result.biography; profile.appleBiographyUrl = result.url }
+          if (options.appleUrl) { profile.appleManual = true; profile.picturePinned = true; profile.picturePreference = 'apple' }
           profile.failedImages = profile.failedImages.filter((url) => url !== profile.appleImage)
           profile.photoStatus = 'ready'
           profile.photoMessage = ''
@@ -247,15 +263,9 @@ export function reportArtistPortraitFailure(name: string, url: string) {
   }
 }
 export async function bindAppleArtist(name: string, url: string) {
-  if (!appleArtistLink(url)) throw new Error('请输入 Apple Music 艺术家页面链接，不是专辑链接。')
-  const profile = getArtistProfile(name)
-  await ensureLocalArtistProfile(name)
-  const pending = portraitRequests.get(artistKey(name))
-  if (pending) await pending
-  // Explicit user binding bypasses the name search, but still checks page ID.
-  profile.photoCheckedAt = 0
-  profile.failedImages = profile.failedImages.filter((image) => image !== profile.appleImage)
-  return ensureArtistPortrait(name, { force: true, appleUrl: url })
+  const link = appleArtistLink(url)
+  if (!link) throw new Error('请输入 Apple Music 艺术家页面链接，不是专辑链接。')
+  return applyArtistMatch(name, await previewArtistMatch(name, { kind: 'picture', id: link.id, name, detail: 'Apple Music', url: link.url, query: name }))
 }
 
 async function loadLastFmProfile(profile: ArtistProfile) {
@@ -305,25 +315,80 @@ export async function setArtistSourcePreferences(name: string, picture: ArtistPr
 }
 
 export async function searchArtistByName(name: string, query: string) {
-  const lookup = query.trim()
-  if (!lookup || lookup.length > 200) throw new Error('请输入不超过 200 个字符的艺术家名字。')
-  const key = artistKey(name)
-  const pending = [onlineRequests.get(key), mbRequests.get(key), portraitRequests.get(key)].filter((request): request is Promise<ArtistProfile> => Boolean(request))
-  if (pending.length) await Promise.allSettled(pending)
   const profile = await ensureLocalArtistProfile(name)
-  profile.searchName = artistKey(lookup) === key ? '' : lookup
-  profile.message = ''; profile.photoMessage = ''
-  profile.candidates = []; profile.appleCandidates = []
-  profile.mbid = ''; profile.manualIdentity = false; profile.canonicalName = ''; profile.localIdentityMismatch = false
-  profile.biography = ''; profile.sourceUrl = ''; profile.country = ''; profile.type = ''; profile.years = ''; profile.genres = []
-  profile.lastfmBiography = ''; profile.lastfmUrl = ''; profile.lastfmTags = []; profile.lastfmSimilar = []; profile.lastfmListeners = 0; profile.lastfmPlaycount = 0
-  profile.lastfmStatus = 'idle'; profile.lastfmMessage = ''; profile.updatedAt = 0
-  profile.appleId = ''; profile.appleUrl = ''; profile.appleImage = ''; profile.appleName = ''; profile.appleBiography = ''; profile.appleManual = false
-  profile.onlineImage = ''; profile.imageSourceUrl = ''; profile.imageCredit = ''; profile.imageLicense = ''; profile.photoCheckedAt = 0
-  profile.photoStatus = 'idle'
-  profile.failedImages = profile.failedImages.filter((url) => url === profile.manualImage || url === profile.localImage)
-  await saveProfile(profile)
-  return loadOnlineArtistProfile(name)
+  const candidates = await searchArtistMatches(name, 'info', query)
+  profile.candidates = candidates.map(candidate => ({ id: candidate.id, name: candidate.name, disambiguation: candidate.detail }))
+  profile.status = candidates.length ? 'ambiguous' : 'ready'
+  profile.message = candidates.length ? '请选择简介身份，已有照片和资料保持不变。' : '未找到可靠的简介身份。'
+  return profile
+}
+
+export type ArtistMatchKind = 'picture' | 'info'
+export interface ArtistMatchCandidate {
+  kind: ArtistMatchKind; id: string; name: string; detail: string; url: string; query: string
+}
+export interface ArtistMatchPreview {
+  owner: string; candidate: ArtistMatchCandidate; image: string; biography: string; source: string; info?: ArtistProfile
+}
+const informationFields = ['mbid', 'manualIdentity', 'canonicalName', 'searchName', 'biography', 'country', 'type', 'years', 'genres', 'sourceUrl', 'infoPreference', 'lastfmBiography', 'lastfmLanguage', 'lastfmTags', 'lastfmSimilar', 'lastfmListeners', 'lastfmPlaycount', 'lastfmUrl', 'lastfmStatus', 'lastfmMessage', 'updatedAt'] as const
+async function waitForArtistRequests(name: string) {
+  const key = artistKey(name)
+  const requests = [onlineRequests.get(key), mbRequests.get(key), portraitRequests.get(key)].filter((request): request is Promise<ArtistProfile> => Boolean(request))
+  if (requests.length) await Promise.allSettled(requests)
+}
+export async function searchArtistMatches(name: string, kind: ArtistMatchKind, query: string): Promise<ArtistMatchCandidate[]> {
+  const lookup = query.trim()
+  if (!artistProfilesConnected()) throw new Error('请在 foobar2000 中搜索艺术家资料。')
+  if (!lookup || lookup.length > 200) throw new Error('请输入不超过 200 个字符的艺术家名字。')
+  await ensureLocalArtistProfile(name)
+  if (kind === 'picture') {
+    await loadArtistServiceSettings()
+    return (await searchAppleArtistCandidates(lookup)).map(candidate => ({ kind, id: candidate.id, name: candidate.name, detail: `Apple Music · ${candidate.storefront.toUpperCase()} · ${candidate.genre}`, url: candidate.url, query: lookup }))
+  }
+  const queryString = new URLSearchParams({ query: `artist:"${lookup.replace(/[\\"]/g, '\\$&')}"`, fmt: 'json', limit: '12' })
+  const response = await musicBrainz<{ artists?: ArtistCandidate[] }>(`artist/?${queryString}`)
+  return (response.artists ?? []).filter(candidate => uuid.test(candidate.id)).map(candidate => ({ kind, id: candidate.id, name: candidate.name, detail: [candidate.country, candidate.type, candidate.disambiguation].filter(Boolean).join(' · ') || 'MusicBrainz 艺术家身份', url: `https://musicbrainz.org/artist/${candidate.id}`, query: lookup }))
+}
+export async function previewArtistMatch(name: string, candidate: ArtistMatchCandidate): Promise<ArtistMatchPreview> {
+  if (candidate.kind === 'picture') {
+    const link = appleArtistLink(candidate.url)
+    if (!link || link.id !== candidate.id) throw new Error('照片候选链接无效。')
+    const result = await fetchAppleArtist([candidate.name], candidate.url)
+    if (!result.image) throw new Error('此候选暂未提供可用照片，请选择其他结果或本地照片。')
+    const image = await downloadArtistImage(result.image)
+    return { owner: name, candidate: { ...candidate, name: result.name || candidate.name }, image, biography: '', source: 'Apple Music' }
+  }
+  if (!uuid.test(candidate.id)) throw new Error('简介候选身份无效。')
+  const record = await musicBrainz<ArtistRecord>(`artist/${candidate.id}?inc=url-rels%2Baliases%2Bgenres&fmt=json`)
+  if (record.id !== candidate.id) throw new Error('返回的简介身份与候选不一致，请重新搜索。')
+  const base = await ensureLocalArtistProfile(name)
+  const info: ArtistProfile = { ...base, mbid: candidate.id, manualIdentity: true, searchName: candidate.query, canonicalName: record.name, biography: '', country: record.area?.name || record.country || '', type: ({ Person: '个人', Group: '乐队 / 组合' } as Record<string, string>)[record.type ?? ''] || record.type || '', years: record['life-span']?.begin ? `${record['life-span'].begin.slice(0, 4)} — ${record['life-span'].end?.slice(0, 4) || '至今'}` : '', genres: record.genres?.map(genre => genre.name).slice(0, 6) ?? [], sourceUrl: candidate.url, infoPreference: 'auto', lastfmBiography: '', lastfmLanguage: '', lastfmTags: [], lastfmSimilar: [], lastfmListeners: 0, lastfmPlaycount: 0, lastfmUrl: '', lastfmStatus: 'idle', lastfmMessage: '', updatedAt: Date.now() }
+  try { await enrichWikimedia(info, record, false) } catch { /* A confirmed identity can remain useful without a wiki intro. */ }
+  await loadLastFmProfile(info)
+  const biography = artistBiography(info)
+  return { owner: name, candidate, image: '', biography: biography.text, source: biography.source || 'MusicBrainz 已确认身份', info }
+}
+export async function applyArtistMatch(name: string, preview: ArtistMatchPreview) {
+  if (artistKey(name) !== artistKey(preview.owner)) throw new Error('艺术家已变化，请重新搜索。')
+  if (!artistProfilesConnected()) throw new Error('foobar2000 尚未连接。')
+  await waitForArtistRequests(name)
+  const profile = await ensureLocalArtistProfile(name)
+  if (preview.candidate.kind === 'picture') {
+    const link = appleArtistLink(preview.candidate.url)
+    if (!link || link.id !== preview.candidate.id || !preview.image.startsWith('data:image/')) throw new Error('照片预览无效，请重新选择。')
+    if (profile.appleBiography && !profile.appleBiographyUrl) profile.appleBiographyUrl = profile.appleUrl
+    profile.appleImage = preview.image; profile.appleId = link.id; profile.appleUrl = link.url; profile.appleName = preview.candidate.name
+    profile.photoSearchName = preview.candidate.query; profile.appleManual = true; profile.picturePinned = true; profile.picturePreference = 'apple'
+    profile.photoStatus = 'ready'; profile.photoMessage = ''; profile.photoCheckedAt = Date.now(); profile.appleCandidates = []
+    profile.failedImages = profile.failedImages.filter(image => image !== preview.image)
+  } else {
+    if (!preview.info || !uuid.test(preview.info.mbid) || preview.info.mbid !== preview.candidate.id) throw new Error('简介预览无效，请重新选择。')
+    for (const field of informationFields) Object.assign(profile, { [field]: preview.info[field] })
+    profile.status = 'ready'; profile.candidates = []; profile.message = preview.biography ? '' : '已确认简介身份，此来源暂未提供可用简介。'
+  }
+  profile.revision++
+  await saveProfile(profile, true)
+  return profile
 }
 
 async function jsonRequest<T>(url: string): Promise<T> {
@@ -377,7 +442,7 @@ interface WikiEntity {
   sitelinks?: Record<string, { title: string }>
 }
 
-async function enrichWikimedia(profile: ArtistProfile, record: ArtistRecord) {
+async function enrichWikimedia(profile: ArtistProfile, record: ArtistRecord, includeImage = true) {
   const link = record.relations?.find((relation) => relation.type === 'wikidata')?.url?.resource
   const id = link?.match(/wikidata\.org\/wiki\/(Q\d+)/)?.[1]
   if (!id) return
@@ -396,6 +461,7 @@ async function enrichWikimedia(profile: ArtistProfile, record: ArtistRecord) {
       profile.sourceUrl = `https://${language}.wikipedia.org/wiki/${encodeURIComponent(title.replaceAll(' ', '_'))}`
     } catch { /* Structured description remains available if Wikipedia is blocked. */ }
   }
+  if (!includeImage) return
   const images = entity.claims?.P18?.filter((claim) => claim.rank !== 'deprecated') ?? []
   const file = (images.find((claim) => claim.rank === 'preferred') ?? images[0])?.mainsnak.datavalue?.value
   if (!file || typeof file !== 'string') return
@@ -450,9 +516,8 @@ function loadMusicBrainzProfile(name: string, selectedId?: string, matchByName =
       }
       const record = await musicBrainz<ArtistRecord>(`artist/${id}?inc=url-rels%2Baliases%2Bgenres&fmt=json`)
       if (profile.mbid !== id) {
-        profile.onlineImage = ''; profile.biography = ''; profile.imageSourceUrl = ''; profile.imageCredit = ''; profile.imageLicense = ''
+        profile.biography = ''
         profile.lastfmBiography = ''; profile.lastfmUrl = ''; profile.lastfmTags = []; profile.lastfmSimilar = []
-        if (!profile.appleManual) { profile.appleImage = ''; profile.appleId = ''; profile.appleUrl = ''; profile.appleBiography = ''; profile.photoCheckedAt = 0 }
       }
       profile.mbid = id
       if (selectedId) profile.manualIdentity = true
@@ -464,11 +529,11 @@ function loadMusicBrainzProfile(name: string, selectedId?: string, matchByName =
       profile.years = life?.begin ? `${life.begin.slice(0, 4)} — ${life.end?.slice(0, 4) || '至今'}` : ''
       profile.genres = record.genres?.map((genre) => genre.name).slice(0, 6) ?? []
       profile.sourceUrl = `https://musicbrainz.org/artist/${id}`
-      if (!profile.appleManual && !profile.appleUrl) {
+      if (!profile.picturePinned && !profile.appleManual && !profile.appleUrl) {
         const apple = record.relations?.map((relation) => relation.url?.resource).find((url) => url && appleArtistLink(url))
         if (apple) { profile.appleUrl = apple; profile.appleId = appleArtistLink(apple)!.id }
       }
-      try { await enrichWikimedia(profile, record) } catch { profile.message = '已确认身份，百科资料暂不可用。' }
+      try { await enrichWikimedia(profile, record, !profile.picturePinned) } catch { profile.message = '已确认身份，百科资料暂不可用。' }
       profile.candidates = []
       profile.status = 'ready'
       profile.updatedAt = Date.now()
@@ -497,12 +562,15 @@ export async function chooseArtistPhoto(name: string) {
   const mime = extension === 'png' ? 'image/png' : extension === 'webp' ? 'image/webp' : 'image/jpeg'
   const profile = getArtistProfile(name)
   profile.manualImage = `data:${mime};base64,${btoa(binary)}`
+  profile.picturePinned = true; profile.picturePreference = 'manual'
   profile.revision += 1
-  await saveProfile(profile)
+  await saveProfile(profile, true)
+  return true
 }
 export async function resetArtistPhoto(name: string) {
   const profile = await ensureLocalArtistProfile(name, true)
   profile.manualImage = ''
+  profile.picturePinned = false; profile.picturePreference = 'auto'
   profile.failedImages = []
   profile.revision += 1
   await saveProfile(profile)

@@ -40,6 +40,11 @@ function text(value: string) {
   return element.value.trim()
 }
 function nameKey(value: string) { return value.normalize('NFKC').trim().toLocaleLowerCase() }
+export function cleanArtistBiography(value: string) {
+  const content = text(value).replace(/Read more on Last\.fm[\s\S]*$/i, '').trim()
+  if (!content || content.length < 500 && /(?:在\s*Apple\s*Music.*(?:畅听|聆听|收听|暢聽|聆聽|收聽)|(?:listen to|listen|discover|explore).*\bon apple music\b|查找.*热门歌曲.*专辑|apple\s*music(?:で|の|に).*(?:聴|聞|人気|アルバム))/i.test(content)) return ''
+  return content
+}
 
 export interface AppleArtistCandidate { id: string; name: string; url: string; genre: string; storefront: string }
 export interface AppleArtistResult {
@@ -72,7 +77,7 @@ export function parseAppleArtistPage(html: string, id: string) {
         if (typeof image !== 'string') continue
         const parsed = new URL(image)
         if (parsed.protocol !== 'https:' || !parsed.hostname.endsWith('.mzstatic.com')) continue
-        return { name: record.name as string, image, biography: typeof record.description === 'string' ? text(record.description) : '' }
+        return { name: record.name as string, image, biography: typeof record.description === 'string' ? cleanArtistBiography(record.description) : '' }
       }
     } catch { /* Ignore unrelated structured-data blocks. */ }
   }
@@ -129,6 +134,18 @@ export async function fetchAppleArtist(names: string[], explicitUrl = ''): Promi
   return { ...empty, id: linked.id, url: linked.url, storefront: linked.storefront }
 }
 
+export async function searchAppleArtistCandidates(name: string) {
+  const found = new Map<string, AppleArtistCandidate>()
+  let failure: unknown
+  for (const country of [...new Set([artistServiceSettings.storefront, 'jp', 'us'])]) {
+    try { for (const candidate of await searchApple(name, country)) if (!found.has(candidate.id)) found.set(candidate.id, candidate) }
+    catch (error) { failure = error }
+    if (found.size >= 8) break
+  }
+  if (!found.size && failure) throw failure
+  return [...found.values()].sort((a, b) => Number(nameKey(b.name) === nameKey(name)) - Number(nameKey(a.name) === nameKey(name))).slice(0, 12)
+}
+
 export async function downloadArtistImage(url: string) {
   const parsed = new URL(url)
   if (parsed.protocol !== 'https:' || !(parsed.hostname.endsWith('.mzstatic.com') || parsed.hostname === 'upload.wikimedia.org')) throw new Error('图片地址不属于支持的艺术家图片源。')
@@ -150,7 +167,7 @@ export async function fetchLastFmArtist(name: string, mbid: string, apiKey: stri
     if (response.error) throw new Error(response.error === 10 || response.error === 26 ? 'Last.fm API key 无效或已停用。' : 'Last.fm 资料暂不可用。')
     const artist = response.artist
     if (!artist || (mbid && artist.mbid && artist.mbid !== mbid) || (!mbid && nameKey(artist.name ?? '') !== nameKey(name))) throw new Error('Last.fm 返回的艺术家身份不匹配。')
-    const biography = text(artist.bio?.content || artist.bio?.summary || '').replace(/Read more on Last\.fm[\s\S]*$/i, '').trim()
+    const biography = cleanArtistBiography(artist.bio?.content || artist.bio?.summary || '')
     const safeUrl = artist.url?.startsWith('https://www.last.fm/music/') ? artist.url : `https://www.last.fm/music/${encodeURIComponent(artist.name || name)}`
     result = {
       biography, language,

@@ -496,6 +496,7 @@ function onKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape' && lightSettingsOpen.value) {
     event.preventDefault(); event.stopImmediatePropagation(); lightSettingsOpen.value = false; return
   }
+  if (event.key === 'Escape' && (event.target as HTMLElement | null)?.closest?.('.artist-match-panel')) return
   if (event.ctrlKey && event.altKey && event.code === 'KeyP' && !event.repeat) {
     event.preventDefault()
     if (coverflowPerformance.active) {
