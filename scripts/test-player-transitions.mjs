@@ -361,12 +361,19 @@ props.fullscreenProgress = 0
 assert.equal(state.legacyBackgroundVisible.value, true)
 assert.equal(state.legacyBackgroundOpacity.value, 1)
 props.fullscreenProgress = .5
+props.fullscreen = true
+await flush(); animationClock.tick(1000); await flush()
 assert.equal(state.legacyBackgroundVisible.value, true)
-assert.equal(state.legacyBackgroundOpacity.value, .5)
+assert.equal(state.legacyBackgroundOpacity.value, 1, 'the underside remains opaque to avoid a dark midpoint')
+assert.equal(state.backgroundBlend.value, .5)
+props.fullscreen = true
 props.fullscreenProgress = 1
+await flush(); animationClock.tick(1000); await flush()
 assert.equal(state.legacyBackgroundVisible.value, false, 'fullscreen removes legacy live-blur layers only after the field is ready')
 state.lightFieldReady.value = false
+await flush(); animationClock.tick(1000); await flush()
 assert.equal(state.legacyBackgroundVisible.value, true, 'generation failure keeps the existing background rather than blacking out')
+props.fullscreen = false
 props.fullscreenProgress = 0
 console.log('PASS: ordinary-window background remains unchanged; fullscreen progress crossfades to the ready field with a legacy fallback')
 props.lyrics = [{ time: 0, text: 'Intro' }, { time: 35, text: 'Middle line' }, { time: 75, text: 'Last line' }]

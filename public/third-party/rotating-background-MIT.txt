@@ -1,7 +1,3 @@
-Wave-Player: https://github.com/03x1/Wave-Player
-The blurred-disc and four-layer rotating background approach is adapted in
-src/utils/waveBackground.ts. Other Wave-Player player/lyrics code is not included.
-
 MIT License
 
 Copyright (c) 2026 Ekko

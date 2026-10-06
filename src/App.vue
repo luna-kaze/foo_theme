@@ -4,6 +4,7 @@ import { AlertCircle, CheckCircle2, FileMusic, Info } from '@lucide/vue'
 import AppSidebar from './components/AppSidebar.vue'
 import ThemeSettings from './components/ThemeSettings.vue'
 import LightFieldSettingsDialog from './components/LightFieldSettingsDialog.vue'
+import AboutDialog from './components/AboutDialog.vue'
 import { loadLightFieldSettings } from './utils/lightFieldSettings'
 import AppTopbar from './components/AppTopbar.vue'
 import CreatePlaylistDialog from './components/CreatePlaylistDialog.vue'
@@ -67,6 +68,7 @@ const queueOpen = ref(false)
 const coverflowPerformanceReport = ref<CoverflowPerformanceReport | null>(null)
 const themeSettingsOpen = ref(false)
 const lightSettingsOpen = ref(false)
+const aboutOpen = ref(false)
 watch(() => state.connected, connected => {
   if (connected) void loadLightFieldSettings(true).catch(error => player.notify(error instanceof Error ? error.message : '无法读取背景参数。', 'error'))
 })
@@ -412,6 +414,8 @@ async function openInspector(mode: 'properties' | 'edit', tracks: DisplayTrack[]
   try {
     const details = await player.getTrackDetails(tracks)
     if (request === inspector.request) inspector.details = details
+  } catch (error) {
+    if (request === inspector.request) player.notify(error instanceof Error ? error.message : '无法读取曲目属性。', 'error')
   } finally {
     if (request === inspector.request) inspector.loading = false
   }
@@ -488,6 +492,14 @@ async function createPlaylistFromDialog(name: string, options?: { query: string;
 }
 
 function onKeydown(event: KeyboardEvent) {
+  if (event.key === 'F1') {
+    event.preventDefault(); event.stopImmediatePropagation()
+    if (!event.repeat) aboutOpen.value = !aboutOpen.value
+    return
+  }
+  if (event.key === 'Escape' && aboutOpen.value) {
+    event.preventDefault(); event.stopImmediatePropagation(); aboutOpen.value = false; return
+  }
   if (event.ctrlKey && event.altKey && event.code === 'KeyB') {
     event.preventDefault(); event.stopImmediatePropagation()
     if (!event.repeat && !miniMode.value) lightSettingsOpen.value = !lightSettingsOpen.value
@@ -497,6 +509,7 @@ function onKeydown(event: KeyboardEvent) {
     event.preventDefault(); event.stopImmediatePropagation(); lightSettingsOpen.value = false; return
   }
   if (event.key === 'Escape' && (event.target as HTMLElement | null)?.closest?.('.artist-match-panel')) return
+  if (event.key === 'Escape' && (event.target as HTMLElement | null)?.closest?.('.image-picker-dialog')) return
   if (event.ctrlKey && event.altKey && event.code === 'KeyP' && !event.repeat) {
     event.preventDefault()
     if (coverflowPerformance.active) {
@@ -1186,6 +1199,7 @@ function onDrop(event: DragEvent) {
 </script>
 
 <template>
+  <AboutDialog v-if="aboutOpen" :connected="state.connected" @close="aboutOpen = false" />
   <MiniPlayer
     v-if="miniMode"
     :track="state.currentTrack"

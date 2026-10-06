@@ -33,6 +33,7 @@ import { airplayPath, createAirplayPlayback, decodeAirplayArtwork } from '../uti
 import { createExternalImporter } from '../utils/externalImport'
 import type { ExternalDropTarget } from '../utils/externalDrop'
 import { filterImportCandidates } from '../utils/importFilters'
+import { metadataLocation, writeMetadataAndWait } from '../utils/metadataLocation'
 
 const state = reactive<PlayerUiState>({
   connected: false,
@@ -3014,22 +3015,29 @@ function setTracksFavourite(tracks: DisplayTrack[], favourite: boolean) {
 }
 
 async function getTrackDetails(tracks: DisplayTrack[]): Promise<TrackDetails[]> {
-  const paths = tracks.map(playablePath)
-  const [metadataResult, playcountResult, replayGainResult] = await Promise.all([
-    fb.metadata.readBatch(paths),
-    fb.playcount.getBatch(paths),
-    fb.replaygain.get(paths),
+  const locations = tracks.map(metadataLocation)
+  const statsPaths = tracks.map((track, index) => locations[index]!.cueIndex ? playablePath(track) : locations[index]!.path)
+  const metadataResult: Awaited<ReturnType<typeof fb.metadata.read>>[] = []
+  for (let start = 0; start < tracks.length; start += 8) {
+    const batch = await Promise.all(locations.slice(start, start + 8).map(async location => {
+      const result = await fb.metadata.read(location.path, { cueIndex: location.cueIndex })
+      if (result.success === false) throw new Error(result.error || '未能读取曲目标签。')
+      return result
+    }))
+    metadataResult.push(...batch)
+  }
+  const [playcountResult, replayGainResult] = await Promise.all([
+    fb.playcount.getBatch(statsPaths).catch(() => null), fb.replaygain.get(statsPaths).catch(() => null),
   ])
-  const technical = tracks[0] ? await fb.metadata.read(paths[0], { cueIndex: trackSubsong(tracks[0]) }) : null
   return tracks.map((track, index) => {
-    const metadata = metadataResult.results[index]
-    const playcount = playcountResult.results[index]
-    const replayGain = replayGainResult.results?.[index]
+    const metadata = metadataResult[index]
+    const playcount = playcountResult?.results?.[index]
+    const replayGain = replayGainResult?.results?.[index]
     return {
       track,
-      path: paths[index],
+      path: locations[index]!.path,
       tags: metadata?.tags ?? {},
-      info: index === 0 ? technical?.info ?? {} : {},
+      info: metadata?.info ?? {},
       playCount: playcount?.playCount ?? 0,
       firstPlayed: playcount?.firstPlayed ?? '',
       lastPlayed: playcount?.lastPlayed ?? '',
@@ -3047,14 +3055,13 @@ async function getTrackDetails(tracks: DisplayTrack[]): Promise<TrackDetails[]> 
 }
 
 async function writeTrackMetadata(tracks: DisplayTrack[], tags: Record<string, string>) {
-  const items = tracks.map((track) => ({ path: playablePath(track), tags }))
-  const result = await runAction(() => fb.metadata.writeBatch(items))
-  if (!result) return false
-  if (result.failCount) {
-    notify(`标签部分写入失败：成功 ${result.successCount ?? 0}，失败 ${result.failCount}`, 'error')
-    return false
+  let succeeded = 0
+  for (const track of tracks) {
+    const result = await runAction(() => writeMetadataAndWait(track, tags))
+    if (!result) { if (succeeded) notify(`已更新 ${succeeded} 首，其余标签未完成。`, 'error'); return false }
+    succeeded += 1
   }
-  notify(`已更新 ${result.successCount ?? tracks.length} 首曲目的标签`, 'success')
+  notify(`已更新 ${succeeded} 首曲目的标签`, 'success')
   await loadLibrary()
   await navigate(state.route, 'none')
   return true
@@ -3062,7 +3069,8 @@ async function writeTrackMetadata(tracks: DisplayTrack[], tags: Record<string, s
 
 async function setTrackRating(track: DisplayTrack, rating: number) {
   const value = Math.min(5, Math.max(0, Math.round(rating)))
-  const result = await runAction(() => fb.rating.set(playablePath(track), value, { cueIndex: trackSubsong(track) }))
+  const location = metadataLocation(track)
+  const result = await runAction(() => fb.rating.set(location.path, value, { cueIndex: location.cueIndex }))
   if (!result) return false
   patchTrackCopies(track, { rating: value })
   notify(value ? `已设置为 ${value} 星` : '已清除评分', 'success')
@@ -3073,7 +3081,8 @@ async function setTracksRating(tracks: DisplayTrack[], rating: number) {
   const value = Math.min(5, Math.max(0, Math.round(rating)))
   let succeeded = 0
   for (const track of tracks) {
-    const result = await runAction(() => fb.rating.set(playablePath(track), value, { cueIndex: trackSubsong(track) }))
+    const location = metadataLocation(track)
+    const result = await runAction(() => fb.rating.set(location.path, value, { cueIndex: location.cueIndex }))
     if (!result) continue
     patchTrackCopies(track, { rating: value })
     succeeded += 1
@@ -3095,9 +3104,12 @@ async function scanReplayGain(tracks: DisplayTrack[], mode: 'track' | 'album') {
 }
 
 async function clearReplayGain(tracks: DisplayTrack[]) {
-  const result = await runAction(() => fb.replaygain.clear(tracks.map(playablePath)))
-  if (result) notify(`已清除 ${result.clearedCount ?? tracks.length} 首曲目的 ReplayGain`, 'success')
-  return Boolean(result)
+  for (const track of tracks) {
+    const result = await runAction(() => writeMetadataAndWait(track, { REPLAYGAIN_TRACK_GAIN: '', REPLAYGAIN_TRACK_PEAK: '', REPLAYGAIN_ALBUM_GAIN: '', REPLAYGAIN_ALBUM_PEAK: '' }))
+    if (!result) return false
+  }
+  notify(`已清除 ${tracks.length} 首曲目的 ReplayGain`, 'success')
+  return true
 }
 
 async function embedTrackArtwork(track: DisplayTrack, type: 'front' | 'back' | 'disc' | 'artist' = 'front') {

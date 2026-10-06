@@ -552,9 +552,9 @@ function loadMusicBrainzProfile(name: string, selectedId?: string, matchByName =
 
 export async function chooseArtistPhoto(name: string) {
   if (!artistProfilesConnected()) return
-  await ensureLocalArtistProfile(name)
   const picked = await pickImageFile(`选择“${name}”的艺术家照片`)
   if (!picked) return
+  await ensureLocalArtistProfile(name)
   const { path, bytes } = picked
   let binary = ''
   for (let index = 0; index < bytes.length; index += 8192) binary += String.fromCharCode(...bytes.subarray(index, index + 8192))

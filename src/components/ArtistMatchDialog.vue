@@ -52,6 +52,7 @@ watch(kind, value => {
   void search()
 }, { immediate: true })
 function keyboard(event: KeyboardEvent) {
+  if ((event.target as HTMLElement | null)?.closest?.('.image-picker-dialog')) return
   if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); if (!saving.value) emit('close'); return }
   if (event.key !== 'Tab') return
   const elements = [...root.value?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)') ?? []]

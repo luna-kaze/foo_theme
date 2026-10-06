@@ -18,7 +18,8 @@ const rating = computed(() => Number(props.details[0]?.rating ?? 0))
 const mixedRating = computed(() => props.details.some((item) => Number(item.rating ?? 0) !== rating.value))
 
 function tagValue(tags: Record<string, string | string[]>, key: string) {
-  const value = tags[key] ?? tags[key.replace(' ', '_')] ?? tags[key.replace(' ', '')]
+  const normalized = key.replace(/[\s_]/g, '').toUpperCase()
+  const value = Object.entries(tags).find(([field]) => field.replace(/[\s_]/g, '').toUpperCase() === normalized)?.[1]
   return Array.isArray(value) ? value.join('; ') : value ?? ''
 }
 
@@ -30,6 +31,7 @@ watch(() => props.details, (details) => {
 }, { immediate: true, deep: true })
 
 function save() {
+  if (props.busy || props.loading || props.details.length !== props.tracks.length) return
   const tags = Object.fromEntries(tagFields.map(([key]) => [key, fields[key].trim()]).filter(([, value]) => props.tracks.length === 1 || value))
   emit('save', tags)
 }
@@ -46,7 +48,7 @@ function setRating(value: number) {
       <div v-if="loading" class="inspector-loading"><span /><strong>正在读取元数据…</strong></div>
       <template v-else>
         <nav v-if="mode === 'properties' && tracks.length === 1" class="track-inspector__tabs"><button :class="{ active: tab === 'details' }" @click="tab = 'details'"><Info :size="15" />详细信息</button><button :class="{ active: tab === 'technical' }" @click="tab = 'technical'"><FileAudio :size="15" />技术信息</button><button :class="{ active: tab === 'replaygain' }" @click="tab = 'replaygain'"><Gauge :size="15" />ReplayGain</button><button :class="{ active: tab === 'artwork' }" @click="tab = 'artwork'"><Disc3 :size="15" />封面</button></nav>
-        <div v-if="mode === 'edit'" class="metadata-editor"><p v-if="tracks.length > 1" class="inspector-note">批量编辑时，留空字段保持原值不变。</p><label v-for="([key, label]) in tagFields" :key="key"><span>{{ label }}</span><input v-model="fields[key]" :placeholder="tracks.length > 1 ? '多个值 / 保持不变' : ''" /></label><footer><button class="secondary-button" @click="emit('close')">取消</button><button class="primary-button" :disabled="busy" @click="save"><Edit3 :size="15" />{{ busy ? '正在保存…' : '保存标签' }}</button></footer></div>
+        <div v-if="mode === 'edit'" class="metadata-editor"><p v-if="tracks.length > 1" class="inspector-note">批量编辑时，留空字段保持原值不变。</p><p v-if="details.length !== tracks.length" class="inspector-note">标签未完整读取，请重新打开属性或使用原生 foobar 属性。</p><label v-for="([key, label]) in tagFields" :key="key"><span>{{ label }}</span><input v-model="fields[key]" :disabled="busy || details.length !== tracks.length" :placeholder="tracks.length > 1 ? '多个值 / 保持不变' : ''" /></label><footer><button class="secondary-button" @click="emit('close')">取消</button><button class="primary-button" :disabled="busy || details.length !== tracks.length" @click="save"><Edit3 :size="15" />{{ busy ? '正在保存…' : '保存标签' }}</button></footer></div>
         <div v-else-if="tracks.length > 1" class="inspector-content inspector-batch-details">
           <p>逐首属性</p>
           <div class="inspector-batch-details__table-wrap">

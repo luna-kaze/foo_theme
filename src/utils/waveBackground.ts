@@ -1,5 +1,4 @@
-// Four rotating blurred artwork discs, adapted from Wave-Player by Ekko (MIT).
-// Copyright (c) 2026 Ekko. Full license: public/third-party/Wave-Player-LICENSE.txt.
+// Copyright (c) 2026 Ekko. Full license: public/third-party/rotating-background-MIT.txt.
 import { extractLightPalette, renderAlbumLightField, type AlbumLightField } from './albumLightField'
 import { normalizeLightFieldSettings, lightFieldDefaults, type LightFieldSettings } from './lightFieldSettings'
 
@@ -125,7 +124,14 @@ export function createWaveBackgroundRenderer(canvas: HTMLCanvasElement, notify: 
     const height = rect.height || canvas.parentElement?.parentElement?.getBoundingClientRect().height || window.innerHeight
     const target = waveRenderSize(width, height, window.devicePixelRatio)
     if (canvas.width !== target.width || canvas.height !== target.height) {
-      if (frozen && field) { upload(textures[0]!, field); frozen = false; fadeAt = -1 }
+      try {
+        if (initialized && field && active && !document.hidden) {
+          const now = performance.now()
+          draw(now); capture()
+          gl.activeTexture(gl.TEXTURE1); upload(textures[1]!, field)
+          frozen = true; fadeAt = now
+        } else if (frozen && field) { gl.activeTexture(gl.TEXTURE0); upload(textures[0]!, field); frozen = false; fadeAt = -1 }
+      } catch { fail(); return }
       canvas.width = target.width; canvas.height = target.height
     }
     const w = canvas.width, h = canvas.height, l = Math.max(w, h), wide = w > h
@@ -142,6 +148,12 @@ export function createWaveBackgroundRenderer(canvas: HTMLCanvasElement, notify: 
     if (!gl) return
     textures.forEach((texture, index) => { gl!.activeTexture(gl!.TEXTURE0 + index); gl!.bindTexture(gl!.TEXTURE_2D, texture) })
     gl.activeTexture(gl.TEXTURE0 + 2); gl.bindTexture(gl.TEXTURE_2D, snapshotTexture)
+  }
+  function capture() {
+    if (!gl) return
+    gl.activeTexture(gl.TEXTURE0 + 2); gl.bindTexture(gl.TEXTURE_2D, snapshotTexture)
+    gl.copyTexImage2D(gl.TEXTURE_2D, 0, gl.RGB, 0, 0, canvas.width, canvas.height, 0)
+    if (gl.getError() !== gl.NO_ERROR) throw new Error('Background snapshot unavailable')
   }
   function draw(now: number) {
     if (!gl || !initialized) return
@@ -216,12 +228,10 @@ export function createWaveBackgroundRenderer(canvas: HTMLCanvasElement, notify: 
         const now = performance.now()
         if (fadeAt >= 0) {
           draw(now)
-          gl.activeTexture(gl.TEXTURE0 + 2); gl.bindTexture(gl.TEXTURE_2D, snapshotTexture)
           // alpha:false creates an RGB default framebuffer. RGBA copies fail
           // with INVALID_OPERATION on Chromium/ANGLE and leave a disc as the
           // supposed full-screen snapshot (visible as a huge hard-edged ring).
-          gl.copyTexImage2D(gl.TEXTURE_2D, 0, gl.RGB, 0, 0, canvas.width, canvas.height, 0)
-          if (gl.getError() !== gl.NO_ERROR) throw new Error('Background snapshot unavailable')
+          capture()
           frozen = true
         }
         gl.activeTexture(gl.TEXTURE1); upload(textures[1]!, value); fadeAt = now

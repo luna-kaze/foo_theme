@@ -19,7 +19,8 @@ function fixture(available = true) {
     copyTexImage2D: (_type, _level, format) => { captures++; captureTargets.push(bound.get(activeUnit).id); captureFormats.push(format) }, getError: () => { const error = captureError; captureError = 0; return error }, viewport() {}, drawArrays: () => { draws++ },
     deleteTexture: () => { deleted++ }, deleteShader() {}, deleteProgram() {}, deleteBuffer() {},
   }
-  const canvas = { width: 0, height: 0, getContext: () => available ? gl : null, getBoundingClientRect: () => ({ width: 3840, height: 2160 }), addEventListener: (name, fn) => events.set(name, fn), removeEventListener: name => events.delete(name) }
+  let rect = { width: 3840, height: 2160 }
+  const canvas = { width: 0, height: 0, getContext: () => available ? gl : null, getBoundingClientRect: () => rect, addEventListener: (name, fn) => events.set(name, fn), removeEventListener: name => events.delete(name) }
   const document = { hidden: false, addEventListener: (name, fn) => pageEvents.set(name, fn), removeEventListener: name => pageEvents.delete(name) }
   const module = { exports: {} }
   runInNewContext(compiled.outputFiles[0].text, { module, exports: module.exports,
@@ -29,7 +30,7 @@ function fixture(available = true) {
   })
   const status = []
   const renderer = module.exports.createWaveBackgroundRenderer(canvas, value => status.push(value))
-  return { renderer, api: module.exports, frames, events, pageEvents, document, uniform, status, canvas, captureTargets, captureFormats, failCapture: () => { captureError = 1282 }, numbers: () => ({ uploads, draws, captures, deleted }), now: value => { now = value } }
+  return { renderer, api: module.exports, frames, events, pageEvents, document, uniform, status, canvas, captureTargets, captureFormats, resize: (width, height) => { rect = { width, height }; renderer.setActive(true) }, failCapture: () => { captureError = 1282 }, numbers: () => ({ uploads, draws, captures, deleted }), now: value => { now = value } }
 }
 const f = fixture()
 assert.equal(f.canvas.width, 960); assert.equal(f.canvas.height, 540)
@@ -49,6 +50,9 @@ assert.ok(f.api.waveFragmentShader.includes('smoothstep(.70,1.0,radius)'))
 const uploads = f.numbers().uploads
 f.renderer.setSettings({ brightness: 1, saturation: 1, contrast: 1, hue: 0, opacity: 1, baseOpacity: 1, primaryIntensity: .5, secondaryIntensity: .7, glowScale: 1.2, blur: 0, speed: 2, motion: .8, vignette: 1, animated: true })
 assert.equal(f.numbers().uploads, uploads, 'live settings do not upload or regenerate artwork')
+const beforeResize = f.numbers().captures
+f.resize(1280, 720)
+assert.equal(f.numbers().captures, beforeResize + 1, 'native full/window resizing crossfades from the current composition instead of abruptly changing disc geometry')
 f.document.hidden = true; f.pageEvents.get('visibilitychange')()
 assert.equal(f.frames.size, 0)
 f.document.hidden = false; f.pageEvents.get('visibilitychange')()

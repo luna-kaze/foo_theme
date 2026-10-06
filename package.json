@@ -2,6 +2,8 @@
   "name": "foo-theme",
   "private": true,
   "version": "0.1.0",
+  "license": "GPL-3.0-only",
+  "homepage": "https://github.com/luna-kaze/foo_theme",
   "type": "module",
   "scripts": {
     "dev": "vite",

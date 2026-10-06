@@ -10,6 +10,7 @@ import { createCoverflowRail, type RailFrame } from '../utils/coverflowRail'
 import { coverflowPerformance } from '../utils/coverflowPerformance'
 import FullscreenLightField from './FullscreenLightField.vue'
 import { playablePath } from '../utils/track'
+import { createBackgroundHandoff } from '../utils/backgroundHandoff'
 
 const props = defineProps<{
   open: boolean
@@ -406,8 +407,12 @@ const idleCoverflow = computed(() => selectedCoverflow.value?.idle === true)
 const backgroundArtwork = computed(() => modeTransition.value ? props.artwork : mode.value === 'coverflow' ? railState.distant ? frozenBackdrop.value : selectedCoverflow.value?.artwork || props.artwork : props.artwork)
 const lightFieldReady = ref(false)
 const fullscreenBackgroundProgress = computed(() => props.fullscreenProgress ?? (props.fullscreen ? 1 : 0))
-const legacyBackgroundVisible = computed(() => !lightFieldReady.value || fullscreenBackgroundProgress.value < .999)
-const legacyBackgroundOpacity = computed(() => lightFieldReady.value ? 1 - fullscreenBackgroundProgress.value : 1)
+const backgroundBlend = ref(0)
+const backgroundHandoff = createBackgroundHandoff({ render: value => { backgroundBlend.value = value } })
+watch([fullscreenBackgroundProgress, lightFieldReady, () => props.fullscreen], ([progress, ready, fullscreen]) => backgroundHandoff.set(fullscreen ? progress : 0, ready), { immediate: true })
+const legacyBackgroundVisible = computed(() => !props.fullscreen || backgroundBlend.value < 1)
+// Keep the underneath material opaque. Fading both layers darkens their midpoint.
+const legacyBackgroundOpacity = computed(() => 1)
 const lightFieldPath = computed(() => {
   const target = mode.value === 'coverflow' && !modeTransition.value ? selectedCoverflow.value?.track : props.track
   return target ? playablePath(target) : ''
@@ -864,6 +869,7 @@ watch(() => props.open, (open) => {
 })
 
 onBeforeUnmount(() => {
+  backgroundHandoff.dispose()
   rail.dispose()
   emit('focusState', { active: false, id: null, request: props.playbackPreviewRequest ?? 0, settled: true })
   cancelOrderAnimation()
@@ -891,7 +897,7 @@ onBeforeUnmount(() => {
       </Transition>
       <div class="immersive-player__wash" />
       </div>
-      <FullscreenLightField :active="open && (fullscreen || fullscreenBackgroundProgress > .001)" :source="backgroundArtwork" :path="lightFieldPath" :progress="fullscreenBackgroundProgress" :suspended="railState.distant" @ready="lightFieldReady = $event" />
+      <FullscreenLightField :active="open && (fullscreen || fullscreenBackgroundProgress > .001 || backgroundBlend > .001)" :source="backgroundArtwork" :path="lightFieldPath" :progress="backgroundBlend" :suspended="railState.distant" @ready="lightFieldReady = $event" />
       <div v-if="handoffCover.visible" class="immersive-handoff-cover" :style="handoffCoverStyle"><ArtworkImage :src="artwork || track?.artworkUrl" :alt="`${track?.album ?? '当前专辑'} 交接封面`" /></div>
 
       <header class="immersive-toolbar">

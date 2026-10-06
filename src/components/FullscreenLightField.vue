@@ -21,7 +21,11 @@ function finishCrossfade(element: Element) {
 }
 watch([() => props.active, () => props.source, () => props.suspended], async () => {
   const request = ++generation
-  if (!props.active || props.suspended) { loader.cancel(); return }
+  if (!props.active || props.suspended) {
+    loader.cancel()
+    if (!props.active && field.value?.key !== props.source) emit('ready', false)
+    return
+  }
   const source = props.source, path = props.path
   const start = performance.now()
   try {

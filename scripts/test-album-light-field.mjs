@@ -82,7 +82,7 @@ assert.ok(state.fieldStyle.value['--light-filter'].includes('brightness(1.7)'))
 assert.equal(state.fieldStyle.value['--light-primary-period'], '9.5s')
 await flush()
 assert.equal(canvases.length, settingsCanvasCount, 'live slider edits must not reread artwork or regenerate cached textures')
-assert.equal(events.length, 0, 'legacy background must remain until initial light-field crossfade finishes')
+assert.equal(events.filter(event => event.value === true).length, 0, 'legacy background must remain until initial light-field crossfade finishes')
 state.finishCrossfade({ getAttribute: () => state.field.value.key })
 assert.equal(events.at(-1).value, true)
 const displayed = state.field.value

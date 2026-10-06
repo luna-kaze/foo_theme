@@ -121,10 +121,10 @@ function fixture() {
   const app = readFileSync('src/App.vue', 'utf8')
   const keySource = app.match(/function onKeydown\(event: KeyboardEvent\) \{[\s\S]*?\n\}/)[0]
   const code = await transform(`${keySource}\nmodule.exports = onKeydown`, { loader: 'ts', format: 'cjs' })
-  const state = { nowPlayingOpen: false }, miniMode = { value: false }, lightSettingsOpen = { value: false }
+  const state = { nowPlayingOpen: false }, miniMode = { value: false }, lightSettingsOpen = { value: false }, aboutOpen = { value: false }
   let toggles = 0
   const module = { exports: {} }
-  runInNewContext(code.code, { module, state, miniMode, lightSettingsOpen, player: { toggleFullscreen: async () => { toggles++ } } })
+  runInNewContext(code.code, { module, state, miniMode, lightSettingsOpen, aboutOpen, player: { toggleFullscreen: async () => { toggles++ } } })
   function press(repeat = false) {
     let prevented = false, stopped = false
     module.exports({ key: 'F11', code: 'F11', repeat, target: null, preventDefault() { prevented = true }, stopImmediatePropagation() { stopped = true } })
@@ -145,6 +145,14 @@ function fixture() {
   assert.equal(lightSettingsOpen.value, true)
   module.exports({ key: 'Escape', preventDefault() {}, stopImmediatePropagation() {} })
   assert.equal(lightSettingsOpen.value, false)
+  const aboutKey = { key: 'F1', repeat: false, preventDefault() {}, stopImmediatePropagation() {} }
+  module.exports(aboutKey)
+  assert.equal(aboutOpen.value, true, 'F1 remains available in mini mode')
+  module.exports({ ...aboutKey, repeat: true })
+  assert.equal(aboutOpen.value, true)
+  module.exports({ key: 'Escape', preventDefault() {}, stopImmediatePropagation() {} })
+  assert.equal(aboutOpen.value, false)
+  assert.equal(state.nowPlayingOpen, true, 'closing About must not close immersion')
   assert.equal(state.nowPlayingOpen, true, 'Escape closes only the background panel, preserving immersion')
   miniMode.value = true
   module.exports(backgroundKey)
